@@ -23,6 +23,9 @@
 		A00000000000000000009011 /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009010 /* LaunchAtLoginService.swift */; };
 		A00000000000000000009021 /* NativeDockPreferencesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009020 /* NativeDockPreferencesService.swift */; };
 		A00000000000000000009031 /* PanelVisibilityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009030 /* PanelVisibilityState.swift */; };
+		A00000000000000000009081 /* PanelGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009080 /* PanelGeometry.swift */; };
+		A00000000000000000009091 /* PanelGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009080 /* PanelGeometry.swift */; };
+		A000000000000000000090A1 /* PanelGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000090A0 /* PanelGeometryTests.swift */; };
 		A00000000000000000009041 /* NativeDockPreferencesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009020 /* NativeDockPreferencesService.swift */; };
 		A00000000000000000009051 /* PanelVisibilityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009030 /* PanelVisibilityState.swift */; };
 		A00000000000000000009061 /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009010 /* LaunchAtLoginService.swift */; };
@@ -109,6 +112,7 @@
 		A00000000000000000009010 /* LaunchAtLoginService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginService.swift; sourceTree = "<group>"; };
 		A00000000000000000009020 /* NativeDockPreferencesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDockPreferencesService.swift; sourceTree = "<group>"; };
 		A00000000000000000009030 /* PanelVisibilityState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelVisibilityState.swift; sourceTree = "<group>"; };
+		A00000000000000000009080 /* PanelGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelGeometry.swift; sourceTree = "<group>"; };
 		A000000000000000000019B4 /* LaunchFavoriteStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchFavoriteStore.swift; sourceTree = "<group>"; };
 		A000000000000000000019B1 /* LauncherChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherChip.swift; sourceTree = "<group>"; };
 		A000000000000000000019C1 /* AppMenuFragments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMenuFragments.swift; sourceTree = "<group>"; };
@@ -153,6 +157,7 @@
 		A00000000000000000000019 /* window-lab */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "window-lab"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000058 /* FinderP0Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderP0Tests.swift; sourceTree = "<group>"; };
 		A00000000000000000008040 /* AppSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsStoreTests.swift; sourceTree = "<group>"; };
+		A000000000000000000090A0 /* PanelGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelGeometryTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000059 /* macos-dock-cc-v2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "macos-dock-cc-v2Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -229,6 +234,7 @@
 				A00000000000000000009010 /* LaunchAtLoginService.swift */,
 				A00000000000000000009020 /* NativeDockPreferencesService.swift */,
 				A00000000000000000009030 /* PanelVisibilityState.swift */,
+				A00000000000000000009080 /* PanelGeometry.swift */,
 				A000000000000000000019B4 /* LaunchFavoriteStore.swift */,
 				A000000000000000000019B2 /* BadgeStore.swift */,
 				A00000000000000000000027 /* ObservationPipeline */,
@@ -490,6 +496,7 @@
 			children = (
 				A00000000000000000000058 /* FinderP0Tests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
+				A000000000000000000090A0 /* PanelGeometryTests.swift */,
 			);
 			path = Unit;
 			sourceTree = "<group>";
@@ -630,6 +637,7 @@
 					A00000000000000000009011 /* LaunchAtLoginService.swift in Sources */,
 					A00000000000000000009021 /* NativeDockPreferencesService.swift in Sources */,
 					A00000000000000000009031 /* PanelVisibilityState.swift in Sources */,
+					A00000000000000000009081 /* PanelGeometry.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
 					A000000000000000000019A4 /* LaunchFavoriteStore.swift in Sources */,
 					A000000000000000000019A1 /* LauncherChip.swift in Sources */,
@@ -711,6 +719,8 @@
 				A00000000000000000009061 /* LaunchAtLoginService.swift in Sources */,
 				A00000000000000000009041 /* NativeDockPreferencesService.swift in Sources */,
 				A00000000000000000009051 /* PanelVisibilityState.swift in Sources */,
+				A00000000000000000009091 /* PanelGeometry.swift in Sources */,
+				A000000000000000000090A1 /* PanelGeometryTests.swift in Sources */,
 				A00000000000000000001020 /* Identifiers.swift in Sources */,
 				A00000000000000000001021 /* WindowModels.swift in Sources */,
 					A00000000000000000001022 /* SystemBoundaryModels.swift in Sources */,

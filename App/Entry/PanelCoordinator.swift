@@ -24,9 +24,10 @@ final class NonConstrainingPanel: NSPanel {
 
 @MainActor
 final class PanelCoordinator: NSObject {
-    static let panelHeight: CGFloat = 52
-    static let shadowPadding: CGFloat = 20
-    static let windowHeight: CGFloat = 92 // 52 + 20*2
+    private static let layoutMetrics = PanelLayoutMetrics.tungstenEdge
+    static let panelHeight: CGFloat = layoutMetrics.panelHeight
+    static let shadowPadding: CGFloat = layoutMetrics.shadowPadding
+    static let windowHeight: CGFloat = layoutMetrics.windowHeight
 
     private let runtime: AppRuntime
     private let drawerStore: DrawerStore
@@ -173,13 +174,13 @@ final class PanelCoordinator: NSObject {
         guard let panel = drawerPanel else { return }
 
         let screen = panelCurrentScreen(panel: mainPanel)
-        let vf = screen.visibleFrame
+        let screenGeometry = Self.screenGeometry(screen)
         // 用胶囊**目标** frame 定位（不读 live：用户可能在任务条宽度动画中触发弹簧开抽屉,Codex 二审 P1）。
         let capsuleRef = lastCapsuleTargetFrame == .zero ? (capsulePanel?.frame ?? .zero) : lastCapsuleTargetFrame
         // 抽屉最大内容高度 = 胶囊上方锚点 → 屏幕上沿的可用高度。超出由 DrawerView 内部滚动,
         // 绝不靠下压底边来塞下（否则压向胶囊/任务条 = 重叠,Codex 二审第 4 点）。
-        let drawerBottomY = capsuleRef.maxY - Self.shadowPadding + 8
-        let maxContentHeight = max(120, (vf.maxY - drawerBottomY) - 2 * Self.shadowPadding)
+        // 顶部上限仍避让菜单栏 / 刘海；底部锚点不避让原生 Dock，避免 Command+Option+D 或侧边 Dock 推动抽屉。
+        let maxContentHeight = PanelGeometry.maxDrawerContentHeight(forCapsule: capsuleRef, on: screenGeometry)
 
         // 每次打开都换一份新内容视图 → DrawerView 的 onAppear 重新触发淡入缩放,并拿到当前 maxContentHeight。
         let hosting = NSHostingView(rootView: DrawerView(maxContentHeight: maxContentHeight,
@@ -320,7 +321,8 @@ final class PanelCoordinator: NSObject {
                 // 否则"投放区尺寸→是否插空格→面板增高→投放区尺寸"成反馈环,空格闪烁、面板动画被高频打断
                 // 而过冲向下（owner 2026-06-21"先向下扩展再上移"的真因）。
                 let inset = d.insetBy(dx: Self.shadowPadding, dy: Self.shadowPadding)
-                let top = panelCurrentScreen(panel: drawer).visibleFrame.maxY
+                // 投放区向上延伸到与抽屉一致的顶部上限：避让菜单栏/刘海，但不避让原生 Dock。
+                let top = Self.screenGeometry(panelCurrentScreen(panel: drawer)).topUsableY
                 zones.append(CGRect(x: inset.minX, y: inset.minY, width: inset.width, height: max(inset.height, top - inset.minY)))
             }
             return zones
@@ -454,7 +456,7 @@ final class PanelCoordinator: NSObject {
         let s = screen.frame
 
         let panel = NonConstrainingPanel(
-            contentRect: NSRect(x: s.minX, y: s.minY + Self.bottomGap - Self.shadowPadding, width: s.width, height: Self.windowHeight),
+            contentRect: NSRect(x: s.minX, y: s.minY + Self.layoutMetrics.bottomGap - Self.shadowPadding, width: s.width, height: Self.windowHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -602,32 +604,21 @@ final class PanelCoordinator: NSObject {
 
     /// 任务条目标 frame（按内容宽度、居中、限宽）。
     private func dockTargetFrame(contentWidth: CGFloat, on screen: NSScreen) -> NSRect {
-        let maxWidth = screen.visibleFrame.width - 2 * (Self.outerMargin + Self.capsuleGap + Self.capsuleWidth)
-        let panelWidth = max(min(contentWidth, maxWidth), 120)
-        return centeredPanelFrame(panelWidth: panelWidth, screen: screen)
+        PanelGeometry.dockTargetFrame(contentWidth: contentWidth, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
     }
 
     /// 胶囊目标 frame（贴任务条右边、纵向居中）。只依赖传入的 dock **目标** frame。
     private func capsuleTargetFrame(forDock dockFrame: NSRect, on screen: NSScreen) -> NSRect {
-        let vf = screen.visibleFrame
-        let rawX = dockFrame.maxX - Self.shadowPadding + Self.capsuleGap
-        let rawY = dockFrame.minY + Self.shadowPadding + (Self.panelHeight - Self.capsuleWidth) / 2
-        let clampedX = min(max(rawX, vf.minX), vf.maxX - Self.capsuleWidth)
-        let clampedY = min(max(rawY, vf.minY), vf.maxY - Self.capsuleWidth)
-        return NSRect(x: clampedX - Self.shadowPadding, y: clampedY - Self.shadowPadding,
-                      width: Self.capsuleWidth + Self.shadowPadding * 2, height: Self.capsuleWidth + Self.shadowPadding * 2)
+        PanelGeometry.capsuleTargetFrame(forDock: dockFrame, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
     }
 
     /// 抽屉目标 frame（右边贴胶囊右边、**底边硬锚在胶囊上方、向上长**）。只依赖传入的胶囊 **目标** frame + 抽屉尺寸。
     /// 关键：底边绝不下移——超过上方可用空间就**封顶高度**（内容由 DrawerView 内部滚动），
     /// 绝不靠"把底边往下压"来塞下，否则压到胶囊/任务条（owner 2026-06-21 报图）。
     private func drawerTargetFrame(forCapsule capsuleFrame: NSRect, size: CGSize, on screen: NSScreen) -> NSRect {
-        let vf = screen.visibleFrame
-        let bottom = max(capsuleFrame.maxY - Self.shadowPadding + 8, vf.minY)   // 底边锚点,固定不动
-        let height = min(size.height, max(120, vf.maxY - bottom))               // 超出上方可用空间 → 封顶
-        let rawX = capsuleFrame.maxX - size.width
-        let clampedX = min(max(rawX, vf.minX), vf.maxX - size.width)
-        return NSRect(x: clampedX, y: bottom, width: size.width, height: height)
+        // 底部/左右定位使用 screen.frame，切断与原生 Dock visibleFrame 的耦合；
+        // 顶部高度仍由 topUsableY 封顶，避免菜单栏和刘海遮挡。
+        PanelGeometry.drawerTargetFrame(forCapsule: capsuleFrame, size: size, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
     }
 
     /// 统一布局入口：算齐三个目标 frame、存好（给 drop zone / 开抽屉读），三面板同组动画到目标。
@@ -946,7 +937,11 @@ final class PanelCoordinator: NSObject {
         let screens = NSScreen.screens
         let fromIdx = screens.firstIndex(of: panelScreen).map { "\($0)" } ?? "?"
         let toIdx = screens.firstIndex(of: targetScreen).map { "\($0)" } ?? "?"
-        let actualWidth = max(min(lastDesiredWidth, targetScreen.visibleFrame.width - 2 * Self.outerMargin), 120)
+        let actualWidth = PanelGeometry.dockTargetFrame(
+            contentWidth: lastDesiredWidth,
+            on: Self.screenGeometry(targetScreen),
+            metrics: Self.layoutMetrics
+        ).width - Self.shadowPadding * 2
         layoutPanels(contentWidth: lastDesiredWidth, on: targetScreen, animated: false)
         hoverLogger.info("switch toScreen=\(toIdx, privacy: .public) name=\(targetScreen.localizedName, privacy: .public) actualWidth=\(actualWidth, privacy: .public) fromScreen=\(fromIdx, privacy: .public)")
         armEdgeWakeIfNeeded(on: targetScreen, requiresHotZone: false)
@@ -1137,14 +1132,11 @@ final class PanelCoordinator: NSObject {
 
     // MARK: - Frame Helpers
 
-    private static let bottomGap: CGFloat = 8
-    private static let outerMargin: CGFloat = 12
-    private static let capsuleWidth: CGFloat = 52
-    private static let capsuleGap: CGFloat = 8
+    private static let outerMargin: CGFloat = layoutMetrics.outerMargin
+    private static let capsuleWidth: CGFloat = layoutMetrics.capsuleWidth
+    private static let capsuleGap: CGFloat = layoutMetrics.capsuleGap
 
-    private func centeredPanelFrame(panelWidth: CGFloat, screen: NSScreen) -> NSRect {
-        let vf = screen.visibleFrame
-        let x = vf.minX + (vf.width - panelWidth) / 2
-        return NSRect(x: x - Self.shadowPadding, y: screen.frame.minY + Self.bottomGap - Self.shadowPadding, width: panelWidth + Self.shadowPadding * 2, height: Self.windowHeight)
+    private static func screenGeometry(_ screen: NSScreen) -> PanelScreenGeometry {
+        PanelScreenGeometry(frame: screen.frame, visibleFrame: screen.visibleFrame, safeAreaTop: screen.safeAreaInsets.top)
     }
 }
