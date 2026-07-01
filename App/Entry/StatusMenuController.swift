@@ -1,5 +1,10 @@
 import AppKit
 
+private enum StatusMenuLayout {
+    static let textInsetX: CGFloat = 28
+    static let trailingInsetX: CGFloat = 14
+}
+
 @MainActor
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let store: AppSettingsStore
@@ -28,8 +33,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.onShowDebugConsole = onShowDebugConsole
         self.onExportDebugSnapshot = onExportDebugSnapshot
         self.onQuit = onQuit
-        nativeDockSliderView = PreferenceSliderMenuItemView(title: "唤醒系统 dock栏", titleVerticalOffset: -2)
-        edgeSliderView = PreferenceSliderMenuItemView(title: "唤醒 Tungsten Edge 钨极")
+        nativeDockSliderView = PreferenceSliderMenuItemView(title: "系统 Dock", subtitle: "⌘⌥D 显示/隐藏")
+        edgeSliderView = PreferenceSliderMenuItemView(title: "Tungsten Edge 钨极")
         super.init()
         configureStatusItem()
         configureMenu()
@@ -72,9 +77,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let edgeItem = NSMenuItem()
         edgeItem.view = edgeSliderView
         menu.addItem(edgeItem)
-        menu.addItem(.separator())
 
         #if DEBUG
+        menu.addItem(.separator())
         let debugMenu = NSMenu()
         let showDebug = NSMenuItem(title: "显示调试台", action: #selector(showDebugConsole), keyEquivalent: "")
         showDebug.target = self
@@ -85,9 +90,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let debugItem = NSMenuItem(title: "调试", action: nil, keyEquivalent: "")
         debugItem.submenu = debugMenu
         menu.addItem(debugItem)
+        menu.addItem(.separator())
         #endif
 
-        menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "退出 Tungsten Edge 钨极", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -166,6 +171,7 @@ final class PreferenceSliderMenuItemView: NSView {
     var onDelayCommit: ((Double) -> Void)?
 
     private let title: String
+    private let subtitle: String?
     private let titleVerticalOffset: CGFloat
     private var delay = 0.0
     private var commitTracker = PreferenceSliderCommitTracker()
@@ -173,11 +179,13 @@ final class PreferenceSliderMenuItemView: NSView {
     private let leftEndpointDot = EndpointDotView()
     private let rightEndpointDot = EndpointDotView()
     private let titleLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
     private let delayLabel = NSTextField(labelWithString: "")
     private let slider = MenuTrackingSlider()
 
-    init(title: String, titleVerticalOffset: CGFloat = 0) {
+    init(title: String, subtitle: String? = nil, titleVerticalOffset: CGFloat = 0) {
         self.title = title
+        self.subtitle = subtitle
         self.titleVerticalOffset = titleVerticalOffset
         super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 82))
         autoresizingMask = [.width]
@@ -221,6 +229,12 @@ final class PreferenceSliderMenuItemView: NSView {
         titleLabel.lineBreakMode = .byTruncatingTail
         addSubview(titleLabel)
 
+        subtitleLabel.font = .systemFont(ofSize: 10)
+        subtitleLabel.textColor = .tertiaryLabelColor
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.isHidden = subtitle == nil
+        addSubview(subtitleLabel)
+
         delayLabel.font = .systemFont(ofSize: 11)
         delayLabel.textColor = .secondaryLabelColor
         delayLabel.alignment = .center
@@ -246,19 +260,31 @@ final class PreferenceSliderMenuItemView: NSView {
 
     override func layout() {
         super.layout()
-        let marginX: CGFloat = 14
         let dotSize: CGFloat = 8
+        let hasSubtitle = subtitle != nil
+        let contentX = StatusMenuLayout.textInsetX
+        let contentWidth = bounds.width - contentX - StatusMenuLayout.trailingInsetX
         let titleY = bounds.height - 30 + titleVerticalOffset
         let labelY = bounds.height - 54
         let sliderY: CGFloat = 10
-        titleLabel.frame = NSRect(x: marginX, y: titleY, width: bounds.width - marginX * 2, height: 20)
+        if hasSubtitle {
+            let titleWidth = min(contentWidth, max(ceil(titleLabel.intrinsicContentSize.width), 76))
+            let subtitleGap: CGFloat = 2
+            let subtitleX = contentX + titleWidth + subtitleGap
+            titleLabel.frame = NSRect(x: contentX, y: titleY, width: titleWidth, height: 20)
+            subtitleLabel.frame = NSRect(x: subtitleX, y: titleY, width: max(0, contentWidth - titleWidth - subtitleGap), height: 18)
+        } else {
+            titleLabel.frame = NSRect(x: contentX, y: titleY, width: contentWidth, height: 20)
+            subtitleLabel.frame = NSRect(x: contentX, y: titleY, width: 0, height: 18)
+        }
 
-        let sliderX = marginX + 34
-        let sliderWidth = bounds.width - marginX * 2 - 68
+        let sliderSideInset: CGFloat = 34
+        let sliderX = contentX + sliderSideInset
+        let sliderWidth = max(0, contentWidth - sliderSideInset * 2)
         delayLabel.frame = NSRect(x: sliderX, y: labelY, width: sliderWidth, height: 14)
 
         let dotY = sliderY + 6
-        leftEndpointDot.frame = NSRect(x: marginX + 14, y: dotY, width: dotSize, height: dotSize)
+        leftEndpointDot.frame = NSRect(x: contentX + 14, y: dotY, width: dotSize, height: dotSize)
         slider.frame = NSRect(x: sliderX, y: sliderY, width: sliderWidth, height: 20)
         rightEndpointDot.frame = NSRect(x: slider.frame.maxX + 12, y: dotY, width: dotSize, height: dotSize)
     }
@@ -281,10 +307,16 @@ final class PreferenceSliderMenuItemView: NSView {
         displayString = displayString(for: index)
         delay = AppSettingsStore.delayFromSliderIndex(index)
         titleLabel.stringValue = title
+        subtitleLabel.stringValue = subtitle ?? ""
         delayLabel.stringValue = displayString
         leftEndpointDot.isOn = index == 0
         rightEndpointDot.isOn = index == AppSettingsStore.sliderIndexMax
-        setAccessibilityLabel("\(title)，\(displayString)")
+        var accessibilityParts = [title]
+        if let subtitle {
+            accessibilityParts.append(subtitle)
+        }
+        accessibilityParts.append(displayString)
+        setAccessibilityLabel(accessibilityParts.joined(separator: "，"))
         setAccessibilityValue(displayString)
         slider.displayString = displayString
     }
