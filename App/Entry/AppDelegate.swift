@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store: settingsStore,
         launchAtLoginService: LaunchAtLoginService(),
         nativeDockPreferencesService: NativeDockPreferencesService(),
+        isAccessibilityTrusted: { PermissionService().hasRequiredPermissions() },
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
         onQuit: { NSApp.terminate(nil) }

@@ -10,12 +10,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let store: AppSettingsStore
     private let launchAtLoginService: LaunchAtLoginServicing
     private let nativeDockPreferencesService: NativeDockPreferencesServicing
+    // 闭包注入而非直接依赖 PermissionService：测试 target 编译本文件但不含 PermissionService.swift。
+    private let isAccessibilityTrusted: () -> Bool
     private let onShowDebugConsole: () -> Void
     private let onExportDebugSnapshot: () -> Void
     private let onQuit: () -> Void
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
+    private let permissionWarningItem = NSMenuItem(title: "辅助功能权限未开启", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+    private let permissionWarningSeparator = NSMenuItem.separator()
     private let launchAtLoginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let openLoginItemsSettingsItem = NSMenuItem(title: "打开登录项设置…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
@@ -24,17 +28,22 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     init(store: AppSettingsStore,
          launchAtLoginService: LaunchAtLoginServicing,
          nativeDockPreferencesService: NativeDockPreferencesServicing,
+         isAccessibilityTrusted: @escaping () -> Bool,
          onShowDebugConsole: @escaping () -> Void,
          onExportDebugSnapshot: @escaping () -> Void,
          onQuit: @escaping () -> Void) {
         self.store = store
         self.launchAtLoginService = launchAtLoginService
         self.nativeDockPreferencesService = nativeDockPreferencesService
+        self.isAccessibilityTrusted = isAccessibilityTrusted
         self.onShowDebugConsole = onShowDebugConsole
         self.onExportDebugSnapshot = onExportDebugSnapshot
         self.onQuit = onQuit
-        nativeDockSliderView = PreferenceSliderMenuItemView(title: "系统 Dock", subtitle: "⌘⌥D 显示/隐藏")
-        edgeSliderView = PreferenceSliderMenuItemView(title: "Tungsten Edge 钨极")
+        nativeDockSliderView = PreferenceSliderMenuItemView(title: "系统 Dock",
+                                                            subtitle: "⌘⌥D 显示/隐藏",
+                                                            caption: "鼠标触及屏幕底边后，唤出系统 Dock 的延迟")
+        edgeSliderView = PreferenceSliderMenuItemView(title: "Tungsten Edge 钨极",
+                                                      caption: "鼠标触及屏幕底边后，唤出本任务条的延迟")
         super.init()
         configureStatusItem()
         configureMenu()
@@ -55,6 +64,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func configureMenu() {
         menu.delegate = self
 
+        permissionWarningItem.target = self
+        permissionWarningItem.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "警告")
+        permissionWarningItem.isHidden = true
+        permissionWarningSeparator.isHidden = true
+        menu.addItem(permissionWarningItem)
+        menu.addItem(permissionWarningSeparator)
+
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
         openLoginItemsSettingsItem.target = self
@@ -70,6 +86,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let nativeDockItem = NSMenuItem()
         nativeDockItem.view = nativeDockSliderView
         menu.addItem(nativeDockItem)
+        menu.addItem(.separator())
 
         edgeSliderView.onDelayChange = { [weak store] delay in
             store?.setEdgeAutoHideDelay(delay)
@@ -90,15 +107,36 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let debugItem = NSMenuItem(title: "调试", action: nil, keyEquivalent: "")
         debugItem.submenu = debugMenu
         menu.addItem(debugItem)
-        menu.addItem(.separator())
         #endif
+
+        menu.addItem(.separator())
+        if let versionTitle = Self.versionMenuTitle() {
+            let versionItem = NSMenuItem(title: versionTitle, action: nil, keyEquivalent: "")
+            versionItem.isEnabled = false
+            menu.addItem(versionItem)
+        }
 
         let quitItem = NSMenuItem(title: "退出 Tungsten Edge 钨极", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
     }
 
+    private static func versionMenuTitle() -> String? {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String
+        let build = info?["CFBundleVersion"] as? String
+        switch (version, build) {
+        case let (version?, build?): return "版本 \(version) (\(build))"
+        case let (version?, nil): return "版本 \(version)"
+        case let (nil, build?): return "版本 (\(build))"
+        case (nil, nil): return nil
+        }
+    }
+
     func menuWillOpen(_ menu: NSMenu) {
+        let granted = isAccessibilityTrusted()
+        permissionWarningItem.isHidden = granted
+        permissionWarningSeparator.isHidden = granted
         refreshCheckmarks()
         nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
@@ -129,6 +167,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openLoginItemsSettings() {
         launchAtLoginService.openSystemSettings()
+    }
+
+    @objc private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func scheduleNativeDockPreferencesConfirmation() {
@@ -172,6 +215,7 @@ final class PreferenceSliderMenuItemView: NSView {
 
     private let title: String
     private let subtitle: String?
+    private let caption: String
     private let titleVerticalOffset: CGFloat
     private var delay = 0.0
     private var commitTracker = PreferenceSliderCommitTracker()
@@ -180,14 +224,18 @@ final class PreferenceSliderMenuItemView: NSView {
     private let rightEndpointDot = EndpointDotView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    private let captionLabel = NSTextField(labelWithString: "")
     private let delayLabel = NSTextField(labelWithString: "")
+    private let leftEndpointLabel = NSTextField(labelWithString: "常驻")
+    private let rightEndpointLabel = NSTextField(labelWithString: "不唤醒")
     private let slider = MenuTrackingSlider()
 
-    init(title: String, subtitle: String? = nil, titleVerticalOffset: CGFloat = 0) {
+    init(title: String, subtitle: String? = nil, caption: String, titleVerticalOffset: CGFloat = 0) {
         self.title = title
         self.subtitle = subtitle
+        self.caption = caption
         self.titleVerticalOffset = titleVerticalOffset
-        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 82))
+        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 98))
         autoresizingMask = [.width]
         configureSubviews()
         updateDisplay()
@@ -235,10 +283,27 @@ final class PreferenceSliderMenuItemView: NSView {
         subtitleLabel.isHidden = subtitle == nil
         addSubview(subtitleLabel)
 
+        captionLabel.font = .systemFont(ofSize: 10)
+        captionLabel.textColor = .tertiaryLabelColor
+        captionLabel.lineBreakMode = .byTruncatingTail
+        addSubview(captionLabel)
+
         delayLabel.font = .systemFont(ofSize: 11)
         delayLabel.textColor = .secondaryLabelColor
         delayLabel.alignment = .center
         addSubview(delayLabel)
+
+        leftEndpointLabel.font = .systemFont(ofSize: 9)
+        leftEndpointLabel.textColor = .tertiaryLabelColor
+        leftEndpointLabel.alignment = .center
+        leftEndpointLabel.setAccessibilityElement(false)
+        addSubview(leftEndpointLabel)
+
+        rightEndpointLabel.font = .systemFont(ofSize: 9)
+        rightEndpointLabel.textColor = .tertiaryLabelColor
+        rightEndpointLabel.alignment = .center
+        rightEndpointLabel.setAccessibilityElement(false)
+        addSubview(rightEndpointLabel)
 
         slider.minValue = 0
         slider.maxValue = Double(AppSettingsStore.sliderIndexMax)
@@ -265,7 +330,8 @@ final class PreferenceSliderMenuItemView: NSView {
         let contentX = StatusMenuLayout.textInsetX
         let contentWidth = bounds.width - contentX - StatusMenuLayout.trailingInsetX
         let titleY = bounds.height - 30 + titleVerticalOffset
-        let labelY = bounds.height - 54
+        let captionY = bounds.height - 46
+        let labelY: CGFloat = 28
         let sliderY: CGFloat = 10
         if hasSubtitle {
             let titleWidth = min(contentWidth, max(ceil(titleLabel.intrinsicContentSize.width), 76))
@@ -278,6 +344,8 @@ final class PreferenceSliderMenuItemView: NSView {
             subtitleLabel.frame = NSRect(x: contentX, y: titleY, width: 0, height: 18)
         }
 
+        captionLabel.frame = NSRect(x: contentX, y: captionY, width: contentWidth, height: 14)
+
         let sliderSideInset: CGFloat = 34
         let sliderX = contentX + sliderSideInset
         let sliderWidth = max(0, contentWidth - sliderSideInset * 2)
@@ -287,6 +355,8 @@ final class PreferenceSliderMenuItemView: NSView {
         leftEndpointDot.frame = NSRect(x: contentX + 14, y: dotY, width: dotSize, height: dotSize)
         slider.frame = NSRect(x: sliderX, y: sliderY, width: sliderWidth, height: 20)
         rightEndpointDot.frame = NSRect(x: slider.frame.maxX + 12, y: dotY, width: dotSize, height: dotSize)
+        leftEndpointLabel.frame = NSRect(x: contentX, y: labelY, width: sliderSideInset, height: 14)
+        rightEndpointLabel.frame = NSRect(x: slider.frame.maxX, y: labelY, width: sliderSideInset, height: 14)
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
@@ -308,13 +378,19 @@ final class PreferenceSliderMenuItemView: NSView {
         delay = AppSettingsStore.delayFromSliderIndex(index)
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle ?? ""
+        captionLabel.stringValue = caption
         delayLabel.stringValue = displayString
-        leftEndpointDot.isOn = index == 0
-        rightEndpointDot.isOn = index == AppSettingsStore.sliderIndexMax
+        // knob 停在端点时它本身就是位置信号，再亮实心点纯冗余 → 隐藏该端刻度点，
+        // 选中态改由端点小字变色承担。
+        leftEndpointDot.isHidden = index == 0
+        rightEndpointDot.isHidden = index == AppSettingsStore.sliderIndexMax
+        leftEndpointLabel.textColor = index == 0 ? .controlAccentColor : .tertiaryLabelColor
+        rightEndpointLabel.textColor = index == AppSettingsStore.sliderIndexMax ? .controlAccentColor : .tertiaryLabelColor
         var accessibilityParts = [title]
         if let subtitle {
             accessibilityParts.append(subtitle)
         }
+        accessibilityParts.append(caption)
         accessibilityParts.append(displayString)
         setAccessibilityLabel(accessibilityParts.joined(separator: "，"))
         setAccessibilityValue(displayString)
