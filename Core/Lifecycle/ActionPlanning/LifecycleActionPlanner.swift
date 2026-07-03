@@ -62,8 +62,11 @@ final class LifecycleActionPlanner {
             // 连点才能严格交替（minimize → activate → …）而不是重复上一个动作。
             let optimistic = optimisticStates[id.rawValue]
             let status = optimistic?.status ?? record.status
+            // NSWorkspace.frontmostApplication 是通知驱动缓存，SkyLight 直切前台后可滞后
+            // ~1.5s（第二击被误判成"未在前台"→ 重复计划 activate 无观感）。isActive 走
+            // 新建实例的即时读，SkyLight 切换后立即翻面（Docs/22 §11 POSTACTIVATE 实证）。
             let appIsFrontmost = optimistic?.isAppFrontmost
-                ?? (NSWorkspace.shared.frontmostApplication?.processIdentifier == record.pid)
+                ?? (NSRunningApplication(processIdentifier: record.pid)?.isActive == true)
             if record.id.rawValue.hasPrefix("app-") {
                 // Finder persistent chip: never hide — always open/focus to match system Dock behavior.
                 if record.bundleIdentifier == "com.apple.finder" {

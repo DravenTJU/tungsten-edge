@@ -28,6 +28,14 @@
 - 沙箱 App 不能直接修改系统 Dock 偏好或重启 Dock。`NativeDockPreferencesService` 必须通过 `SecTaskCopyValueForEntitlement("com.apple.security.app-sandbox")` 检测沙箱；沙箱为 true 时不要执行 `defaults write com.apple.dock` 或 `killall Dock`。
 - 当前系统 Dock 写入面向非沙箱 GitHub/Homebrew 分发。菜单里的系统 Dock 滑杆只在鼠标松手且数值实际变化后应用，不能在拖动过程中连续写系统 Dock 或连续重启 Dock。
 
+## 面板几何与 `visibleFrame`（2026-07-01）
+
+- `NSScreen.visibleFrame` 会随系统 UI 可用区变化：底部 Dock 显示/隐藏会改变底部可用区；左/右 Dock 常驻会改变 `visibleFrame.minX` / `visibleFrame.maxX`。
+- Cmd+Opt+D 显示或隐藏系统 Dock 时也会触发 `visibleFrame` 变化。底部任务条、胶囊、抽屉如果用 `visibleFrame` 贴底或横向 clamp，会出现原生 Dock 一唤醒就上移/变窄的错觉。
+- 底部三面板和跨面板拖动载体应锚定到物理屏幕 `screen.frame`：底边用 `screen.frame.minY`，横向 clamp 也按 `screen.frame`。这套 UI 有意贴屏幕物理底边，不避让系统 Dock 常驻占位。
+- `visibleFrame` 仍适合表达菜单栏/可用区上限。抽屉最大高度继续受 `visibleFrame.maxY` 与 `screen.frame.maxY - safeAreaInsets.top` 的较小值限制，避免顶到菜单栏或刘海安全区。
+- 菜单栏自动隐藏会让 `visibleFrame.maxY` 改变；在无刘海外接屏上，抽屉最大高度仍可能随菜单栏显隐跳变。这是已知边界，不等同于底部 Dock 显隐导致面板整体移动的问题。
+
 ## Tungsten Edge 自动隐藏与多屏底边探测（2026-06-30）
 
 - Tungsten Edge 的自动隐藏滑杆语义是“底边唤醒等待时间”，不是“鼠标离开后多久隐藏”。有限值范围为 `0.1s...3.0s`；`不唤醒` 表示会隐藏，但底边不启动唤醒计时。
@@ -46,3 +54,13 @@
 - **可靠信号 = `CGWindowListCopyWindowInfo(.optionOnScreenOnly)`**：后台标签是被 order-out 的独立 NSWindow，**不在 on-screen 列表**；每个标签组恰好留 **1 个**在屏 = 当前可见标签。实测 Ghostty 38 窗 → on-screen 仅 2（两组各 1）。合成层真相，切标签即时更新，无 AX 滞后。判“标签组里谁可见”用它。
 - **CG bounds 与 AX bounds 可能不同**：实测同一 Ghostty 标签，CG 报宽 1005/874，AX 报 1191。所以**分组用 AX bounds**（与 `StripItem.tabGroupKey` 一致），**只用 CG 判 `cgWindowID` 是否在屏**——两者别混用。
 - 当前实现：`AppTracker.rebuildSnapshot` 对“同 frame ≥2 成员”的标签组改用 on-screen 判可见性（不在屏即视为最小化），普通单窗口仍走 AX；前台 0.5s 轮询比对 on-screen 集合发现切标签（AX 完全不报时的即时触发）。`CGWindowListCopyWindowInfo` 在无屏幕录制权限时拿不到标题，但 `pid` / `number` / `bounds` / `layer` / on-screen 都可用，足够本判定。
+
+## 激活/前台切换的时序陷阱（2026-07-03 实测，激活闪根治过程沉淀）
+
+> 完整调试过程见 `Docs/22` §12；硬护栏见 AGENTS.md「Minimize returns focus…」激活闪条目。
+
+- **`NSWorkspace.frontmostApplication` 是通知驱动缓存，SkyLight（`_SLPSSetFrontProcessWithOptions`）切前台后滞后 0.4–1.5s**。动作决策路径（toggle 规划、最小化预切 guard）读它会误判；**新建 `NSRunningApplication(processIdentifier:)` 实例读 `isActive` 是即时的**，决策一律用后者。
+- **对打盹（App Nap）App 的任何 AX 问询可阻塞 400–900ms**：`inventoryWindows`（0.5s messaging timeout）、`kAXMinimizedAttribute` 读取、`_AXUIElementGetWindow` 都会卡。凡在用户点击的即时路径上，能用快照 / CG 数据就不要现场问 AX——这条空窗曾是激活闪的根因。
+- **打盹 App 的窗口会从 `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` 临时消失**（连"当前前台 App 刚激活的窗口"都可能缺席几秒）。按 on-screen 列表反查 cgWindowID 不可靠；快照里的 `record.cgWindowID` 才是稳定来源。
+- **抢顶型 App（Ghostty、Chromium 系：Chrome/Dia）在自己仍是活跃 App 期间，若别的窗口被 AXRaise 盖到它上面，会在 ~+450ms 把自己的窗口浮回顶层**；良性 App（Finder/Safari/微信/飞书/PS/AI…）不会。这就是为什么"闪不闪取决于从哪个 App 切走"。
+- **对仍最小化的窗口发 SkyLight make-key 事件，App 会把键盘焦点落到它的可见兄弟窗口上**（Chrome/访达实测）。最小化恢复后必须对目标窗口 `kAXMainAttribute=true` 纠正 App 内部焦点，否则输入焦点和 AX `kAXFocusedWindow` 都停在兄弟窗口。

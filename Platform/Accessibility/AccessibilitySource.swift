@@ -333,6 +333,11 @@ struct AccessibilityWindowActionExecutor {
         let runningApp = NSRunningApplication(processIdentifier: handle.pid)
         if reader.boolAttribute(kAXMinimizedAttribute as CFString, from: handle.element) == true {
             _ = setMinimized(false, for: handle)
+            // 恢复后立刻把 App 内部焦点键回本窗口（kAXMain = App 内切窗的标准 AX 通道）。
+            // 提前聚焦对「仍最小化的窗口」发的 make-key 会被 App 落到可见兄弟窗口上（B1 被
+            // 键住并抬起）；不纠正的话，键盘输入和「最小化回上一个 App」的 focused-window
+            // 保护都会错到 B1（2026-07-03 Chrome/访达 B1B2 实测）。
+            AXUIElementSetAttributeValue(handle.element, kAXMainAttribute as CFString, kCFBooleanTrue)
         }
 
         let raised = AXUIElementPerformAction(handle.element, kAXRaiseAction as CFString) == .success
@@ -402,7 +407,9 @@ struct AccessibilityWindowActionExecutor {
     /// frontmost focused window. Only fires when this specific handle is focused,
     /// so right-click minimizing a background sibling does not steal focus.
     func findBackgroundActivationTarget(for handle: WindowHandle) -> pid_t? {
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == handle.pid else { return nil }
+        // isActive（即时读）而非 NSWorkspace.frontmostApplication（滞后缓存）：SkyLight 激活后
+        // ~1.5s 内读缓存会误判"App 不在前台"，静默跳过预切 → macOS 提拔同 App 兄弟窗口。
+        guard NSRunningApplication(processIdentifier: handle.pid)?.isActive == true else { return nil }
 
         let appElement = AXUIElementCreateApplication(handle.pid)
         AXUIElementSetMessagingTimeout(appElement, 0.2)
@@ -513,14 +520,14 @@ struct AccessibilityWindowActionExecutor {
     private static let skyLightFocusEnabled =
         ProcessInfo.processInfo.environment["DOCK_SKYLIGHT_FOCUS"] != "0"
 
-    /// Best-effort windowID-targeted focus. Return false only when we cannot even
-    /// attempt the route; SkyLight return codes are not a fallback signal.
+    /// Shared SkyLight focus core: front-process switch + the two make-key events for a
+    /// known cgWindowID. Pure event posts — no AX round-trips, so it never blocks on a
+    /// napping target app. Byte layout is load-bearing (see AGENTS.md); do not vary it.
     @discardableResult
-    func focusWindowViaSkyLight(pid: pid_t, element: AXUIElement) -> Bool {
+    fileprivate func postSkyLightWindowFocus(pid: pid_t, windowID: CGWindowID) -> Bool {
         guard Self.skyLightFocusEnabled else { return false }
         guard let focus = Self.skyLightFocus,
-              let getPSN = Self.frontProcessSwitch?.get,
-              let windowID = reader.cgWindowID(for: element) else {
+              let getPSN = Self.frontProcessSwitch?.get else {
             Self.chipProbeLogger.info("skylight-focus unavailable pid=\(pid, privacy: .public)")
             return false
         }
@@ -552,6 +559,31 @@ struct AccessibilityWindowActionExecutor {
         withUnsafePointer(to: &psn) { pointer in
             firstEvent.withUnsafeBufferPointer { _ = focus.post(pointer, $0.baseAddress!) }
             secondEvent.withUnsafeBufferPointer { _ = focus.post(pointer, $0.baseAddress!) }
+        }
+        return true
+    }
+
+    /// 提前聚焦（激活闪根治 2026-07-03）：点击瞬间用快照里已知的 cgWindowID 直接切前台，
+    /// 抢在任何可能阻塞 400–900ms 的 AX 问询（句柄捕获 / 最小化读取 / cgID 读取）之前。
+    /// 空窗期正是 Ghostty / Chromium 系前台 App 把自己窗口抢回顶层造成激活闪的窗口期。
+    /// 最小化恢复同样受益：先把目标 App 切成前台，随后的 unminimize 在无竞争下展开。
+    @discardableResult
+    func focusWindowEarly(pid: pid_t, cgWindowID: CGWindowID) -> Bool {
+        postSkyLightWindowFocus(pid: pid, windowID: cgWindowID)
+    }
+
+    /// Best-effort windowID-targeted focus. Return false only when we cannot even
+    /// attempt the route; SkyLight return codes are not a fallback signal.
+    @discardableResult
+    func focusWindowViaSkyLight(pid: pid_t, element: AXUIElement) -> Bool {
+        guard Self.skyLightFocusEnabled else { return false }
+        guard let windowID = reader.cgWindowID(for: element) else {
+            Self.chipProbeLogger.info("skylight-focus unavailable pid=\(pid, privacy: .public)")
+            return false
+        }
+
+        guard postSkyLightWindowFocus(pid: pid, windowID: windowID) else {
+            return false
         }
         _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
         return true
@@ -613,6 +645,19 @@ struct PlatformActionExecutor {
         }
 
         let isFinderWindow = FinderWindowRules.isFinder(bundleIdentifier: record.bundleIdentifier)
+
+        // 提前聚焦（激活闪根治 2026-07-03）：仅 activate + 跨 App，可见与最小化窗口都覆盖，
+        // 访达也包含（confirmFocused 保护路径在后面照常执行；访达的多次捕获重试空窗更长，
+        // 曾是"只剩访达还闪"的原因）。必须发生在下面的句柄捕获之前 —— 捕获/恢复对目标 App
+        // 的 AX 问询可阻塞数百毫秒，这段空窗正是仍聚焦的旧前台 App（Ghostty / Chromium 系）
+        // 把窗口抢回顶层的窗口期。隐藏 App 的窗口不提前（unhide 流程另算）。
+        if request.kind == .activateWindow,
+           let cgWindowID = record.cgWindowID,
+           record.status == .active || record.status == .inactive || record.status == .minimized,
+           NSRunningApplication(processIdentifier: record.pid)?.isActive != true {
+            windowExecutor.focusWindowEarly(pid: record.pid, cgWindowID: cgWindowID)
+        }
+
         // If Finder is hidden, unhide it first so its AX windows become accessible.
         // Then fall through to the normal window-level capture path — avoids regressing
         // to app-level activate, which can raise the wrong window (guardrail in AGENTS.md).

@@ -237,6 +237,8 @@ nowin 和 carbon 都能根治 A2 冒头。选 **carbon**，因为 `SetFrontProce
 
 ## 11. 激活闪 — 跨 App 残留闪的干净诊断与「接受」裁决（2026-06-25，更正 §10 的"已根治"）
 
+> **⚠️ 2026-07-03 更正：本节的「接受」裁决与「macOS 合成层不可控」诊断均被 §12 推翻。** 残留闪已根治（提前聚焦），根因是我们自己管线里的 AX 阻塞空窗，不是合成层。本节保留作历史；「勿再试」清单仍然有效（§12 的探针又证伪了两个新修法）。以 §12 为准。
+
 > 一句话：**SkyLight 定向聚焦保留（修好了大头），但跨 App 切换约 30% 的那一下晚闪是 macOS 合成层的不确定过渡，安全手段压不掉，接受为已知残留。** 本节是把 §10 过早的"根治"结论纠回事实，附决定性的干净诊断证据 + 两个被证伪的修法。
 
 ### 11.1 起因：所谓"只有 Chrome 闪"的好版本不存在
@@ -269,3 +271,46 @@ owner 一度记得有个"只有 Chrome 闪、其它 App 冷激活不闪"的版�
 - **接受**约 30% 跨 App 切换那一下晚闪为已知小残留（与 Chrome 同类，cosmetic，功能/焦点/菜单栏全对）。
 - 所有诊断埋点（`SKYLIGHTFOCUS` / `SKYLIGHTDIAG` / `FLASHDIAG` / `PRERAISE` / `POSTACTIVATE`）已清除，`.activateWindow` 分支收回到单行 `return windowExecutor.activate(...)`。
 - 代码落点：`Platform/Accessibility/AccessibilitySource.swift` 的 `activate()` 中段 + `focusWindowViaSkyLight`。AGENTS.md 见「Minimize returns focus…」节末尾的激活闪条目（已同步更正）。
+
+---
+
+## 12. 激活闪 — 根治（2026-07-03，推翻 §11 的「接受」裁决）
+
+> 一句话：**§11 说的「macOS 合成层不确定过渡、压不掉」是误诊。真正的根因是我们自己管线里的 AX 阻塞空窗：点击后到「切前台」真正落地之间隔着对打盹目标 App 的多次 AX 问询（句柄捕获 0.5s 超时 / 最小化预读 / cgID 读取），合计可阻塞 400–900ms；空窗里初始 AXRaise 已把目标窗口抬上去、而旧前台 App 仍是活跃 App——若它属于「抢顶型」（Ghostty + Chromium 系：Chrome/Dia），就在 ~+450ms 把自己的窗口浮回顶层 = 闪。** 修法 = 提前聚焦：点击瞬间用快照里现成的 cgWindowID 直接 SkyLight 切前台（零 AX），空窗消失，闪消失。owner 起问「这 30% 能不能根治」，九轮带探针真机点击（owner 点、我读日志）走到根治。
+
+### 12.1 为什么 §11 会误诊（对未来的我最重要的一段）
+
+§11 的干净诊断本身没错——错在**解读**。它测到「进程已切（isActive true）、A1 已 30ms 抬顶，闪仍发生」，据此推断我们可控的都对了、剩下是系统层。漏掉的变量有两个：
+
+1. **isActive true ≠ slps 已落地**：诊断读的是 slps 调用返回后的 isActive，但 slps 前面还排着句柄捕获等 AX 调用——**整条管线的起点到 slps 之间的延迟没有被测量**。本轮给 slps 落地时刻打上时间戳后立刻看清：闪的 case slps 落在 +400~900ms，干净的 case 落在 +220ms 以内，完全相关。
+2. **「~30% 随机」其实是两个隐藏条件的合取**：目标 App 在打盹（AX 问询才慢 → 有空窗）**且**来源 App 是抢顶型（Ghostty/Chromium 系；良性来源 Finder/Safari/微信/飞书/PS/AI… 即使空窗 600ms 也不闪）。「热点击不闪 / 冷点击才闪」「约 1/3」全是这两个条件的统计投影。owner 的关键观察帮了大忙：「多点一下 Ghostty 让它聚焦后，闪剧增」——抢顶只在来源 App **处于聚焦状态**时发生，前几轮 Ghostty 常常只是窗口在顶、App 未聚焦，所以复现率低。
+
+**教训**：「我们能控制的都对了」这类结论，必须对**整条时间线**打点（含管线内部每一步的落地时刻），不能只验证末端状态。
+
+### 12.2 九轮探针的路径（浓缩）
+
+全部方法论沿用 §4（主程序埋点 + print 进 run.log + owner 真机隔 3 秒点击 + 逐帧 z-order 采样带 seq）：
+
+- **基线轮**：37 击，经典回浮 5 次（320/730/40/480/140ms）+ 慢抬 2 次 ≈ 17–23%，现象在。
+- **实验 1「前台链插队」证伪**：切前台前先把自己（accessory、无 layer-0 窗口）切成前台进程，想断掉「上一个前台 App」链。机械上每次成功（result=0、workspace 一度显示钨极为前台），闪率不降（5/24）。**但暴露出决定性规律：本轮全部 5 次回浮的来源都是 Ghostty；非 Ghostty 来源 18 次 0 闪。**
+- **实验 3「补发 deactivate 事件给旧窗口」证伪**：yabai 同 App 切窗的技巧外推到跨 App，无效（及时发出的 case 照样闪）。同轮暴露第二个关键事实：**exp3 经常静默跳过——因为打盹 App 的窗口会从 CG on-screen 列表里消失**（同一个квирk 也害了实验 4 第一版）。
+- **实验 4「提前切前台」= 正解**：exp4 第一版从 on-screen CG 列表按 bounds 找 wid → 打盹 App 恰好查不到 → 只命中 5/22——却形成完美对照：**命中的 5 次全部零闪（含 3 次从聚焦 Ghostty 切走），跳过的 17 次闪照旧**。slps 落地时间戳同轮钉死了「空窗大小 ↔ 闪」的因果。
+- **正式版**：wid 不查表也不问 AX——**快照 `record.cgWindowID` 本来就有**。`focusWindowEarly` 在 `PlatformActionExecutor.execute` 句柄捕获**之前**调用（activate + 跨 App + active/inactive/minimized）。验证轮从聚焦 Ghostty 切走全程零闪。
+- **最小化恢复三轮收尾**（owner 发现「跟打盹时间没关系，从最小化激活就闪」→ 其实是我第一版把 minimized 排除在提前聚焦外）：
+  1. 纳入 minimized（`early-min`）→ 闪没了,但暴露副作用：**对仍最小化的窗口发 make-key，App 会把可见兄弟 B1 键住并抬起**（Chrome/访达实测,诊断日志 `appFocused=B1`）→ 键盘焦点错到 B1 + 「最小化回上一个 App」的 focused-window 保护被迫跳过 → B1 上位。
+  2. 试过「有可见兄弟就跳过提前聚焦」→ 焦点对了但闪回来（Chrome/访达/Dia 全闪）——不可取。
+  3. 终解：**提前聚焦保留 + `activate()` 里 unminimize 之后立即 `kAXMainAttribute=true` 纠正 App 内部焦点**。B1 恢复期在 B2 后面短暂露一下 = owner 接受的已知观感（像整个 App 被带到前台）。
+- **同根衍生修复**：`NSWorkspace.frontmostApplication` 在 SkyLight 切换后滞后 0.4–1.5s（通知驱动缓存）。两处决策点改用新建实例的 `NSRunningApplication.isActive` 即时读：`LifecycleActionPlanner` 的 toggle `appIsFrontmost`（修「激活后点一下没反应、要点第二下才最小化」）和 `findBackgroundActivationTarget` 的前台 guard（修「最小化后回到同 App 兄弟而不是上一个 App」）。
+
+### 12.3 落点与守护
+
+- 代码：`AccessibilitySource.swift` — `postSkyLightWindowFocus`（共享核心，字节布局不变）/ `focusWindowEarly` / `execute` 顶部的提前聚焦块 / `activate()` 的 kAXMain 纠正；`LifecycleActionPlanner.swift` 的 isActive 改读。探针代码已全部清除。
+- kill-switch `DOCK_SKYLIGHT_FOCUS=0` 同时关掉 early + post-capture 两段，回退为标准 activate。
+- 硬护栏（AGENTS.md「Minimize returns focus…」激活闪条目已重写）：提前聚焦必须在句柄捕获之前、wid 必须来自快照（不查 on-screen 列表、不问 AX）；kAXMain 纠正不可删；决策路径禁用 `frontmostApplication`；实验 1/3 已证伪勿再试。
+
+### 12.4 新沉淀的平台知识（已补进 Docs/05）
+
+- `NSWorkspace.frontmostApplication` 在 SLPS 切前台后滞后 0.4–1.5s；新建 `NSRunningApplication` 实例的 `isActive` 即时。
+- 打盹 App 的窗口会从 `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` 临时消失（连当前前台 App 刚激活的窗口都可能缺席）——按 on-screen 列表找 wid 不可靠。
+- 对仍最小化窗口发 SkyLight make-key，App 会把键盘焦点落到可见兄弟窗口上;恢复后需 `kAXMainAttribute=true` 纠正。
+- 对打盹 App 的任意 AX 问询（含 `_AXUIElementGetWindow`、inventory 读）可阻塞数百毫秒——凡在用户操作的即时路径上，能用快照/CG 数据就不要现场问 AX。
