@@ -39,11 +39,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.onShowDebugConsole = onShowDebugConsole
         self.onExportDebugSnapshot = onExportDebugSnapshot
         self.onQuit = onQuit
-        nativeDockSliderView = PreferenceSliderMenuItemView(title: "系统 Dock",
-                                                            subtitle: "⌘⌥D 显示/隐藏",
-                                                            caption: "鼠标触及屏幕底边后，唤出系统 Dock 的延迟")
-        edgeSliderView = PreferenceSliderMenuItemView(title: "Tungsten Edge 钨极",
-                                                      caption: "鼠标触及屏幕底边后，唤出本任务条的延迟")
+        nativeDockSliderView = PreferenceSliderMenuItemView(title: "系统 Dock", subtitle: "⌘⌥D 显示/隐藏")
+        edgeSliderView = PreferenceSliderMenuItemView(title: "Tungsten Edge 钨极")
         super.init()
         configureStatusItem()
         configureMenu()
@@ -215,7 +212,6 @@ final class PreferenceSliderMenuItemView: NSView {
 
     private let title: String
     private let subtitle: String?
-    private let caption: String
     private let titleVerticalOffset: CGFloat
     private var delay = 0.0
     private var commitTracker = PreferenceSliderCommitTracker()
@@ -224,18 +220,16 @@ final class PreferenceSliderMenuItemView: NSView {
     private let rightEndpointDot = EndpointDotView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let captionLabel = NSTextField(labelWithString: "")
     private let delayLabel = NSTextField(labelWithString: "")
     private let leftEndpointLabel = NSTextField(labelWithString: "常驻")
     private let rightEndpointLabel = NSTextField(labelWithString: "不唤醒")
     private let slider = MenuTrackingSlider()
 
-    init(title: String, subtitle: String? = nil, caption: String, titleVerticalOffset: CGFloat = 0) {
+    init(title: String, subtitle: String? = nil, titleVerticalOffset: CGFloat = 0) {
         self.title = title
         self.subtitle = subtitle
-        self.caption = caption
         self.titleVerticalOffset = titleVerticalOffset
-        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 98))
+        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 92))
         autoresizingMask = [.width]
         configureSubviews()
         updateDisplay()
@@ -283,11 +277,6 @@ final class PreferenceSliderMenuItemView: NSView {
         subtitleLabel.isHidden = subtitle == nil
         addSubview(subtitleLabel)
 
-        captionLabel.font = .systemFont(ofSize: 10)
-        captionLabel.textColor = .tertiaryLabelColor
-        captionLabel.lineBreakMode = .byTruncatingTail
-        addSubview(captionLabel)
-
         delayLabel.font = .systemFont(ofSize: 11)
         delayLabel.textColor = .secondaryLabelColor
         delayLabel.alignment = .center
@@ -330,7 +319,6 @@ final class PreferenceSliderMenuItemView: NSView {
         let contentX = StatusMenuLayout.textInsetX
         let contentWidth = bounds.width - contentX - StatusMenuLayout.trailingInsetX
         let titleY = bounds.height - 30 + titleVerticalOffset
-        let captionY = bounds.height - 46
         let labelY: CGFloat = 28
         let sliderY: CGFloat = 10
         if hasSubtitle {
@@ -343,8 +331,6 @@ final class PreferenceSliderMenuItemView: NSView {
             titleLabel.frame = NSRect(x: contentX, y: titleY, width: contentWidth, height: 20)
             subtitleLabel.frame = NSRect(x: contentX, y: titleY, width: 0, height: 18)
         }
-
-        captionLabel.frame = NSRect(x: contentX, y: captionY, width: contentWidth, height: 14)
 
         let sliderSideInset: CGFloat = 34
         let sliderX = contentX + sliderSideInset
@@ -378,19 +364,18 @@ final class PreferenceSliderMenuItemView: NSView {
         delay = AppSettingsStore.delayFromSliderIndex(index)
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle ?? ""
-        captionLabel.stringValue = caption
         delayLabel.stringValue = displayString
-        // knob 停在端点时它本身就是位置信号，再亮实心点纯冗余 → 隐藏该端刻度点，
-        // 选中态改由端点小字变色承担。
-        leftEndpointDot.isHidden = index == 0
-        rightEndpointDot.isHidden = index == AppSettingsStore.sliderIndexMax
-        leftEndpointLabel.textColor = index == 0 ? .controlAccentColor : .tertiaryLabelColor
-        rightEndpointLabel.textColor = index == AppSettingsStore.sliderIndexMax ? .controlAccentColor : .tertiaryLabelColor
+        // 两端「常驻/不唤醒」小字恒定可见，端点圆点在选中时变实心强调；
+        // 中间数值文字到达端点时改为隐藏，避免和恒定可见的端点小字重复显示同一个词。
+        let isAtLeftEnd = index == 0
+        let isAtRightEnd = index == AppSettingsStore.sliderIndexMax
+        delayLabel.isHidden = isAtLeftEnd || isAtRightEnd
+        leftEndpointDot.isOn = isAtLeftEnd
+        rightEndpointDot.isOn = isAtRightEnd
         var accessibilityParts = [title]
         if let subtitle {
             accessibilityParts.append(subtitle)
         }
-        accessibilityParts.append(caption)
         accessibilityParts.append(displayString)
         setAccessibilityLabel(accessibilityParts.joined(separator: "，"))
         setAccessibilityValue(displayString)
