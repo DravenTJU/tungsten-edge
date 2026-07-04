@@ -197,6 +197,15 @@ Root cause and full fix documented in `Docs/21-long-gap-duplicate-card-fix.md`. 
 - **Hover-switch uses a dwell, not instant edge-trigger.** Cursor must stay on the target screen for `hoverSwitchDwell` (~350ms) before the strip moves, armed on entering that screen's bottom hot zone and kept alive while anywhere on it (a "must stay in the 4pt strip" dwell is unreachable when approaching an upper screen from directly below — its hot zone == the shared edge you cross through). Prevents accidental switches when clicking near a screen's bottom edge.
 - **Fullscreen hide must hide the capsule (and close the drawer) too, not just the dock** — else the capsule floats alone on screen.
 
+### Fullscreen detection — AX path requires the role gate (2026-07-05)
+
+> Restoring a minimized Finder window made the taskbar vanish for 1–3s: Finder exposes a **desktop pseudo-window** (role `AXScrollArea`, frame **exactly** == screen, subrole/title/AXFullScreen all read NoValue) that becomes `AXFocusedWindow` whenever Finder is active with no regular window up — the frame≈screen fallback in the async AX probe then misclassified it as fullscreen. Probe-proven and fixed 2026-07-05.
+
+- **`FullscreenWindowClassifier.isFullscreen` (in `PanelVisibilityState.swift`, unit-tested in `FullscreenClassificationTests`) is the single AX fullscreen predicate; its `role == kAXWindowRole` gate is load-bearing — do not remove or bypass it.** Only real `AXWindow` elements may reach the frame≈full-screen fallback. Do not "tighten" it to subrole either: minimized Finder windows report subrole `AXDialog`, and the desktop pseudo-window has no readable subrole at all.
+- **The classifier deliberately lives in `PanelVisibilityState.swift`, not `PanelCoordinator.swift`** — the test target compiles a subset of production sources directly (no `@testable import`) and `PanelCoordinator.swift` is not in it. Moving the predicate back into the coordinator makes it untestable.
+- **No `NSWorkspace.frontmostApplication` in the fullscreen decision path** (same lagging-cache rule as the 2026-07-03 activate-flash fixes): `handleAppActivated` uses the PID carried by the notification (`NSWorkspace.applicationUserInfoKey`); the PID-less callers (space change, 5s reconcile timer) resolve via a fresh `runningApplications.first(where: { $0.isActive })` scan.
+- The sync CG probe (`checkFullscreenViaCGSync`) keeps `.excludeDesktopElements` + layer 0; the AX role gate is the AX-side equivalent of that trust filter. Real native fullscreen still hides via both paths (verified: enter → `active=true` within ~10ms of the space change).
+
 ### Status menu + Edge auto-hide settings (2026-06-30)
 
 > The status menu now owns launch-at-login, native Dock wake delay, and Tungsten Edge wake delay. Product state and copy live in Obsidian; this section keeps only implementation guardrails.

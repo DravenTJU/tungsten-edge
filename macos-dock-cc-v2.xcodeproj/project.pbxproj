@@ -26,6 +26,7 @@
 		A00000000000000000009081 /* PanelGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009080 /* PanelGeometry.swift */; };
 		A00000000000000000009091 /* PanelGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009080 /* PanelGeometry.swift */; };
 		A000000000000000000090A1 /* PanelGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000090A0 /* PanelGeometryTests.swift */; };
+		A000000000000000000090B1 /* FullscreenClassificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000090B0 /* FullscreenClassificationTests.swift */; };
 		A00000000000000000009041 /* NativeDockPreferencesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009020 /* NativeDockPreferencesService.swift */; };
 		A00000000000000000009051 /* PanelVisibilityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009030 /* PanelVisibilityState.swift */; };
 		A00000000000000000009061 /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009010 /* LaunchAtLoginService.swift */; };
@@ -158,6 +159,7 @@
 		A00000000000000000000058 /* FinderP0Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderP0Tests.swift; sourceTree = "<group>"; };
 		A00000000000000000008040 /* AppSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsStoreTests.swift; sourceTree = "<group>"; };
 		A000000000000000000090A0 /* PanelGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelGeometryTests.swift; sourceTree = "<group>"; };
+		A000000000000000000090B0 /* FullscreenClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullscreenClassificationTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000059 /* macos-dock-cc-v2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "macos-dock-cc-v2Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -497,6 +499,7 @@
 				A00000000000000000000058 /* FinderP0Tests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
 				A000000000000000000090A0 /* PanelGeometryTests.swift */,
+				A000000000000000000090B0 /* FullscreenClassificationTests.swift */,
 			);
 			path = Unit;
 			sourceTree = "<group>";
@@ -721,6 +724,7 @@
 				A00000000000000000009051 /* PanelVisibilityState.swift in Sources */,
 				A00000000000000000009091 /* PanelGeometry.swift in Sources */,
 				A000000000000000000090A1 /* PanelGeometryTests.swift in Sources */,
+				A000000000000000000090B1 /* FullscreenClassificationTests.swift in Sources */,
 				A00000000000000000001020 /* Identifiers.swift in Sources */,
 				A00000000000000000001021 /* WindowModels.swift in Sources */,
 					A00000000000000000001022 /* SystemBoundaryModels.swift in Sources */,

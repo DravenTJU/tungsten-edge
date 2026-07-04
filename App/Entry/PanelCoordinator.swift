@@ -680,7 +680,7 @@ final class PanelCoordinator: NSObject {
     private func setupFullscreenMonitor() {
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(self, selector: #selector(handleSpaceChange), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
-        nc.addObserver(self, selector: #selector(handleAppActivated), name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleAppActivated(_:)), name: NSWorkspace.didActivateApplicationNotification, object: nil)
         fullscreenReconcileTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.fullscreenReconcileIfNeeded() }
         }
@@ -695,8 +695,10 @@ final class PanelCoordinator: NSObject {
         triggerAsyncFullscreenCheck()
     }
 
-    @objc private func handleAppActivated() {
-        triggerAsyncFullscreenCheck()
+    @objc private func handleAppActivated(_ note: Notification) {
+        // 用通知携带的"刚激活的 app"，不读滞后的 frontmostApplication（AGENTS 守则）
+        let activated = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        triggerAsyncFullscreenCheck(pid: activated?.processIdentifier)
     }
 
     // MARK: - Sync CG fullscreen probe (main thread only, no AX)
@@ -729,11 +731,14 @@ final class PanelCoordinator: NSObject {
 
     // MARK: - Async AX fullscreen probe (secondary / fallback)
 
-    private func triggerAsyncFullscreenCheck() {
+    private func triggerAsyncFullscreenCheck(pid explicitPID: pid_t? = nil) {
         guard let panel = dockPanel else { return }
         // Convert to CG coords on main thread; AX kAXPositionAttribute also uses CG (top-left origin)
         let screenCGFrame = Self.toCGRect(panelCurrentScreen(panel: panel))
-        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // NSWorkspace.frontmostApplication 是滞后缓存，可见性决策不可依赖（AGENTS 守则）——
+        // 无显式 PID 时改用新鲜的 isActive 扫描
+        let frontPID = explicitPID
+            ?? NSWorkspace.shared.runningApplications.first(where: { $0.isActive })?.processIdentifier
         Task.detached { [weak self] in
             let fullscreen = Self.detectFullscreenViaAX(pid: frontPID, screenCGFrame: screenCGFrame)
             await MainActor.run { [weak self] in self?.applyFullscreenVisibility(fullscreen) }
@@ -787,25 +792,17 @@ final class PanelCoordinator: NSObject {
         }
         _ = AXUIElementSetMessagingTimeout(focused, 0.5)
 
+        let role = reader.stringAttribute(kAXRoleAttribute as CFString, from: focused, maxAttempts: 1)
         let isAXFullscreen = reader.boolAttribute("AXFullScreen" as CFString, from: focused, maxAttempts: 1) ?? false
         // AX kAXPositionAttribute uses CG coordinates (top-left origin) — matches screenCGFrame directly
         let windowFrame = reader.frame(of: focused, maxAttempts: 1)
 
-        if isAXFullscreen {
-            guard let wf = windowFrame else { return true }
-            return wf.intersects(screenCGFrame) && wf.width > screenCGFrame.width * 0.7
-        }
-
-        // Fallback: frame ≈ full screen (games / HTML5 that skip the AXFullScreen flag)
-        if let wf = windowFrame {
-            let t: CGFloat = 8
-            return abs(wf.width  - screenCGFrame.width)  < t
-                && abs(wf.height - screenCGFrame.height) < t
-                && abs(wf.minX   - screenCGFrame.minX)   < t
-                && abs(wf.minY   - screenCGFrame.minY)   < t
-        }
-
-        return false
+        return FullscreenWindowClassifier.isFullscreen(
+            role: role,
+            isAXFullscreen: isAXFullscreen,
+            windowFrame: windowFrame,
+            screenCGFrame: screenCGFrame
+        )
     }
 
     // MARK: - HoverSwitch Diagnostics
