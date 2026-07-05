@@ -48,6 +48,16 @@ enum UserIntent: Hashable, Sendable {
 }
 
 final class LifecycleActionPlanner {
+    /// 前台轴检查，默认 = 新建 NSRunningApplication 实例的即时 isActive 读
+    ///（SkyLight 切换后立即翻面，Docs/22 §11 POSTACTIVATE 实证；测试注入桩）。
+    private let isAppFrontmost: (pid_t) -> Bool
+
+    init(isAppFrontmost: @escaping (pid_t) -> Bool = {
+        NSRunningApplication(processIdentifier: $0)?.isActive == true
+    }) {
+        self.isAppFrontmost = isAppFrontmost
+    }
+
     func plan(
         intent: UserIntent,
         snapshot: DockSnapshot,
@@ -58,15 +68,14 @@ final class LifecycleActionPlanner {
             guard let record = snapshot.windows[id] else {
                 return PlatformActionRequest(kind: .activateWindow, windowID: id)
             }
-            // 乐观态优先：上一个动作刚发出、快照还没翻面时，按预测态规划，
+            // 乐观态优先（仅 status 轴）：上一个动作刚发出、快照还没翻面时，按预测态规划，
             // 连点才能严格交替（minimize → activate → …）而不是重复上一个动作。
             let optimistic = optimisticStates[id.rawValue]
             let status = optimistic?.status ?? record.status
-            // NSWorkspace.frontmostApplication 是通知驱动缓存，SkyLight 直切前台后可滞后
-            // ~1.5s（第二击被误判成"未在前台"→ 重复计划 activate 无观感）。isActive 走
-            // 新建实例的即时读，SkyLight 切换后立即翻面（Docs/22 §11 POSTACTIVATE 实证）。
-            let appIsFrontmost = optimistic?.isAppFrontmost
-                ?? (NSRunningApplication(processIdentifier: record.pid)?.isActive == true)
+            // 前台轴永远即时读，不许被乐观态覆盖（2026-07-05）：乐观 isAppFrontmost=true
+            // 在「激活后 4s 内切去别的 App 再点回卡片」时残留不清（快照永远等不到 .active
+            // 来兑现它），曾把该激活的点击误规划成 minimize。即时读本来就永远正确。
+            let appIsFrontmost = isAppFrontmost(record.pid)
             if record.id.rawValue.hasPrefix("app-") {
                 // Finder persistent chip: never hide — always open/focus to match system Dock behavior.
                 if record.bundleIdentifier == "com.apple.finder" {

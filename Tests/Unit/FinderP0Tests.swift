@@ -25,31 +25,28 @@ final class FinderP0Tests: XCTestCase {
 
     func testToggleUsesSnapshotStatus() {
         let id = WindowID(rawValue: "cg-1")
-        let planner = LifecycleActionPlanner()
+        // 前台轴走注入桩（真实读数对测试假 pid 永远 false，无法覆盖 minimize 分支）。
+        let frontmostPlanner = LifecycleActionPlanner(isAppFrontmost: { _ in true })
+        let backgroundPlanner = LifecycleActionPlanner(isAppFrontmost: { _ in false })
         let activeSnapshot = snapshot(windowID: id, status: .active)
         let inactiveSnapshot = snapshot(windowID: id, status: .inactive)
         let minimizedSnapshot = snapshot(windowID: id, status: .minimized)
-        // 测试进程的窗口（pid=1）不可能是前台，真实 NSWorkspace 前台检查永远 false。
-        // 用乐观态注入前台轴，让「active + 前台 → minimize」分支可确定性测试。
-        let activeFrontmost = [
-            id.rawValue: OptimisticWindowState(status: .active, isAppFrontmost: true, createdAt: Date())
-        ]
 
         XCTAssertEqual(
-            planner.plan(intent: .toggle(id), snapshot: activeSnapshot, optimisticStates: activeFrontmost).kind,
+            frontmostPlanner.plan(intent: .toggle(id), snapshot: activeSnapshot).kind,
             .minimizeWindow
         )
         // active 但非前台 → 仍是 activate（带到前台），不是 minimize。
         XCTAssertEqual(
-            planner.plan(intent: .toggle(id), snapshot: activeSnapshot).kind,
+            backgroundPlanner.plan(intent: .toggle(id), snapshot: activeSnapshot).kind,
             .activateWindow
         )
         XCTAssertEqual(
-            planner.plan(intent: .toggle(id), snapshot: inactiveSnapshot).kind,
+            backgroundPlanner.plan(intent: .toggle(id), snapshot: inactiveSnapshot).kind,
             .activateWindow
         )
         XCTAssertEqual(
-            planner.plan(intent: .toggle(id), snapshot: minimizedSnapshot).kind,
+            backgroundPlanner.plan(intent: .toggle(id), snapshot: minimizedSnapshot).kind,
             .activateWindow
         )
     }
@@ -59,11 +56,11 @@ final class FinderP0Tests: XCTestCase {
     /// 严格交替的根。
     func testToggleAlternatesViaOptimisticStateWhileSnapshotIsStale() {
         let id = WindowID(rawValue: "cg-optimistic")
-        let planner = LifecycleActionPlanner()
+        let planner = LifecycleActionPlanner(isAppFrontmost: { _ in true })
         let staleActiveSnapshot = snapshot(windowID: id, status: .active)
 
         let afterMinimize = [
-            id.rawValue: OptimisticWindowState(status: .minimized, isAppFrontmost: false, createdAt: Date())
+            id.rawValue: OptimisticWindowState(status: .minimized, createdAt: Date())
         ]
         XCTAssertEqual(
             planner.plan(intent: .toggle(id), snapshot: staleActiveSnapshot, optimisticStates: afterMinimize).kind,
@@ -71,12 +68,34 @@ final class FinderP0Tests: XCTestCase {
         )
 
         let afterActivate = [
-            id.rawValue: OptimisticWindowState(status: .active, isAppFrontmost: true, createdAt: Date())
+            id.rawValue: OptimisticWindowState(status: .active, createdAt: Date())
         ]
         XCTAssertEqual(
             planner.plan(intent: .toggle(id), snapshot: staleActiveSnapshot, optimisticStates: afterActivate).kind,
             .minimizeWindow
         )
+    }
+
+    /// 回归（2026-07-05）：激活 B1 后 4s 内切去别的 App，乐观 .active 残留未兑现；
+    /// 此时再点 B1 卡片，App 已非前台（即时读 false）→ 必须规划 activate（提前），
+    /// 绝不能被残留乐观态带成 minimize（曾把该激活的点击直接最小化）。
+    func testToggleWithStaleOptimisticActiveButAppNotFrontmostPlansActivate() {
+        let id = WindowID(rawValue: "cg-stale-optimistic")
+        let planner = LifecycleActionPlanner(isAppFrontmost: { _ in false })
+        let lingering = [
+            id.rawValue: OptimisticWindowState(status: .active, createdAt: Date())
+        ]
+
+        for status in [WindowStatus.active, .inactive] {
+            XCTAssertEqual(
+                planner.plan(
+                    intent: .toggle(id),
+                    snapshot: snapshot(windowID: id, status: status),
+                    optimisticStates: lingering
+                ).kind,
+                .activateWindow
+            )
+        }
     }
 
     func testToggleDoesNotMinimizeAppLevelFallbacks() {

@@ -100,19 +100,13 @@ final class AppRuntime: ObservableObject {
             optimisticStates: optimisticStatesByWindowID
         )
 
-        // ChipProbe: log chip state + planned action at tap time (main thread, no AX)
+        // ChipProbe: log the planner's actual decision inputs at tap time (main thread, no AX).
+        // freshActive = 新建实例即时读（规划用的就是它）；不打滞后的 frontmostApplication，会误导诊断。
         if case .toggle(let wid) = intent, let record = snapshot.windows[wid] {
-            let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            let appIsFrontmost = frontPID == record.pid
             let runningApp = NSRunningApplication(processIdentifier: record.pid)
-            let policyStr: String
-            switch runningApp?.activationPolicy {
-            case .regular: policyStr = "regular"
-            case .accessory: policyStr = "accessory"
-            case .prohibited: policyStr = "prohibited"
-            default: policyStr = "nil"
-            }
-            chipProbeLogger.info("toggle-planned app=\(runningApp?.localizedName ?? "(unknown)", privacy: .public) bundleID=\(record.bundleIdentifier ?? "(none)", privacy: .public) activationPolicy=\(policyStr, privacy: .public) status=\(record.status.rawValue, privacy: .public) isOnDesktop=\(record.isOnDesktop, privacy: .public) appIsFrontmost=\(appIsFrontmost, privacy: .public) plannedAction=\(request.kind.rawValue, privacy: .public)")
+            let freshActive = runningApp?.isActive == true
+            let optimisticStatus = optimisticStatesByWindowID[wid.rawValue]?.status.rawValue ?? "none"
+            chipProbeLogger.info("toggle-planned app=\(runningApp?.localizedName ?? "(unknown)", privacy: .public) bundleID=\(record.bundleIdentifier ?? "(none)", privacy: .public) recordStatus=\(record.status.rawValue, privacy: .public) optimisticStatus=\(optimisticStatus, privacy: .public) freshActive=\(freshActive, privacy: .public) plannedAction=\(request.kind.rawValue, privacy: .public)")
         }
 
         applyOptimisticState(for: request)
@@ -192,11 +186,11 @@ final class AppRuntime: ObservableObject {
         let state: OptimisticWindowState?
         switch request.kind {
         case .activateWindow:
-            state = OptimisticWindowState(status: .active, isAppFrontmost: true, createdAt: Date())
+            state = OptimisticWindowState(status: .active, createdAt: Date())
         case .minimizeWindow:
-            state = OptimisticWindowState(status: .minimized, isAppFrontmost: false, createdAt: Date())
+            state = OptimisticWindowState(status: .minimized, createdAt: Date())
         case .hideApp:
-            state = OptimisticWindowState(status: .hidden, isAppFrontmost: false, createdAt: Date())
+            state = OptimisticWindowState(status: .hidden, createdAt: Date())
         case .closeWindow, .quitApp, .newWindow:
             state = nil
         }
