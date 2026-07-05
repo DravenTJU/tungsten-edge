@@ -64,3 +64,4 @@
 - **打盹 App 的窗口会从 `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` 临时消失**（连"当前前台 App 刚激活的窗口"都可能缺席几秒）。按 on-screen 列表反查 cgWindowID 不可靠；快照里的 `record.cgWindowID` 才是稳定来源。
 - **抢顶型 App（Ghostty、Chromium 系：Chrome/Dia）在自己仍是活跃 App 期间，若别的窗口被 AXRaise 盖到它上面，会在 ~+450ms 把自己的窗口浮回顶层**；良性 App（Finder/Safari/微信/飞书/PS/AI…）不会。这就是为什么"闪不闪取决于从哪个 App 切走"。
 - **对仍最小化的窗口发 SkyLight make-key 事件，App 会把键盘焦点落到它的可见兄弟窗口上**（Chrome/访达实测）。最小化恢复后必须对目标窗口 `kAXMainAttribute=true` 纠正 App 内部焦点，否则输入焦点和 AX `kAXFocusedWindow` 都停在兄弟窗口。
+- **App 被切成前台进程时若没有 key 窗口（目标窗口仍 order-out/最小化），AppKit 会自动把该 App 最上面的可见窗口提为 key 并持久抬到旧前台之上**（2026-07-05 探针，访达/微信/Dia 一致）。裸 psn 切换（不发 make-key）拦不住，`kCPSNoWindows (0x400)` 也拦不住——提拔发生在 App 侧而非 WindowServer 侧。要恢复最小化窗口且不带起兄弟：**先 unminimize、后切前台，两步微秒级相邻、中间零 AX 问询**（wid 用快照值）；对刚 unminimize 的窗口立即发 make-key 会正确落在它身上，不再错落兄弟。见 `Docs/22` §13。

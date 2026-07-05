@@ -314,3 +314,32 @@ owner 一度记得有个"只有 Chrome 闪、其它 App 冷激活不闪"的版�
 - 打盹 App 的窗口会从 `CGWindowListCopyWindowInfo(.optionOnScreenOnly)` 临时消失（连当前前台 App 刚激活的窗口都可能缺席）——按 on-screen 列表找 wid 不可靠。
 - 对仍最小化窗口发 SkyLight make-key，App 会把键盘焦点落到可见兄弟窗口上;恢复后需 `kAXMainAttribute=true` 纠正。
 - 对打盹 App 的任意 AX 问询（含 `_AXUIElementGetWindow`、inventory 读）可阻塞数百毫秒——凡在用户操作的即时路径上，能用快照/CG 数据就不要现场问 AX。
+
+## 13. 最小化恢复带起兄弟窗口 — 根治（2026-07-05，推翻 §12 的「已接受观感」裁决）
+
+> 场景：A1 最前，B 的 B1 最小化、B2 可见。点 B1 chip 恢复 B1，B2 被**持久**抬到 A1 之上（终态 B1 > B2 > A1，期望 B1 > A1 > B2）。§12 当时记为「像整个 App 被带到前台的观感、owner 接受」——实测它不是短暂露一下，而是持久 z 序变化，且**可修**。
+
+### 13.1 探针矩阵（scratch/minrestore_probe.swift，自驱动 CLI：自布场景 + 16ms 逐帧 z 序采样）
+
+| 变体 | t=0 动作 | 结果（B2 是否被抬到 A1 上） |
+|---|---|---|
+| v0 现状对照 | psn 切换 + 2 条 make-key @wid(B1 仍最小化) → gap → unminimize → kAXMain → raise → 完整聚焦 | **YES**，3/3 目标（访达/微信/Dia），+50~106ms 即被抬，持久 |
+| v1 | 裸 psn 切换 `0x200`，不发 make-key | **YES** — 说明抬 B2 的不是 make-key 错落，而是 App 在被激活、无 key 窗口时自动提拔可见窗口 |
+| v2a/v2b | psn 切换 mode `|= kCPSNoWindows (0x600)`，wid=B1 / wid=0 | **YES** — WindowServer 侧 flag 拦不住 App 侧（AppKit）的提拔 |
+| **v3 终解** | **不提前切换**。gap（模拟句柄捕获空窗，A 仍前台、无任何抬升）→ unminimize → **立即**完整聚焦（wid 用快照值，中间零 AX）→ kAXMain → raise | **no**，5/5 组合干净：B1 置顶、A1 第 2、B2 原地不动；**无回浮闪**（含 Ghostty/Dia re-asserter 源、gap=500ms 最坏空窗、gap=0 warm） |
+
+### 13.2 为什么 v3 不是 §12 已证伪的「实验 2」
+
+实验 2（「有可见兄弟就跳过提前聚焦」）闪回来的机理：跳过后走老尾部——先 AXRaise 提顶、再经 AX cgID 读取才切前台，**抬升与切换之间隔了几百 ms** 且源 App 仍前台 → re-asserter 回浮。v3 的关键差别：**恢复→切换微秒级相邻、切换前没有任何抬升、wid 来自快照不问 AX**。切换落地前 A1 一直安稳在顶（没有可回浮的对象），落地后源已非前台（没有回浮的资格）。
+
+### 13.3 落点与守护
+
+- 代码：`AccessibilitySource.swift` — `execute` 提前聚焦门去掉 `.minimized`；`activate()` 新增 `knownCGWindowID:` 参数（`execute` 传快照 `record.cgWindowID`），最小化分支 `setMinimized(false)` 后立即 `postSkyLightWindowFocus`；kAXMain 纠正保留（残余竞态兜底）。
+- 副作用变化：最小化恢复时「App 变前台」的时刻从点击瞬间移到恢复动画开始瞬间（打盹 App 约晚 0~900ms，与窗口出现同步，观感一体）；可见窗口路径一字未动。
+- kill-switch `DOCK_SKYLIGHT_FOCUS=0` 覆盖新路径（同一个 `skyLightFocusEnabled` gate）。
+- 硬护栏（AGENTS.md 激活闪条目已重写）：最小化目标**永不**提前切前台（v0/v1/v2 全证伪）；恢复→切换之间零 AX；实验 2 的老证伪继续有效。
+
+### 13.4 新沉淀的平台知识
+
+- App 被切成前台进程时若无 key 窗口（如目标窗口仍 order-out），AppKit 会自动把最上面的可见窗口提为 key 并**持久**抬到旧前台之上——`kCPSNoWindows` 也拦不住（那是 WindowServer 侧 flag，提拔发生在 App 侧）。
+- 对刚 unminimize 的窗口立即发 make-key（微秒级相邻），三类 App（访达/微信/Chromium 系）都正确落在该窗口上，不再错落兄弟——07-03 的「make-key 错落」仅限窗口仍 order-out 时。

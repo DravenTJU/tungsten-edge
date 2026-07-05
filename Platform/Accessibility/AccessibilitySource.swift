@@ -328,15 +328,25 @@ struct AccessibilityWindowActionExecutor {
         _ handle: WindowHandle,
         requiresFocusedConfirmation: Bool,
         confirmationTimeout: TimeInterval = 0.6,
-        pollIntervalMicroseconds: useconds_t = 100_000
+        pollIntervalMicroseconds: useconds_t = 100_000,
+        knownCGWindowID: CGWindowID? = nil
     ) -> Bool {
         let runningApp = NSRunningApplication(processIdentifier: handle.pid)
         if reader.boolAttribute(kAXMinimizedAttribute as CFString, from: handle.element) == true {
             _ = setMinimized(false, for: handle)
+            // 恢复→切换必须紧贴、中间零 AX 问询（2026-07-05 探针 v3）：最小化恢复不做提前
+            // 聚焦——B1 还在 order-out 时任何切前台（含 kCPSNoWindows、不发 make-key 的裸
+            // psn 切换）都会让 App 自动提拔可见兄弟 B2 压到旧前台 A1 上（持久 z 序变化）。
+            // 唯一干净路径：unminimize 之后立即用快照 wid 发完整 SkyLight 聚焦，make-key
+            // 此刻正确落在刚恢复的 B1 上；间隔微秒级，re-asserter 源（Ghostty/Chromium 系
+            // ~450ms 才回浮）来不及抢，激活闪不回归（500ms 最坏空窗实测无闪）。
+            if let wid = knownCGWindowID {
+                postSkyLightWindowFocus(pid: handle.pid, windowID: wid)
+            }
             // 恢复后立刻把 App 内部焦点键回本窗口（kAXMain = App 内切窗的标准 AX 通道）。
-            // 提前聚焦对「仍最小化的窗口」发的 make-key 会被 App 落到可见兄弟窗口上（B1 被
-            // 键住并抬起）；不纠正的话，键盘输入和「最小化回上一个 App」的 focused-window
-            // 保护都会错到 B1（2026-07-03 Chrome/访达 B1B2 实测）。
+            // 对「仍最小化的窗口」发过的 make-key 会被 App 落到可见兄弟窗口上；不纠正的话，
+            // 键盘输入和「最小化回上一个 App」的 focused-window 保护都会错到兄弟窗口
+            // （2026-07-03 Chrome/访达 B1B2 实测）。
             AXUIElementSetAttributeValue(handle.element, kAXMainAttribute as CFString, kCFBooleanTrue)
         }
 
@@ -566,7 +576,8 @@ struct AccessibilityWindowActionExecutor {
     /// 提前聚焦（激活闪根治 2026-07-03）：点击瞬间用快照里已知的 cgWindowID 直接切前台，
     /// 抢在任何可能阻塞 400–900ms 的 AX 问询（句柄捕获 / 最小化读取 / cgID 读取）之前。
     /// 空窗期正是 Ghostty / Chromium 系前台 App 把自己窗口抢回顶层造成激活闪的窗口期。
-    /// 最小化恢复同样受益：先把目标 App 切成前台，随后的 unminimize 在无竞争下展开。
+    /// 仅限可见窗口：最小化窗口不能提前切换（App 会提拔可见兄弟窗口，2026-07-05 探针），
+    /// 它们走 activate() 里「unminimize 后立即切换」的路径（knownCGWindowID）。
     @discardableResult
     func focusWindowEarly(pid: pid_t, cgWindowID: CGWindowID) -> Bool {
         postSkyLightWindowFocus(pid: pid, windowID: cgWindowID)
@@ -646,14 +657,17 @@ struct PlatformActionExecutor {
 
         let isFinderWindow = FinderWindowRules.isFinder(bundleIdentifier: record.bundleIdentifier)
 
-        // 提前聚焦（激活闪根治 2026-07-03）：仅 activate + 跨 App，可见与最小化窗口都覆盖，
+        // 提前聚焦（激活闪根治 2026-07-03）：仅 activate + 跨 App + 可见窗口，
         // 访达也包含（confirmFocused 保护路径在后面照常执行；访达的多次捕获重试空窗更长，
         // 曾是"只剩访达还闪"的原因）。必须发生在下面的句柄捕获之前 —— 捕获/恢复对目标 App
         // 的 AX 问询可阻塞数百毫秒，这段空窗正是仍聚焦的旧前台 App（Ghostty / Chromium 系）
         // 把窗口抢回顶层的窗口期。隐藏 App 的窗口不提前（unhide 流程另算）。
+        // 最小化窗口【不】提前（2026-07-05 探针 v0–v3）：B1 仍 order-out 时任何切前台都会
+        // 让 App 把可见兄弟 B2 提拔到旧前台之上（持久 z 序 bug）；改为 activate() 里
+        // unminimize 之后立即切换（见 knownCGWindowID 路径），实测同样无闪。
         if request.kind == .activateWindow,
            let cgWindowID = record.cgWindowID,
-           record.status == .active || record.status == .inactive || record.status == .minimized,
+           record.status == .active || record.status == .inactive,
            NSRunningApplication(processIdentifier: record.pid)?.isActive != true {
             windowExecutor.focusWindowEarly(pid: record.pid, cgWindowID: cgWindowID)
         }
@@ -703,7 +717,11 @@ struct PlatformActionExecutor {
 
         switch request.kind {
         case .activateWindow:
-            return windowExecutor.activate(handle, requiresFocusedConfirmation: isFinderWindow)
+            return windowExecutor.activate(
+                handle,
+                requiresFocusedConfirmation: isFinderWindow,
+                knownCGWindowID: record.cgWindowID
+            )
         case .minimizeWindow:
             let targetPID = windowExecutor.findBackgroundActivationTarget(for: handle)
             var preSwitched = false
