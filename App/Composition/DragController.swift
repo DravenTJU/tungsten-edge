@@ -2,10 +2,13 @@ import AppKit
 import SwiftUI
 
 /// 拖动来源：决定投放区、落点动作、载体绘制三处分支。
-enum DragSource { case strip, drawer }
+/// `.folder` = 固定文件夹 chip（区内重排 + 拖出移除 + 拖回窗口区打开）,**与 strip/drawer 收纳
+/// 语义完全隔离**：不进 drawerStore、不进投放区（canExternalDrop=false）、不走 convert/revert;
+/// DockStripView 只提供落点几何，最终 commit 由 `endDrag()` 的 mouseUp/轮询兜底路径触发。
+enum DragSource { case strip, drawer, folder }
 
 /// 载体（飘浮副本）画成什么样。
-enum DragVisualKind { case stripChip, drawerIcon }
+enum DragVisualKind { case stripChip, drawerIcon, folderChip }
 
 /// 通用拖动载荷。任务条卡片有 `StripItem`；抽屉很多图标（无窗口运行项 / 未运行收纳项 / 纯固定项）
 /// 只有 bundleID、没有 `StripItem`，故 `item` 可空，主键统一用 `bundleID`。`id` 给来源面板自己
@@ -59,6 +62,19 @@ final class DragController: ObservableObject {
     /// 抽屉图标松手落进任务条时回调（精确落点路径 + 降级路径都会触发）。
     /// PanelCoordinator 用它关闭抽屉；与 onDrawerToStripCommitted 独立，互不替代。
     var onDrawerToStripCompleted: ((String) -> Void)?
+    /// 文件夹 chip 拖动的实时落点分类——**DockStripView 算好写入**（它才有 folderChipFrames/
+    /// shelfFrame/stripRootScreenRect），载体视图（DragCarrierView）只读它决定要不要淡出。
+    /// 最终 mouseUp 仍由 `endDrag()` 触发，并用 `folderDropGeometry` 重新分类一次。
+    @Published private(set) var folderDragZone: FolderChipDropZone?
+    func setFolderDragZone(_ zone: FolderChipDropZone?) {
+        if folderDragZone != zone { folderDragZone = zone }
+    }
+    private var folderDropGeometry: FolderChipDropGeometry?
+    func setFolderDropGeometry(_ geometry: FolderChipDropGeometry?) {
+        if folderDropGeometry != geometry { folderDropGeometry = geometry }
+    }
+    /// 固定文件夹拖拽松手落定。PanelCoordinator 执行 store / Finder 副作用；controller 只负责可靠收尾。
+    var onFolderDragEnded: ((String, FolderChipDropZone) -> Void)?
 
     private let drawerStore: DrawerStore
     /// 按来源给投放候选区（屏幕坐标，已 inset+容错）：strip→胶囊(+抽屉)；drawer→任务条 dock 面板。
@@ -171,8 +187,12 @@ final class DragController: ObservableObject {
         let external = isOverDropZone
         let converted = isConvertedToStrip
         let convertedBid = convertedDrawerBundleID
+        let finalLocation = globalLocation
+        let folderZone = folderDropGeometry?.classify(screenPoint: finalLocation) ?? .folderZone
         teardown()
         switch p.source {
+        case .folder:
+            onFolderDragEnded?(p.id, folderZone)
         case .strip:
             // 进过抽屉体的卡已被 convertStripToDrawer 转成 .drawer（落在里面 = 已是成员、不走这里）。
             // 走到这支 = 没进抽屉体的卡：在投放区(胶囊)松手 → 追加末尾收纳；否则什么都不做。
@@ -204,6 +224,8 @@ final class DragController: ObservableObject {
         isConvertedFromStrip = false      // 解冻任务条宽度（拖卡进抽屉落定/取消）
         convertedDrawerBundleID = nil     // 抽屉拖回任务条：落定/取消都清转正态
         convertedRepresentative = nil
+        folderDragZone = nil
+        folderDropGeometry = nil
         draggingPayload = nil
         isOverDropZone = false
         removeMonitors()
@@ -305,6 +327,8 @@ final class DragController: ObservableObject {
 /// 铺在载体面板上的浮动副本：跟着 `DragController.globalLocation` 走，点击穿透。按来源选画法。
 struct DragCarrierView: View {
     @ObservedObject var controller: DragController
+    /// 文件夹 chip 副本的封面来源（PanelCoordinator 的 carrierFactory 注入）。
+    @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
 
     var body: some View {
         if let p = controller.draggingPayload {
@@ -338,6 +362,20 @@ struct DragCarrierView: View {
             case .drawerIcon:
                 DrawerDragIconView(bundleID: p.bundleID)
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+            case .folderChip:
+                // 文件夹 chip 副本：复用 PinnedFolderChip 视觉（封面从 coverStore 取）,闭包全空——
+                // 载体面板 ignoresMouseEvents,菜单/点击永远不会触发。拖离任务条可见范围时淡出+
+                // 略放大,给「松手即移除固定」一个实时视觉反馈（owner 2026-07-06 反馈）。
+                let aboutToRemove = controller.folderDragZone == .outsideStrip
+                PinnedFolderChip(path: p.id,
+                                 cover: folderCoverStore.covers[p.id],
+                                 sortOrder: .default,
+                                 onTap: {}, onAddFolder: {}, onRemove: {},
+                                 onSetSortOrder: { _ in })
+                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                    .opacity(aboutToRemove ? 0.35 : 1.0)
+                    .scaleEffect(aboutToRemove ? 1.1 : 1.0)
+                    .animation(.easeOut(duration: 0.12), value: aboutToRemove)
             }
         }
     }

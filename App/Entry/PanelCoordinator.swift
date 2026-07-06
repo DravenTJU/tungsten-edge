@@ -50,6 +50,7 @@ final class PanelCoordinator: NSObject {
     private let settingsStore: AppSettingsStore
     private let pinnedFolderStore: PinnedFolderStore
     private let folderCoverStore: PinnedFolderCoverStore
+    private let shelfStore: ShelfStore
     /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
@@ -62,7 +63,12 @@ final class PanelCoordinator: NSObject {
     private var dragController: DragController!
     private var drawerLocalMonitor: Any?
     private var drawerGlobalMonitor: Any?
-    // MARK: 文件夹/废纸篓弹窗状态（单面板复用 = 天然「同时只有一个弹窗」）
+    // MARK: 文件夹/中转弹窗状态（单面板复用 = 天然「同时只有一个弹窗」）
+    /// 共享弹窗当前装的内容：固定文件夹网格或中转网格。
+    enum PopupContent: Equatable {
+        case folder(path: String)
+        case shelf
+    }
     private var folderPopupPanel: NSPanel?
     /// 弹窗真正承载 SwiftUI 的 hosting view（contentView 是普通 NSView 容器,fittingSize 读这个）。
     private var folderPopupContentHost: NSView?
@@ -72,14 +78,20 @@ final class PanelCoordinator: NSObject {
     /// 弹窗锚点（chip 可视矩形,屏幕坐标）。click-away 判定要排除它——监视器在 mouseDown 关、
     /// chip 的 onTapGesture 在 mouseUp 又开,不排除锚点则同 chip 点击永远无法收合。
     private var popupAnchorVisibleRect: CGRect = .zero
-    /// 当前弹窗对应的固定文件夹 path（nil = 没开）。
-    private var openPopupPath: String?
+    /// 当前弹窗内容（nil = 没开）。
+    private var openPopupContent: PopupContent?
+    /// 便捷视图：仅当弹窗装的是文件夹时给 path（排序订阅/移除关窗等文件夹专属逻辑用）。
+    private var openPopupPath: String? {
+        if case let .folder(path) = openPopupContent { return path }
+        return nil
+    }
     /// 弹窗**逻辑**开关态（淡出动画期间面板还可见但逻辑上已关,同 drawerWantsOpen）。
     private var folderPopupWantsOpen = false
     private var lastPopupSize = CGSize(width: 424, height: 240)
     /// 开窗时刻：入场窗口期（250ms）内的重定位一律瞬时,不与入场缩放叠加出晃动。
     private var popupOpenedAt: Date = .distantPast
     private var pinnedFolderStoreSubscription: AnyCancellable?
+    private var pinnedFolderSortSubscription: AnyCancellable?
     private var snapshotWidthSubscription: AnyCancellable?
     private var drawerStoreWidthSubscription: AnyCancellable?
     private var messagingStoreWidthSubscription: AnyCancellable?
@@ -127,7 +139,7 @@ final class PanelCoordinator: NSObject {
     private var edgeWakeRequiresHotZone = true
     private var edgeHiddenMouseMonitor: Any?
 
-    init(runtime: AppRuntime, drawerStore: DrawerStore, messagingStore: MessagingAppStore, launchFavoriteStore: LaunchFavoriteStore, badgeStore: BadgeStore, stripOrderStore: StripOrderStore, drawerOrderStore: DrawerOrderStore, settingsStore: AppSettingsStore, pinnedFolderStore: PinnedFolderStore, folderCoverStore: PinnedFolderCoverStore) {
+    init(runtime: AppRuntime, drawerStore: DrawerStore, messagingStore: MessagingAppStore, launchFavoriteStore: LaunchFavoriteStore, badgeStore: BadgeStore, stripOrderStore: StripOrderStore, drawerOrderStore: DrawerOrderStore, settingsStore: AppSettingsStore, pinnedFolderStore: PinnedFolderStore, folderCoverStore: PinnedFolderCoverStore, shelfStore: ShelfStore) {
         self.runtime = runtime
         self.drawerStore = drawerStore
         self.messagingStore = messagingStore
@@ -138,6 +150,7 @@ final class PanelCoordinator: NSObject {
         self.settingsStore = settingsStore
         self.pinnedFolderStore = pinnedFolderStore
         self.folderCoverStore = folderCoverStore
+        self.shelfStore = shelfStore
         super.init()
     }
 
@@ -322,16 +335,61 @@ final class PanelCoordinator: NSObject {
 
     /// chip 点击入口：同一文件夹再点 = 收起；换文件夹 = 瞬时切换目标。anchorVisibleRect 是 chip 可视矩形（屏幕坐标）。
     func toggleFolderPopup(path: String, anchorVisibleRect: CGRect) {
-        if folderPopupWantsOpen, openPopupPath == path {
+        if folderPopupWantsOpen, openPopupContent == .folder(path: path) {
             closeFolderPopup()
         } else {
             openFolderPopup(path: path, anchorVisibleRect: anchorVisibleRect)
         }
     }
 
+    /// 中转格点击入口：再点 = 收起；从文件夹弹窗切过来 = 原地切换（同单面板语义）。
+    func toggleShelfPopup(anchorVisibleRect: CGRect) {
+        if folderPopupWantsOpen, openPopupContent == .shelf {
+            closeFolderPopup()
+        } else {
+            openShelfPopup(anchorVisibleRect: anchorVisibleRect)
+        }
+    }
+
     private func openFolderPopup(path: String, anchorVisibleRect: CGRect) {
+        let rootURL = URL(fileURLWithPath: path)
+        let sortOrder = pinnedFolderStore.sortOrder(for: path)
+        // 先载入后亮相（散装感根因修复）：最多等 150ms 拿到完整内容,首帧即完整网格+最终尺寸,
+        // 面板作为一个整体入场,期间内容零变化。超时（网络卷等）传 nil,视图走异步回填。
+        let preloadedEntries = FolderContentsLoader.preload(url: rootURL, timeout: 0.15, order: sortOrder)
+        presentPopup(content: .folder(path: path), anchorVisibleRect: anchorVisibleRect) { [weak self] maxContentHeight in
+            NSHostingView(rootView: FolderGridPopupView(
+                rootURL: rootURL,
+                initialEntries: preloadedEntries,
+                sortOrder: sortOrder,
+                maxContentHeight: maxContentHeight,
+                onFileOpened: { [weak self] in self?.closeFolderPopup() },
+                onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) },
+                onPinFolder: { [weak self] url in self?.pinnedFolderStore.add(url.path) },
+                isFolderPinned: { [weak self] url in self?.pinnedFolderStore.contains(url.path) ?? true }
+            ))
+        }
+    }
+
+    private func openShelfPopup(anchorVisibleRect: CGRect) {
+        shelfStore.prune()   // 打开即剔除已失效的引用（文件被移走/删除）
+        presentPopup(content: .shelf, anchorVisibleRect: anchorVisibleRect) { [weak self, shelfStore] maxContentHeight in
+            NSHostingView(rootView: ShelfGridPopupView(
+                shelfStore: shelfStore,
+                maxContentHeight: maxContentHeight,
+                onClosePopup: { [weak self] in self?.closeFolderPopup() },
+                onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) },
+                onPinFolder: { [weak self] url in self?.pinnedFolderStore.add(url.path) },
+                isFolderPinned: { [weak self] url in self?.pinnedFolderStore.contains(url.path) ?? true }
+            ))
+        }
+    }
+
+    /// 共享的弹窗呈现路径（文件夹/中转同一面板同一套动画与监视器）。内容构建交给 makeHosting
+    /// （入参 = 网格可用高度上限）；调用方负责先做好各自的预载（首帧完整,AGENTS 护栏）。
+    private func presentPopup(content: PopupContent, anchorVisibleRect: CGRect, makeHosting: (CGFloat) -> NSView) {
         guard let mainPanel = dockPanel else { return }
-        // 可打断：面板可见时换文件夹**原地切换**——不 orderOut（根除黑一下的 blink），
+        // 可打断：面板可见时换内容**原地切换**——不 orderOut（根除黑一下的 blink），
         // 只撤旧监视器（随后重装），内容瞬换、帧滑向新目标。仅淡出中/未开时才走关闭路径。
         let isSwitching = folderPopupWantsOpen && (folderPopupPanel?.isVisible ?? false)
         if folderPopupWantsOpen {
@@ -342,11 +400,6 @@ final class PanelCoordinator: NSObject {
                 closeFolderPopup(immediately: true)
             }
         }
-
-        let rootURL = URL(fileURLWithPath: path)
-        // 先载入后亮相（散装感根因修复）：最多等 150ms 拿到完整内容,首帧即完整网格+最终尺寸,
-        // 面板作为一个整体入场,期间内容零变化。超时（网络卷等）传 nil,视图走异步回填。
-        let preloadedEntries = FolderContentsLoader.preload(url: rootURL, timeout: 0.15)
 
         if folderPopupPanel == nil {
             let panel = NonConstrainingPanel(
@@ -372,18 +425,12 @@ final class PanelCoordinator: NSObject {
         let maxContentHeight = PanelGeometry.maxFolderPopupContentHeight(
             anchorVisibleRect: anchorVisibleRect, on: screenGeometry, metrics: Self.layoutMetrics)
 
-        let hosting = NSHostingView(rootView: FolderGridPopupView(
-            rootURL: rootURL,
-            initialEntries: preloadedEntries,
-            maxContentHeight: maxContentHeight,
-            onFileOpened: { [weak self] in self?.closeFolderPopup() },
-            onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) }
-        ))
+        let hosting = makeHosting(maxContentHeight)
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
 
         popupAnchorVisibleRect = anchorVisibleRect
-        openPopupPath = path
+        openPopupContent = content
         folderPopupWantsOpen = true
         setAutoHideInhibitor(.folderPopupOpen, active: true)
 
@@ -463,7 +510,7 @@ final class PanelCoordinator: NSObject {
     func closeFolderPopup(immediately: Bool = false) {
         guard folderPopupWantsOpen else { return }
         folderPopupWantsOpen = false
-        openPopupPath = nil
+        openPopupContent = nil
         setAutoHideInhibitor(.folderPopupOpen, active: false)
         if let m = popupLocalMonitor  { NSEvent.removeMonitor(m); popupLocalMonitor  = nil }
         if let m = popupGlobalMonitor { NSEvent.removeMonitor(m); popupGlobalMonitor = nil }
@@ -506,6 +553,19 @@ final class PanelCoordinator: NSObject {
                 }
                 DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
             }
+        // 某文件夹排序方式变化：封面要换成新排序的第一个文件;该文件夹弹窗开着 → 走原地切换
+        // 路径按新排序重开（面板不灭,内容瞬换;下钻状态重置为接受的边缘,原生 Stacks 同款）。
+        pinnedFolderSortSubscription = pinnedFolderStore.$sortOrders
+            .receive(on: DispatchQueue.main)
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.folderCoverStore.sync(paths: self.pinnedFolderStore.folderPaths)
+                if let openPath = self.openPopupPath {
+                    self.openFolderPopup(path: openPath, anchorVisibleRect: self.popupAnchorVisibleRect)
+                }
+            }
     }
 
     // MARK: - Drag Controller (拖卡进抽屉 路线 C)
@@ -518,14 +578,30 @@ final class PanelCoordinator: NSObject {
             carrierFactory: { [runtime = self.runtime,
                                drawerStore = self.drawerStore,
                                messagingStore = self.messagingStore,
-                               launchFavoriteStore = self.launchFavoriteStore] controller in
+                               launchFavoriteStore = self.launchFavoriteStore,
+                               folderCoverStore = self.folderCoverStore] controller in
                 NSHostingView(rootView: DragCarrierView(controller: controller)
                     .environmentObject(runtime)
                     .environmentObject(drawerStore)
                     .environmentObject(messagingStore)
-                    .environmentObject(launchFavoriteStore))
+                    .environmentObject(launchFavoriteStore)
+                    .environmentObject(folderCoverStore))
             }
         )
+        // 文件夹 chip 拖动落定：几何由 DockStripView 写入 DragController，最终 mouseUp/轮询兜底在
+        // endDrag 里回调到这里执行副作用。保持 .folder 与 strip/drawer 收纳语义隔离。
+        dragController.onFolderDragEnded = { [weak self] path, zone in
+            guard let self else { return }
+            switch zone {
+            case .folderZone:
+                break
+            case .outsideStrip:
+                self.pinnedFolderStore.remove(path)
+            case .liveZone:
+                self.pinnedFolderStore.remove(path)
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            }
+        }
         // 抽屉拖回任务条·精确落点：成功松手落定时清顺序层的外部块暂存追踪（boundIDs 已是正常成员、留任务条）。
         dragController.onDrawerToStripCommitted = { [stripOrderStore] _ in
             stripOrderStore.commitExternalBlock()
@@ -563,6 +639,10 @@ final class PanelCoordinator: NSObject {
         case .drawer:
             guard let d = target(lastDockTargetFrame, dockPanel?.frame) else { return [] }
             return [d.insetBy(dx: Self.shadowPadding, dy: Self.shadowPadding)]
+        case .folder:
+            // 文件夹 chip 无投放区（canExternalDrop=false 本就不会查;区内重排/拖出移除/拖回打开
+            // 全在 DockStripView 用 FolderChipDropZone 判定）。与 strip/drawer 收纳语义隔离（评审拍板）。
+            return []
         }
     }
 
@@ -708,8 +788,11 @@ final class PanelCoordinator: NSObject {
             onFolderPopupToggle: { [weak self] path, anchorRect in
                 self?.toggleFolderPopup(path: path, anchorVisibleRect: anchorRect)
             },
+            onShelfPopupToggle: { [weak self] anchorRect in
+                self?.toggleShelfPopup(anchorVisibleRect: anchorRect)
+            },
             onAddFolder: { [weak self] in self?.onAddFolder() }
-        ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(launchFavoriteStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(dragController))
+        ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(launchFavoriteStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController))
         hosting.autoresizingMask = [.width, .height]
         // Prevent NSHostingView from adding its own opaque background over the blur
         hosting.wantsLayer = true

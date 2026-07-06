@@ -13,7 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let drawerOrderStore = DrawerOrderStore()
     let settingsStore = AppSettingsStore()
     let pinnedFolderStore = PinnedFolderStore()
-    let folderCoverStore = PinnedFolderCoverStore()
+    let shelfStore = ShelfStore()
+    /// lazy：sortOrderProvider 要引用 pinnedFolderStore（封面跟随该文件夹当前排序的第一个文件）。
+    private(set) lazy var folderCoverStore = PinnedFolderCoverStore(
+        sortOrderProvider: { [pinnedFolderStore] path in pinnedFolderStore.sortOrder(for: path) }
+    )
     private var panelCoordinator: PanelCoordinator?
     private var debugWindow: NSWindow?
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -80,12 +84,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.messagingStore.autoRegister(runningBundleIDs: running)
             }
 
-        let coordinator = PanelCoordinator(runtime: runtime, drawerStore: drawerStore, messagingStore: messagingStore, launchFavoriteStore: launchFavoriteStore, badgeStore: badgeStore, stripOrderStore: stripOrderStore, drawerOrderStore: drawerOrderStore, settingsStore: settingsStore, pinnedFolderStore: pinnedFolderStore, folderCoverStore: folderCoverStore)
+        let coordinator = PanelCoordinator(runtime: runtime, drawerStore: drawerStore, messagingStore: messagingStore, launchFavoriteStore: launchFavoriteStore, badgeStore: badgeStore, stripOrderStore: stripOrderStore, drawerOrderStore: drawerOrderStore, settingsStore: settingsStore, pinnedFolderStore: pinnedFolderStore, folderCoverStore: folderCoverStore, shelfStore: shelfStore)
         panelCoordinator = coordinator
         runtime.onToggleDrawer = { [weak coordinator] in coordinator?.toggleDrawer() }
         coordinator.onAddFolder = { [weak self] in self?.presentAddPinnedFolderPanel() }
         coordinator.start()
         badgeStore.start()
+        // 探针结论（2026-07-06,阶段0探针3）：访达窗口 AX 属性表虽列有 AXDocument 但恒无值
+        // （kAXErrorNoValue），AXProxy/AXTitleUIElement 也只有文件夹名无路径——「拖任务条访达
+        // 窗口图标固定文件夹」不可行,已按预案砍掉,拖入固定区只走真实文件 URL（系统拖放）。
     }
 
     /// 「添加固定文件夹…」统一入口（状态菜单 + 文件夹 chip 右键共用）。

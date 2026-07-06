@@ -8,9 +8,12 @@ import SwiftUI
 struct PinnedFolderChip: View {
     let path: String
     let cover: FolderCover?
+    /// 当前排序方式（菜单打勾用;menu builder 每次右键现建,读到的总是最新值）。
+    let sortOrder: FolderSortOrder
     let onTap: () -> Void
     let onAddFolder: () -> Void
     let onRemove: () -> Void
+    let onSetSortOrder: (FolderSortOrder) -> Void
 
     @State private var isHovering = false
 
@@ -43,21 +46,10 @@ struct PinnedFolderChip: View {
     }
 
     /// 堆叠观感：两片「纸」垫底（依次上移、略小），封面盖最前。封面是缩略图时方形裁切 + 细白边；
-    /// 是文件夹图标时不裁不描边（图标本身有形状）。
+    /// 是文件夹图标时不裁不描边（图标本身有形状）。背景片本身抽成 `StackedChipBackdrop`——
+    /// 中转格（ShelfChip）复用同一个背景,保证固定区 chip 家族视觉统一（owner 2026-07-06 反馈）。
     private func stackedCover(size: CGFloat) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(.white.opacity(0.14))
-                .frame(width: size - 4, height: size - 4)
-                .offset(y: -4)
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(.white.opacity(0.28))
-                .frame(width: size - 2, height: size - 2)
-                .offset(y: -2)
-            coverImage(size: size)
-                .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
-        }
-        .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+        StackedChipBackdrop(size: size) { coverImage(size: size) }
     }
 
     @ViewBuilder
@@ -91,8 +83,43 @@ struct PinnedFolderChip: View {
             NSWorkspace.shared.open(URL(fileURLWithPath: path))
         })
         menu.addItem(.separator())
+        // 排序方式 ▸（原生 Stacks 同款）：弹窗网格与堆叠封面都跟随,逐文件夹记忆。
+        let sortItem = NSMenuItem(title: "排序方式", action: nil, keyEquivalent: "")
+        let sortMenu = NSMenu()
+        for order in FolderSortOrder.allCases {
+            let item = ClosureMenuItem(order.menuTitle) { onSetSortOrder(order) }
+            item.state = order == sortOrder ? .on : .off
+            sortMenu.addItem(item)
+        }
+        sortItem.submenu = sortMenu
+        menu.addItem(sortItem)
+        menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("添加文件夹…") { onAddFolder() })
         menu.addItem(ClosureMenuItem("从固定区移除") { onRemove() })
         return menu
+    }
+}
+
+/// 固定区 chip 家族共用的"堆叠纸片"背景——文件夹 chip 与中转格 chip（ShelfChip）都用它,
+/// 保证视觉统一（owner 2026-07-06 反馈：中转格风格要和固定文件夹 chip 一致）。两片纸依次
+/// 上移、略小,前景内容由调用方叠加（自带阴影，同旧版 stackedCover 数值）。
+struct StackedChipBackdrop<Content: View>: View {
+    let size: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(.white.opacity(0.14))
+                .frame(width: size - 4, height: size - 4)
+                .offset(y: -4)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(.white.opacity(0.28))
+                .frame(width: size - 2, height: size - 2)
+                .offset(y: -2)
+            content()
+                .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
     }
 }

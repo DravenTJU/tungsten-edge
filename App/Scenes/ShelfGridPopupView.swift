@@ -1,0 +1,112 @@
+import AppKit
+import SwiftUI
+
+/// 中转弹窗：暂存文件的网格。与文件夹弹窗共用 `FolderGridCell` / `FolderPopupStyle`，
+/// 但**无下钻、无「在访达中打开」尾格、无目录监视**——数据源是 `ShelfStore` 的路径列表
+/// （顺序 = 暂存序，最新在前；协调器开窗前已 prune）。空态一行提示。
+/// 格子可系统拖出（.onDrag）；右键菜单带「移出中转」，废纸篓成功后同步移出。
+struct ShelfGridPopupView: View {
+    @ObservedObject var shelfStore: ShelfStore
+    let maxContentHeight: CGFloat
+    var onClosePopup: () -> Void = {}
+    var onContentResize: () -> Void = {}
+    var onPinFolder: ((URL) -> Void)?
+    var isFolderPinned: ((URL) -> Bool)?
+
+    @State private var isPresented = false
+    @State private var gridHeight: CGFloat = 0
+
+    private typealias Style = FolderPopupStyle
+
+    var body: some View {
+        // 每次渲染按当前暂存序读一次文件属性（中转量级小,同步读可接受;弹窗打开前协调器已 prune）。
+        let entries = FolderContentsLoader.entries(forPaths: shelfStore.itemPaths)
+        let columnCount = min(Style.maxColumns, max(Style.minColumns, max(entries.count, 1)))
+        let contentWidth = CGFloat(columnCount) * Style.cellWidth
+            + CGFloat(columnCount - 1) * Style.cellSpacing
+            + Style.contentPadding * 2
+        let availableGridHeight = min(max(140, maxContentHeight), Style.maxGridHeight)
+
+        ZStack(alignment: .bottomLeading) {
+            DockVisualEffectView()
+                .padding(-2)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .ignoresSafeArea()
+
+            Group {
+                if gridHeight > availableGridHeight + 0.5 {
+                    ScrollView(.vertical, showsIndicators: true) { gridBody(entries: entries, contentWidth: contentWidth, columnCount: columnCount) }
+                        .frame(height: availableGridHeight)
+                } else {
+                    gridBody(entries: entries, contentWidth: contentWidth, columnCount: columnCount)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+        }
+        .scaleEffect(isPresented ? 1 : 0.85, anchor: .bottom)
+        // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20)（AGENTS 护栏,同文件夹弹窗）。
+        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
+        .padding(PanelCoordinator.shadowPadding)
+        .onAppear {
+            withAnimation(.easeOut(duration: PopoverAnimation.openDuration)) { isPresented = true }
+        }
+        .onChange(of: gridHeight) { _ in onContentResize() }
+        .onChange(of: columnCount) { _ in onContentResize() }
+    }
+
+    private func gridBody(entries: [FolderContentsLoader.Entry], contentWidth: CGFloat, columnCount: Int) -> some View {
+        VStack(spacing: 0) {
+            if entries.isEmpty {
+                Text("拖文件到中转格暂存")
+                    .font(.system(size: Style.labelSize))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(Style.cellWidth), spacing: Style.cellSpacing), count: columnCount),
+                      spacing: Style.cellSpacing) {
+                ForEach(entries, id: \.url) { entry in
+                    FolderGridCell(icon: FolderGridCell.icon(forPath: entry.url.path),
+                                   label: entry.name,
+                                   dragURL: entry.url,
+                                   contextMenu: { cellMenu(for: entry) }) {
+                        // 中转不下钻：点击一律打开（文件夹开访达）,主用途是拖出。
+                        NSWorkspace.shared.open(entry.url)
+                        onClosePopup()
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: DrawerAnimation.duration), value: shelfStore.itemPaths)
+        }
+        .padding(Style.contentPadding)
+        .frame(width: contentWidth)
+        .background(GeometryReader { g in
+            Color.clear.preference(key: ShelfGridHeightKey.self, value: g.size.height)
+        })
+        .onPreferenceChange(ShelfGridHeightKey.self) { gridHeight = $0 }
+    }
+
+    private func cellMenu(for entry: FolderContentsLoader.Entry) -> NSMenu {
+        let canPin = entry.isDirectory && !(isFolderPinned?(entry.url) ?? true)
+        let path = entry.url.path
+        return FileItemMenuBuilder.menu(for: .init(
+            url: entry.url,
+            isDirectory: entry.isDirectory,
+            closePopup: onClosePopup,
+            pinFolder: canPin ? { onPinFolder?(entry.url) } : nil,
+            removeFromShelf: { shelfStore.remove(path) },
+            onTrashed: { shelfStore.remove(path) }
+        ))
+    }
+}
+
+private struct ShelfGridHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}

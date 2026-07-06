@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One slot in the strip: either a concrete window chip, a pinned messaging
 /// app-level entry (Dock-icon-like, 方案 B 2026-06-12), or a zone divider.
@@ -13,6 +14,9 @@ enum StripEntry: Identifiable, Hashable {
     case messagingApp(bundleID: String, mainWindow: StripItem?)
     /// 固定文件夹区的一格（消息区右侧、窗口区左侧）。path 即身份。
     case pinnedFolder(path: String)
+    /// 中转格：文件夹区固定头位的暂存格（不可拖拽,常驻——它也是文件夹区永不为空的保证,
+    /// 让「拖目录进来固定」在还没固定过任何文件夹时就有落区）。
+    case shelf
     /// Visual separator between zones. 现在最多两条（消息|文件夹、文件夹|窗口），id 必须唯一。
     case divider(id: String)
 
@@ -23,6 +27,7 @@ enum StripEntry: Identifiable, Hashable {
         // when the main window opens/closes.
         case let .messagingApp(bid, _): return "msg-app-\(bid)"
         case let .pinnedFolder(path): return "folder-\(path)"
+        case .shelf: return "shelf"
         case let .divider(id): return id
         }
     }
@@ -36,9 +41,12 @@ struct DockStripView: View {
     @EnvironmentObject var stripOrderStore: StripOrderStore
     @EnvironmentObject var pinnedFolderStore: PinnedFolderStore
     @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
+    @EnvironmentObject var shelfStore: ShelfStore
 
     /// 文件夹 chip 点击 → 弹窗 toggle（path + chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
     var onFolderPopupToggle: (String, CGRect) -> Void = { _, _ in }
+    /// 中转格点击 → 中转弹窗 toggle（chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
+    var onShelfPopupToggle: (CGRect) -> Void = { _ in }
     /// 「添加文件夹…」统一入口（NSOpenPanel 归 AppDelegate 管）。
     var onAddFolder: () -> Void = {}
     /// 跨面板拖动权威（拖卡进抽屉 路线 C）：起拖 → beginDrag；读 draggingItem 隐藏原位卡片、
@@ -63,9 +71,16 @@ struct DockStripView: View {
     /// `.background` GeometryReader (not overlay) so it never steals chip clicks.
     @State private var chipFrames: [String: CGRect] = [:]
 
-    /// 文件夹 chip 帧（弹窗锚点专用）。**独立字典,绝不混入 chipFrames**——那是 live 窗口区
-    /// 拖拽重排与抽屉拖回落点的输入,混入会让窗口拖动命中文件夹区、落点 no-op（评审 P1）。
+    /// 文件夹 chip 帧（弹窗锚点 + 外部拖入的 pin 落点路由）。**独立字典,绝不混入 chipFrames**——
+    /// 那是 live 窗口区拖拽重排与抽屉拖回落点的输入,混入会让窗口拖动命中文件夹区、落点 no-op（评审 P1）。
     @State private var folderChipFrames: [String: CGRect] = [:]
+
+    /// 中转格 frame（"strip" 空间）。**独立上报,不塞进 folderChipFrames**（评审：那个字典专属
+    /// 文件夹 chip,后续还喂文件夹重排 hit-test,不能混 sentinel）。喂中转弹窗锚点 + drop 路由。
+    @State private var shelfFrame: CGRect = .zero
+
+    /// 外部文件拖入的实时落点目标（悬停高亮用;nil = 没有外部拖拽悬停）。
+    @State private var externalDropTarget: StripDropRouting.Target?
 
     /// 任务条内容区（"strip" 空间）在屏幕坐标系的 frame（bottom-left）。抽屉拖回任务条·精确落点用它把
     /// 全局鼠标位置映回 "strip" 空间命中卡片，并判进/出任务条区（迟滞）。与 "strip" 命名空间挂同一视图。
@@ -146,7 +161,8 @@ struct DockStripView: View {
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let orderedLive = order.compactMap { byID[$0] }.map(StripEntry.window)
         // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
-        let folderEntries = pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
+        // 中转格固定在文件夹区头位 → 文件夹区恒非空,分隔线恒在。
+        let folderEntries = [StripEntry.shelf] + pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
         var zones = [pinned, folderEntries, orderedLive].filter { !$0.isEmpty }
         guard !zones.isEmpty else { return [] }
         var out = zones.removeFirst()
@@ -196,15 +212,26 @@ struct DockStripView: View {
             }
         }
         // 抽屉图标拖到任务条上方 = 移回任务栏的投放反馈：整条任务条高亮描边（对称于胶囊的收纳高亮）。
+        // 外部拖目录悬停文件夹区（pin 落点）复用同一条高亮。
         .overlay {
             RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
-                .strokeBorder(dragController.isOverUnstashZone ? .white.opacity(0.45) : .white.opacity(0.15),
-                              lineWidth: dragController.isOverUnstashZone ? 1 : 0.5)
+                .strokeBorder(stripHighlighted ? .white.opacity(0.45) : .white.opacity(0.15),
+                              lineWidth: stripHighlighted ? 1 : 0.5)
         }
-        .animation(.easeOut(duration: 0.15), value: dragController.isOverUnstashZone)
+        .animation(.easeOut(duration: 0.15), value: stripHighlighted)
         // 跨面板后，被拖的卡片改由 DragController 的全屏载体面板绘制（不再画在任务条 overlay 上 —
         // 任务条窗口只有 92pt 高，自绘 overlay 会被裁掉，飘不出去）。这里只保留"让出空位"的原位隐藏。
         .coordinateSpace(name: "strip")
+        // 外部文件拖入（系统拖放目的地）：**必须挂在定义 "strip" coordinateSpace 的同一层**——
+        // DropDelegate 的 location 要与 folderChipFrames/shelfFrame 同源,挂到 .padding(shadowPadding)
+        // 之后坐标就错位（评审拍板）。路由是纯函数 StripDropRouting.route,落点见 handleExternalDrop。
+        .onDrop(of: [UTType.fileURL], delegate: StripFileDropDelegate(
+            shelfFrame: shelfFrame,
+            folderFrames: folderChipFrames,
+            orderedPaths: pinnedFolderStore.folderPaths,
+            onTargetChange: { externalDropTarget = $0 },
+            onCommit: { target, urls in handleExternalDrop(target, urls: urls) }
+        ))
         // 与 "strip" 命名空间同一视图 → 屏幕 frame 即 "strip" 空间原点，供抽屉拖回任务条做坐标映射 + 进出判定。
         .background(ScreenRectReader { rect in
             if rect != stripRootScreenRect { stripRootScreenRect = rect }
@@ -216,6 +243,7 @@ struct DockStripView: View {
             updateDrawerToStripConvert()
             updateStripBlockReorder()
             syncConvertedCarrier()
+            updateFolderDragZone()
         }
         // Converge the remembered live order with the current snapshot (drop closed, append
         // new) as a side-effect — never during body eval. The `.onAppear` seed mirrors the old
@@ -224,8 +252,76 @@ struct DockStripView: View {
         .onAppear { reconcileLiveOrder() }
         .onPreferenceChange(ChipFramePreferenceKey.self) { chipFrames = $0 }
         .onPreferenceChange(FolderChipFramePreferenceKey.self) { folderChipFrames = $0 }
+        .onPreferenceChange(ShelfFramePreferenceKey.self) { shelfFrame = $0 }
         // No .frame(maxWidth: .infinity) here — lets NSHostingView.fittingSize reflect
         // the natural content width so AppDelegate can read it for panel sizing.
+    }
+
+    /// 正在拖动的文件夹 chip path（nil = 没有）。拖动中原位隐藏成空位,副本由载体面板画。
+    private var draggingFolderPath: String? {
+        if let p = dragController.draggingPayload, p.source == .folder { return p.id }
+        return nil
+    }
+
+    /// 文件夹区内重排：命中其他文件夹 chip 的全帧,按落点左/右半落位（镜像 live 区 reorderTarget,
+    /// hit-test 只查 folderChipFrames——绝不查 chipFrames）。
+    private func folderReorderTarget(at point: CGPoint, dragging path: String) {
+        let draggedID = "folder-" + path
+        guard let hit = folderChipFrames.first(where: { kv in
+            kv.key != draggedID && kv.value.contains(point)
+        }) else { return }
+        let targetPath = String(hit.key.dropFirst("folder-".count))
+        pinnedFolderStore.reorder(draggedPath: path, relativeTo: targetPath,
+                                  after: point.x > hit.value.midX)
+    }
+
+    /// 固定区右边界（"strip" 局部坐标）：中转格 + 所有文件夹 chip 里最靠右的那个的右缘。
+    /// 拖动中的 chip 本身位置不受隐藏影响（opacity 不改变布局），帧照常报,不需要排除自身。
+    private var folderZoneMaxX: CGFloat {
+        folderChipFrames.values.map(\.maxX).max() ?? shelfFrame.maxX
+    }
+
+    /// 文件夹 chip 拖动中的实时落点分类,写进 DragController 供载体视图（跨 SwiftUI 树）读取做淡出。
+    /// 最终落定也复用同一份屏幕坐标几何,由 DragController.endDrag 的 mouseUp/轮询兜底路径提交。
+    private func updateFolderDragZone() {
+        guard let p = dragController.draggingPayload, p.source == .folder,
+              stripRootScreenRect != .zero else {
+            dragController.setFolderDragZone(nil)
+            dragController.setFolderDropGeometry(nil)
+            return
+        }
+        let geometry = FolderChipDropGeometry(stripScreenRect: stripRootScreenRect,
+                                              folderZoneMaxX: folderZoneMaxX)
+        dragController.setFolderDropGeometry(geometry)
+        dragController.setFolderDragZone(geometry.classify(screenPoint: dragController.globalLocation))
+    }
+
+    /// 任务条整条高亮：抽屉图标拖回（unstash）或外部拖目录悬停文件夹区（pin）。
+    private var stripHighlighted: Bool {
+        if dragController.isOverUnstashZone { return true }
+        if case .pin = externalDropTarget { return true }
+        return false
+    }
+
+    /// 外部拖放落定（DropDelegate 异步取齐 URL 后回到主线程调）。
+    /// 中转收一切;固定只收目录（文件落文件夹区 = 无操作,微边缘接受）。
+    private func handleExternalDrop(_ target: StripDropRouting.Target, urls: [URL]) {
+        switch target {
+        case .stash:
+            shelfStore.stash(paths: urls.map(\.path))
+        case .pin(let insertIndex):
+            var index = insertIndex
+            for url in urls where isDirectoryURL(url) {
+                pinnedFolderStore.insert(url.path, at: index)
+                index += 1
+            }
+        case .none:
+            break
+        }
+    }
+
+    private func isDirectoryURL(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? url.hasDirectoryPath
     }
 
     /// Converge the remembered live order with the current snapshot (drop closed, append new).
@@ -391,14 +487,48 @@ struct DockStripView: View {
                 )
         case .messagingApp:
             stripEntryView(entry)
-        case .pinnedFolder:
-            // v1 只点击不拖拽（同消息区）。帧上报进**独立**的 FolderChipFramePreferenceKey,
-            // 只给弹窗锚点用（评审 P1：不得混入 live 重排的 chipFrames）。
+        case let .pinnedFolder(path):
+            // 文件夹 chip：区内拖拽重排 + 拖出移除 + 拖回窗口区打开（owner 2026-07-06 反馈落地）。
+            // 帧上报进**独立**的 FolderChipFramePreferenceKey（弹窗锚点 + 外部 pin 路由 + 本区重排
+            // hit-test）,绝不混入 live 重排的 chipFrames（评审 P1）。手势镜像 .window 卡:起拖交
+            // DragController（.folder 来源,与 strip/drawer 收纳语义隔离）,onChanged 驱动区内重排,
+            // 并写入 FolderChipDropGeometry；最终移除/打开由 DragController.endDrag 的兜底收尾触发。
             stripEntryView(entry)
+                .opacity(draggingFolderPath == path ? 0 : 1)
                 .background(
                     GeometryReader { geo in
                         Color.clear.preference(key: FolderChipFramePreferenceKey.self,
                                                value: [entry.id: geo.frame(in: .named("strip"))])
+                    }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8, coordinateSpace: .named("strip"))
+                        .onChanged { value in
+                            if dragController.draggingPayload == nil {
+                                let grab: CGSize = folderChipFrames[entry.id].map {
+                                    CGSize(width: $0.midX - value.startLocation.x,
+                                           height: $0.midY - value.startLocation.y)
+                                } ?? .zero
+                                let payload = DragPayload(source: .folder, id: path,
+                                                          bundleID: "", item: nil,
+                                                          visualKind: .folderChip,
+                                                          canExternalDrop: false)
+                                dragController.beginDrag(payload: payload,
+                                                         startScreenLocation: NSEvent.mouseLocation,
+                                                         grabOffset: grab)
+                            }
+                            folderReorderTarget(at: value.location, dragging: path)
+                            updateFolderDragZone()
+                        }
+                        .onEnded { _ in dragController.endDrag() }
+                )
+        case .shelf:
+            // 中转格固定头位,不可拖拽。帧走独立的 ShelfFramePreferenceKey（评审：不混 sentinel）。
+            stripEntryView(entry)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ShelfFramePreferenceKey.self,
+                                               value: geo.frame(in: .named("strip")))
                     }
                 )
         case .divider:
@@ -422,9 +552,20 @@ struct DockStripView: View {
             PinnedFolderChip(
                 path: path,
                 cover: folderCoverStore.covers[path],
+                sortOrder: pinnedFolderStore.sortOrder(for: path),
                 onTap: { folderChipTapped(path) },
                 onAddFolder: onAddFolder,
-                onRemove: { pinnedFolderStore.remove(path) }
+                onRemove: { pinnedFolderStore.remove(path) },
+                onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) }
+            )
+        case .shelf:
+            ShelfChip(
+                itemCount: shelfStore.itemPaths.count,
+                previewImage: shelfStore.itemPaths.first.map { PinnedFolderCoverStore.icon(forPath: $0) },
+                isDropTargeted: externalDropTarget == .stash,
+                onTap: { shelfChipTapped() },
+                onClear: { shelfStore.clear() },
+                onAddFolder: onAddFolder
             )
         case let .messagingApp(bid, main):
             // Explicit ZStack: the badge is the LAST child + zIndex, guaranteed to
@@ -468,6 +609,18 @@ struct DockStripView: View {
             height: frame.height
         )
         onFolderPopupToggle(path, screenRect)
+    }
+
+    /// 中转格点击：同 folderChipTapped 的坐标换算,锚点用独立的 shelfFrame。
+    private func shelfChipTapped() {
+        guard shelfFrame != .zero, stripRootScreenRect != .zero else { return }
+        let screenRect = CGRect(
+            x: stripRootScreenRect.minX + shelfFrame.minX,
+            y: stripRootScreenRect.maxY - shelfFrame.maxY,
+            width: shelfFrame.width,
+            height: shelfFrame.height
+        )
+        onShelfPopupToggle(screenRect)
     }
 
     /// Dock-icon-click equivalent: unhide + reopen. The app recreates its main window
@@ -826,7 +979,8 @@ struct DrawerCapsuleButton: View {
 /// Classic Dock-style unread badge: red capsule, white text, top-right of the chip.
 /// Renders whatever string the app put on its Dock tile ("3", "99+", "•") as-is.
 /// Not a hit target — taps fall through to the chip underneath.
-private struct ChipBadgeView: View {
+/// internal：中转格（ShelfChip）复用它做暂存数量角标。
+struct ChipBadgeView: View {
     let text: String
 
     var body: some View {
@@ -869,18 +1023,101 @@ private struct StripLayoutKey: Equatable {
             form = .launcher    // both states render as a fixed-size icon chip
         case .pinnedFolder:
             form = .launcher    // fixed-size folder chip
+        case .shelf:
+            form = .launcher    // fixed-size shelf chip
         case .divider:
             form = .launcher    // fixed-size separator, no animation form change
         }
     }
 }
 
-/// 文件夹 chip 帧（弹窗锚点专用）。独立于 ChipFramePreferenceKey——后者是 live 窗口区
-/// 拖拽重排/落点命中的输入,文件夹 id 混进去会被当成落点目标（评审 P1）。
+/// 文件夹 chip 帧（弹窗锚点 + 外部拖入 pin 路由）。独立于 ChipFramePreferenceKey——后者是
+/// live 窗口区拖拽重排/落点命中的输入,文件夹 id 混进去会被当成落点目标（评审 P1）。
 struct FolderChipFramePreferenceKey: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// 中转格 frame（单值）。独立于 FolderChipFramePreferenceKey（评审：文件夹帧字典不混 sentinel）。
+struct ShelfFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
+/// 外部文件拖入任务条的系统拖放收口。路由几何 = 纯函数 `StripDropRouting.route`;
+/// 本 delegate 只负责:悬停期间把目标发布给视图做高亮、松手后异步取齐 URL 再回主线程提交。
+/// 挂载点必须与 "strip" coordinateSpace 同层（坐标同源,评审拍板）。
+struct StripFileDropDelegate: DropDelegate {
+    let shelfFrame: CGRect
+    let folderFrames: [String: CGRect]
+    let orderedPaths: [String]
+    let onTargetChange: (StripDropRouting.Target?) -> Void
+    let onCommit: (StripDropRouting.Target, [URL]) -> Void
+
+    private func route(_ info: DropInfo) -> StripDropRouting.Target {
+        StripDropRouting.route(location: info.location,
+                               shelfFrame: shelfFrame,
+                               folderFrames: folderFrames,
+                               orderedPaths: orderedPaths)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [UTType.fileURL])
+    }
+
+    func dropEntered(info: DropInfo) {
+        onTargetChange(route(info))
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let target = route(info)
+        onTargetChange(target)
+        return DropProposal(operation: target == .none ? .forbidden : .copy)
+    }
+
+    func dropExited(info: DropInfo) {
+        onTargetChange(nil)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let target = route(info)
+        onTargetChange(nil)
+        guard target != .none else { return false }
+        let providers = info.itemProviders(for: [UTType.fileURL])
+        guard !providers.isEmpty else { return false }
+
+        // 异步取齐全部 URL,保持 provider 顺序,回主线程一次性提交。
+        let group = DispatchGroup()
+        let box = ResultBox(count: providers.count)
+        for (index, provider) in providers.enumerated() {
+            group.enter()
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                box.set(url, at: index)
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) {
+            let urls = box.urls.compactMap { $0 }
+            guard !urls.isEmpty else { return }
+            onCommit(target, urls)
+        }
+        return true
+    }
+
+    /// loadObject 回调在后台线程,加锁按位写,保序。
+    private final class ResultBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var urls: [URL?]
+        init(count: Int) { urls = Array(repeating: nil, count: count) }
+        func set(_ url: URL?, at index: Int) {
+            lock.lock(); defer { lock.unlock() }
+            urls[index] = url
+        }
     }
 }
 

@@ -11,6 +11,8 @@ final class FolderPopupModel: ObservableObject {
 
     private var watcher: DirectoryWatcher?
     private var generation = 0
+    /// 该文件夹的排序方式（开窗时定死；改排序走协调器原地切换重开,不在窗内热切）。
+    var sortOrder: FolderSortOrder = .default
 
     /// 预载路径：开窗前协调器已在后台读好内容，首帧即完整网格（散装感根因修复）。
     func seed(entries: [FolderContentsLoader.Entry]) {
@@ -42,7 +44,7 @@ final class FolderPopupModel: ObservableObject {
                 case .success(let list):
                     // 内容没变就不发布——预载后 watcher 挂载时的首次 reload 多为同内容,
                     // 不触发任何刷新/动画（入场期间内容零变化是验收标准）。
-                    let sorted = FolderContentsLoader.sortedByDateAdded(list)
+                    let sorted = FolderContentsLoader.sorted(list, by: self.sortOrder)
                     if sorted != self.entries { self.entries = sorted }
                     if self.loadFailed { self.loadFailed = false }
                 case .failure:
@@ -64,10 +66,14 @@ struct FolderGridPopupView: View {
     let rootURL: URL
     /// 网格可用高度上限（锚点上方 → 屏幕上沿，PanelCoordinator 算好传入），超出内部滚动。
     let maxContentHeight: CGFloat
-    /// 打开文件后回调（协调器关弹窗）。
+    /// 打开文件后回调（协调器关弹窗）。右键菜单的「打开类」动作也走它（关闭语义评审拍板）。
     var onFileOpened: () -> Void = {}
     /// 下钻/刷新导致内容尺寸（宽或高）变化 → 协调器动画重定位面板。
     var onContentResize: () -> Void = {}
+    /// 目录条目右键「固定到固定区」（协调器接 PinnedFolderStore）。nil = 不显示该项。
+    var onPinFolder: ((URL) -> Void)?
+    /// 已固定判定（已固定的目录不再显示「固定到固定区」）。
+    var isFolderPinned: ((URL) -> Bool)?
 
     @StateObject private var model: FolderPopupModel
     /// 下钻栈：空 = 根目录；push 子文件夹 URL。
@@ -80,33 +86,27 @@ struct FolderGridPopupView: View {
 
     init(rootURL: URL,
          initialEntries: [FolderContentsLoader.Entry]?,
+         sortOrder: FolderSortOrder = .default,
          maxContentHeight: CGFloat,
          onFileOpened: @escaping () -> Void = {},
-         onContentResize: @escaping () -> Void = {}) {
+         onContentResize: @escaping () -> Void = {},
+         onPinFolder: ((URL) -> Void)? = nil,
+         isFolderPinned: ((URL) -> Bool)? = nil) {
         self.rootURL = rootURL
         self.maxContentHeight = maxContentHeight
         self.onFileOpened = onFileOpened
         self.onContentResize = onContentResize
+        self.onPinFolder = onPinFolder
+        self.isFolderPinned = isFolderPinned
         _model = StateObject(wrappedValue: {
             let model = FolderPopupModel()
+            model.sortOrder = sortOrder
             if let initialEntries { model.seed(entries: initialEntries) }
             return model
         }())
     }
 
-    private enum Style {
-        static let iconSize: CGFloat = 64          // 原生 Stacks 同款大图标
-        static let cellWidth: CGFloat = 96
-        static let cellHeight: CGFloat = 104
-        static let cellSpacing: CGFloat = 10
-        static let contentPadding: CGFloat = 16
-        static let minColumns = 3
-        static let maxColumns = 8                  // 满列内容宽 ≈ 870pt（owner:再宽一些）
-        /// 网格显示高度上限（约 4 行出头,超出内部滚动;owner:矮一些）。
-        static let maxGridHeight: CGFloat = 470
-        static let labelSize: CGFloat = 11
-        static let backChipSize: CGFloat = 26
-    }
+    private typealias Style = FolderPopupStyle
 
     private var currentURL: URL { drillStack.last ?? rootURL }
 
@@ -206,7 +206,9 @@ struct FolderGridPopupView: View {
             LazyVGrid(columns: columns, spacing: Style.cellSpacing) {
                 ForEach(model.entries, id: \.url) { entry in
                     FolderGridCell(icon: FolderGridCell.icon(forPath: entry.url.path),
-                                   label: entry.name) { open(entry) }
+                                   label: entry.name,
+                                   dragURL: entry.url,
+                                   contextMenu: { cellMenu(for: entry) }) { open(entry) }
                 }
                 // 原生同款尾格：在访达中打开当前目录。
                 FolderGridCell(icon: Self.finderIcon, label: "在访达中打开") {
@@ -236,21 +238,61 @@ struct FolderGridPopupView: View {
         }
     }
 
+    /// 条目右键菜单（手搓 NSMenu,AGENTS 护栏）。目录且未固定才给「固定到固定区」。
+    private func cellMenu(for entry: FolderContentsLoader.Entry) -> NSMenu {
+        let canPin = entry.isDirectory && !(isFolderPinned?(entry.url) ?? true)
+        return FileItemMenuBuilder.menu(for: .init(
+            url: entry.url,
+            isDirectory: entry.isDirectory,
+            closePopup: onFileOpened,
+            pinFolder: canPin ? { onPinFolder?(entry.url) } : nil
+        ))
+    }
+
     private static let finderIcon: NSImage = {
         FolderGridCell.icon(forPath: "/System/Library/CoreServices/Finder.app")
     }()
 }
 
+/// 弹窗网格的共享尺寸常量（文件夹弹窗 + 中转弹窗共用,别在两边各写一份漂移）。
+/// 列数派生口径：columnCount = clamp(总格数, minColumns, maxColumns),宽度由列数**推导**,
+/// 绝不回退成测量值（fittingSize 反馈环）;maxColumns=8 是 owner「再宽一些」的拍板,勿改回 6。
+enum FolderPopupStyle {
+    static let iconSize: CGFloat = 64          // 原生 Stacks 同款大图标
+    static let cellWidth: CGFloat = 96
+    static let cellHeight: CGFloat = 104
+    static let cellSpacing: CGFloat = 10
+    static let contentPadding: CGFloat = 16
+    static let minColumns = 3
+    static let maxColumns = 8                  // 满列内容宽 ≈ 870pt（owner:再宽一些）
+    /// 网格显示高度上限（约 4 行出头,超出内部滚动;owner:矮一些）。
+    static let maxGridHeight: CGFloat = 470
+    static let labelSize: CGFloat = 11
+    static let backChipSize: CGFloat = 26
+}
+
 /// 单个格子：64pt 图标 + 两行小字名，悬停浮白底。独立 struct 才能各自持有 hover 态。
-/// 条目格与「在访达中打开」尾格共用。
-private struct FolderGridCell: View {
+/// 条目格与「在访达中打开」尾格共用（尾格无拖拽/无菜单）。中转弹窗（阶段 B）复用,故 internal。
+/// `dragURL` 非 nil → 挂系统文件拖拽 `.onDrag`（真文件拖出到别的 app;系统拖影=原生效果,
+/// AGENTS「No System Drag Image」护栏限任务条/抽屉 chip 拖拽,文件拖出在豁免范围）。
+struct FolderGridCell: View {
     let icon: NSImage
     let label: String
+    var dragURL: URL? = nil
+    var contextMenu: (() -> NSMenu)? = nil
     let onTap: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
+        if let dragURL {
+            core.onDrag { NSItemProvider(contentsOf: dragURL) ?? NSItemProvider() }
+        } else {
+            core
+        }
+    }
+
+    private var core: some View {
         VStack(spacing: 5) {
             Image(nsImage: icon)
                 .resizable()
@@ -275,6 +317,7 @@ private struct FolderGridCell: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
+        .nativeContextMenu { contextMenu?() ?? NSMenu() }
         .help(label)
         .animation(.easeInOut(duration: 0.12), value: isHovering)
     }

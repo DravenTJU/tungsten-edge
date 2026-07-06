@@ -17,8 +17,15 @@ final class PinnedFolderCoverStore: ObservableObject {
 
     private var watchers: [String: DirectoryWatcher] = [:]
     private var generations: [String: Int] = [:]
-    /// newestFilePath|modDate → 缩略图；最新文件没变就不再生成。
+    /// coverFilePath|modDate → 缩略图；封面文件没变就不再生成。
     private let thumbnailCache = NSCache<NSString, NSImage>()
+    /// 逐文件夹排序方式（AppDelegate 注入,读 PinnedFolderStore）：封面 = 当前排序下第一个文件,
+    /// 与弹窗网格同口径（原生 Stacks 同款：改排序,堆叠封面跟着换）。
+    private let sortOrderProvider: (String) -> FolderSortOrder
+
+    init(sortOrderProvider: @escaping (String) -> FolderSortOrder = { _ in .default }) {
+        self.sortOrderProvider = sortOrderProvider
+    }
 
     /// 与 PinnedFolderStore.folderPaths 对账：多退少补 watcher，全量刷新一次封面。
     func sync(paths: [String]) {
@@ -44,10 +51,11 @@ final class PinnedFolderCoverStore: ObservableObject {
         let generation = (generations[path] ?? 0) + 1
         generations[path] = generation
         let folderURL = URL(fileURLWithPath: path)
+        let order = sortOrderProvider(path)   // MainActor 上读定,后台块用值
 
         Task.detached(priority: .utility) { [weak self] in
             let entries = (try? FolderContentsLoader.load(directory: folderURL)) ?? []
-            let newest = FolderContentsLoader.newestFile(in: entries)
+            let newest = FolderContentsLoader.coverFile(in: entries, order: order)
             await MainActor.run { [weak self] in
                 guard let self, self.generations[path] == generation else { return }
                 self.publishCover(path: path, newest: newest, generation: generation)

@@ -112,10 +112,24 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 
 ## Drag, Drawer, And Ordering
 
-### No System Drag Image
+### No System Drag Image (scope: chip drags only)
 
-- Do not reintroduce SwiftUI `.onDrag` / `NSItemProvider` or AppKit `beginDraggingSession` for strip/drawer drags. System-owned drag images cause an unsuppressible release ghost.
+- Do not reintroduce SwiftUI `.onDrag` / `NSItemProvider` or AppKit `beginDraggingSession` for **strip/drawer/folder chip drags**. System-owned drag images cause an unsuppressible release ghost on chip visuals.
 - The carried image is self-drawn and owned by `DragController` for cross-panel drags.
+- **Exempt: real file drag-and-drop (2026-07-06).** Popup/shelf grid cells use `.onDrag { NSItemProvider(contentsOf:) }` to drag files OUT to other apps — a system drag is the only way to deliver a pasteboard payload cross-app, and the system drag image is the desired native look there. Likewise SwiftUI `.onDrop` destinations for files dragged IN are fine; they never enter DragController's NSEvent-monitor pipeline, so the two systems cannot conflict.
+
+### External File Drop-In (Finder → strip)
+
+- The strip's `.onDrop` must stay attached at the **same view level that declares the `"strip"` coordinate space** — never after `.padding(shadowPadding)` — so `DropInfo.location` is same-source with `folderChipFrames`/`shelfFrame`.
+- Routing geometry is the pure function `StripDropRouting.route` (shelf hit → stash; folder-zone x-range + 24pt tail slack → pin at index; else reject). Keep it pure and unit-tested; do not inline geometry into the DropDelegate.
+- The shelf chip's frame lives in its own `ShelfFramePreferenceKey`/`shelfFrame`. Do **not** put a sentinel key into `folderChipFrames` — that dict is folder-chips-only and feeds folder reorder hit-tests.
+- Only directories can pin; files dropped on the folder zone are a silent no-op (directory-ness is unknowable synchronously during hover — accepted micro-edge). Re-dropping an already-pinned folder repositions it (`PinnedFolderStore.insert` move semantics).
+
+### Shelf (中转格)
+
+- The shelf holds **references only** (bare paths, newest first). Never move/copy files implicitly; the receiving app decides on drag-out. `ShelfStore.prune()` runs on every shelf-popup open to drop dead paths. No bookmarks in v1.
+- The shelf chip is a fixed head of the pinned-folder zone (`StripEntry.shelf`), click + drop target only — never draggable, never a `DragController` source.
+- Shelf popup reuses the single shared popup panel via `PanelCoordinator.PopupContent` (`.folder(path)` / `.shelf`); the one-popup-at-a-time invariant must survive any refactor. Shelf grid: no drill-in, no Finder tail cell, tap = open.
 
 ### Strip Drag-Reorder
 
@@ -164,8 +178,11 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 
 ### Pinned Folder Zone
 
-- Strip layout is `[messaging][divider][pinned folders][divider][live windows]`; empty zones drop their adjacent divider. Folder chips are click-only (no DragGesture), like the messaging zone.
-- Folder chip frames go into the separate `FolderChipFramePreferenceKey`/`folderChipFrames`, used only for popup anchoring. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames` — that dict feeds live-zone drag-reorder and drawer-to-strip landing hit-tests.
+- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]`; empty zones drop their adjacent divider (the shelf chip keeps the folder zone permanently non-empty).
+- Folder chips drag via `DragController` source `.folder` (2026-07-06): in-zone reorder hit-tests **only** `folderChipFrames`; release clearly off the strip (dock target frame + 40pt) → unpin via the dedicated `onFolderDragEnded` callback. The `.folder` source must stay isolated from strip/drawer stash semantics — no drawerStore, no drop zones, no convert/revert, `canExternalDrop=false`, empty bundleID.
+- Folder chip frames go into the separate `FolderChipFramePreferenceKey`/`folderChipFrames` (popup anchoring + external pin routing + folder reorder). Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames` — that dict feeds live-zone drag-reorder and drawer-to-strip landing hit-tests.
+- Per-folder sort (`FolderSortOrder`, chip menu 排序方式) persists in `PinnedFolderStore.sortOrders`; sorting is pure functions in `FolderContentsLoader.sorted(_:by:)` (kind sort = explicit rank tuple, **not** sentinel-prefixed strings — `localizedStandardCompare` ignores control characters). The chip cover follows the current sort's first **file** (`coverFile(in:order:)`); a sort change refreshes covers and re-opens an open popup in place.
+- Finder windows do **not** expose their folder path to AX: `AXDocument` is listed but always `kAXErrorNoValue`; `AXProxy`/`AXTitleUIElement` carry only the display name (probed 2026-07-06). "Drag a Finder-window chip into the pinned zone to pin it" is therefore dead without Apple-Events/Automation permission — do not retry via AX.
 - Covers come from `PinnedFolderCoverStore`: background enumeration plus a per-folder generation counter; async QL callbacks must re-check the generation before publishing, or stale thumbnails overwrite fresh covers. Do not enumerate directories or fetch icons synchronously on the main thread.
 - `FolderCover.isThumbnail` decides rendering: real thumbnails get square-crop + border; icons render fit. Do not square-crop icon covers.
 - `DirectoryWatcher`: the fd is closed only in the dispatch source's cancel handler; `stop()` is idempotent. Never close the fd before cancel.
@@ -177,7 +194,8 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 - `dismissFolderPopupIfOutside` must exclude the anchor chip rect (+4pt tolerance): the monitor fires on mouseDown, the chip's tap on mouseUp — without the exclusion, clicking the same chip closes-then-reopens forever.
 - The popup closes whenever the dock target frame changes (`layoutPanels`), on screen-parameter change, hover screen switch, fullscreen, or panel hide. Do not reposition it to chase an animating anchor.
 - Popup layout mirrors native Stacks (owner 2026-07-06): **no header row**; "在访达中打开" is the grid's tail cell with the Finder icon; drill-in shows a floating back chip top-leading. Do not regress to a title/header design.
-- Popup width is **derived** — column count = clamp(cell count, 3, 6), width computed from it. It is never a measured value; measured-width feedback loops cause `fittingSize` oscillation.
+- Popup width is **derived** — column count = clamp(cell count, 3, 8), width computed from it (`FolderPopupStyle`, shared by folder + shelf popups; maxColumns=8 is the owner's "wider" decision — do not regress to 6). It is never a measured value; measured-width feedback loops cause `fittingSize` oscillation.
+- Grid-cell context menus are hand-built via `FileItemMenuBuilder`. Close semantics are fixed: 打开/打开方式/在访达中显示 close the popup; 拷贝/复制路径/固定到固定区/移出中转 keep it open; 移到废纸篓 keeps it open (watcher refreshes; shelf also drops the entry). No Quick Look (nonactivating panel can't become key), no 显示简介, no rename.
 - First-frame sizing: both popup and drawer measure `hosting.fittingSize` synchronously (`panel.layoutIfNeeded()`) **before** `orderFrontRegardless`, so the panel appears at its final size. The double-defer re-measure stays as fallback correction only. Do not go back to "open at last size, then snap-correct" — that jump was the owner-reported jank.
 - Switching folders while the popup is open is an **in-place switch**: panel stays visible (alpha untouched), content swaps, frame animates from current to the new target, monitors reinstall. Never regress to orderOut-then-reopen — that blink was an owner complaint (可打断 2026-07-06).
 - The popup must **preload folder contents before orderFront** (`FolderContentsLoader.preload`, 150ms timeout fallback to async fill): first frame = complete grid at final size, panel enters as one solid unit with zero content changes during entrance ("整体一块" is the owner's acceptance bar). First population never uses per-cell insertion animation (`animatesGridChanges` gate), and repositions within the 250ms entrance window are instant, never animated. Do not regress to "show first, fill later".
