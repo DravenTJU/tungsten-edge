@@ -95,53 +95,6 @@ final class PanelGeometryTests: XCTestCase {
         XCTAssertEqual(maxHeight, (screen.topUsableY - frames.drawer.minY) - 2 * metrics.shadowPadding)
     }
 
-    // MARK: - 垃圾桶卫星面板 + satelliteColumns
-
-    func testTrashSitsRightOfCapsuleWithCapsuleGapAndSameBand() {
-        let screen = screen(frame: CGRect(x: 0, y: 0, width: 1512, height: 982))
-        let frames = layout(on: screen)
-
-        let trash = PanelGeometry.trashTargetFrame(forCapsule: frames.capsule, on: screen, metrics: metrics)
-
-        XCTAssertEqual(trash.minX + metrics.shadowPadding,
-                       frames.capsule.maxX - metrics.shadowPadding + metrics.capsuleGap)
-        XCTAssertEqual(trash.minY, frames.capsule.minY)
-        XCTAssertEqual(trash.size, frames.capsule.size)
-    }
-
-    func testTrashClampsAtRightScreenEdge() {
-        let screen = screen(frame: CGRect(x: 0, y: 0, width: 1512, height: 982))
-        // 胶囊可视右缘几乎贴屏：垃圾桶可视区必须钳在屏内。
-        let capsuleNearEdge = CGRect(
-            x: screen.frame.maxX - metrics.capsuleWidth - metrics.shadowPadding - 4,
-            y: 0,
-            width: metrics.capsuleWidth + metrics.shadowPadding * 2,
-            height: metrics.capsuleWidth + metrics.shadowPadding * 2
-        )
-
-        let trash = PanelGeometry.trashTargetFrame(forCapsule: capsuleNearEdge, on: screen, metrics: metrics)
-
-        XCTAssertEqual(trash.minX + metrics.shadowPadding, screen.frame.maxX - metrics.capsuleWidth)
-    }
-
-    func testSatelliteColumnsReservation() {
-        let screen = screen(frame: CGRect(x: 0, y: 0, width: 1512, height: 982))
-        let huge: CGFloat = 5000
-
-        let one = PanelGeometry.dockTargetFrame(contentWidth: huge, on: screen, metrics: metrics)
-        let two = PanelGeometry.dockTargetFrame(contentWidth: huge, on: screen, metrics: metrics, satelliteColumns: 2)
-
-        XCTAssertEqual(one.width - 2 * metrics.shadowPadding,
-                       screen.frame.width - 2 * (metrics.outerMargin + metrics.capsuleGap + metrics.capsuleWidth))
-        XCTAssertEqual(two.width - 2 * metrics.shadowPadding,
-                       screen.frame.width - 2 * (metrics.outerMargin + 2 * (metrics.capsuleGap + metrics.capsuleWidth)))
-        // 默认参数与历史公式等价（对照未收窄的窄内容）。
-        XCTAssertEqual(
-            PanelGeometry.dockTargetFrame(contentWidth: 620, on: screen, metrics: metrics),
-            PanelGeometry.dockTargetFrame(contentWidth: 620, on: screen, metrics: metrics, satelliteColumns: 1)
-        )
-    }
-
     // MARK: - 文件夹弹窗
 
     func testFolderPopupAnchorsAboveAnchorRectAndCenters() {

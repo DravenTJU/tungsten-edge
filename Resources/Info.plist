@@ -22,8 +22,6 @@
   <string>$(CURRENT_PROJECT_VERSION)</string>
   <key>LSMinimumSystemVersion</key>
   <string>12.0</string>
-  <key>NSAppleEventsUsageDescription</key>
-  <string>用于让访达执行「清倒废纸篓」。</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

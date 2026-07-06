@@ -46,15 +46,13 @@ final class FolderPopupModel: ObservableObject {
     }
 }
 
-/// 文件夹 / 废纸篓弹窗网格（Dock Stacks 网格的等价物）。
+/// 固定文件夹弹窗网格（Dock Stacks 网格的等价物）。
 /// 单击文件 → 默认应用打开并关弹窗；单击子文件夹 → 面板内下钻（顶部返回）。
 /// 排序「最新在前」，与 chip 封面的「最新文件」口径一致。
 /// 列数固定 → 面板宽度恒定，只有高度随内容变，避免 fittingSize 宽度反馈环。
 struct FolderGridPopupView: View {
     let rootURL: URL
     let rootTitle: String
-    /// 废纸篓模式：读取失败时提示「完全磁盘访问」权限而非一般错误。
-    let isTrash: Bool
     /// 网格可用高度上限（锚点上方 → 屏幕上沿，PanelCoordinator 算好传入），超出内部滚动。
     let maxContentHeight: CGFloat
     /// 打开文件后回调（协调器关弹窗）。
@@ -165,7 +163,7 @@ struct FolderGridPopupView: View {
             if model.loadFailed {
                 unreadableHint
             } else if model.entries.isEmpty && model.didFirstLoad {
-                Text(isTrash ? "废纸篓是空的" : "文件夹是空的")
+                Text("文件夹是空的")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.5))
                     .frame(maxWidth: .infinity)
@@ -190,32 +188,13 @@ struct FolderGridPopupView: View {
         .onPreferenceChange(FolderGridHeightKey.self) { gridHeight = $0 }
     }
 
-    /// 读取失败提示。废纸篓大概率是缺「完全磁盘访问」，给设置深链；普通文件夹给一般提示。
+    /// 读取失败提示（文件夹被删/无权限等）。绝不崩不阻塞。
     private var unreadableHint: some View {
-        VStack(spacing: 8) {
-            Text(isTrash ? "无法读取废纸篓内容" : "无法读取文件夹内容")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.8))
-            if isTrash {
-                Text("需要在系统设置中授予「完全磁盘访问」权限\n（拖文件进垃圾桶删除不受影响）")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .multilineTextAlignment(.center)
-                Text("打开系统设置")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Capsule().fill(.white.opacity(0.12)))
-                    .contentShape(Capsule())
-                    .onTapGesture {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        Text("无法读取文件夹内容")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.white.opacity(0.8))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
     }
 
     private func open(_ entry: FolderContentsLoader.Entry) {

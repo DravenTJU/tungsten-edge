@@ -159,7 +159,7 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 - Freeze strip width during any converted cross-panel drag; release or revert clears the clamp and relayouts once.
 - Converted carrier visual and in-place gap must share `convertedRepresentative`; do not carry one chip while opening a gap at another.
 
-## Pinned Folders, Folder Popup, And Trash
+## Pinned Folders And Folder Popup
 
 ### Pinned Folder Zone
 
@@ -167,6 +167,8 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 - Folder chip frames go into the separate `FolderChipFramePreferenceKey`/`folderChipFrames`, used only for popup anchoring. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames` — that dict feeds live-zone drag-reorder and drawer-to-strip landing hit-tests.
 - Covers come from `PinnedFolderCoverStore`: background enumeration plus a per-folder generation counter; async QL callbacks must re-check the generation before publishing, or stale thumbnails overwrite fresh covers. Do not enumerate directories or fetch icons synchronously on the main thread.
 - `FolderCover.isThumbnail` decides rendering: real thumbnails get square-crop + border; icons render fit. Do not square-crop icon covers.
+- `DirectoryWatcher`: the fd is closed only in the dispatch source's cancel handler; `stop()` is idempotent. Never close the fd before cancel.
+- **Trash satellite is dead.** A full trash panel (drop-to-delete, full/empty icon, empty-trash, satellite geometry) was built and removed the same day (2026-07-06): owner judged it too heavy — always-on placement plus Full Disk Access / Automation permission demands. Implementation is archived in commit d7ae76e. Do not reintroduce without an owner decision.
 
 ### Folder Popup
 
@@ -175,16 +177,6 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 - The popup closes whenever the dock target frame changes (`layoutPanels`), on screen-parameter change, hover screen switch, fullscreen, or panel hide. Do not reposition it to chase an animating anchor.
 - Popup width is fixed by the grid's column count; only height varies. Keep it that way — variable width feeds a `fittingSize` width oscillation loop.
 - Edge auto-hide is inhibited while the popup is open via `EdgeAutoHideInhibitor.folderPopupOpen`.
-
-### Trash Satellite
-
-- Panel order is fixed `[dock][capsule][trash]`, trash outermost. `trashTargetFrame` keys off the capsule **target** frame; dock width reservation uses `dockTargetFrame(satelliteColumns:)` (2 when trash shown, 1 hidden) — symmetric, the dock stays centered.
-- `setupTrashPanel` must not unconditionally `orderFrontRegardless`; gate on `showTrash && panelsAreVisible`, or a persisted-hidden trash flashes at launch. Fullscreen/edge hide must take the trash down with dock/capsule — never leave it floating alone.
-- `TrashDropContainerView` is the repo's only `NSDraggingDestination`; the hosting subview stays unregistered so file drags route to the container. `MenuHostNSView` still claims only right-clicks.
-- Scope: **user home trash only** (`~/.Trash`). Files trashed from external volumes land in that volume's `.Trashes/<uid>` — the full/empty icon and popup grid intentionally do not cover them (batch-2 candidate).
-- Listing `~/.Trash` requires Full Disk Access; `trashItem` drops and AppleScript empty-trash do not. Degrade to the hint row + settings deep-link; never block.
-- Empty trash goes through Finder AppleScript. `NSAppleEventsUsageDescription` in Info.plist is load-bearing — without it the Automation prompt never appears and Apple events are silently denied. Error -1743 → guide to Automation settings.
-- `DirectoryWatcher`: the fd is closed only in the dispatch source's cancel handler; `stop()` is idempotent. Never close the fd before cancel.
 
 ## Menus
 

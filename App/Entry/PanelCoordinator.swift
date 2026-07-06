@@ -39,13 +39,11 @@ final class PanelCoordinator: NSObject {
     private let settingsStore: AppSettingsStore
     private let pinnedFolderStore: PinnedFolderStore
     private let folderCoverStore: PinnedFolderCoverStore
-    private let trashStateStore = TrashStateStore()
     /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
     private var drawerPanel: NSPanel?
     private var capsulePanel: NSPanel?
-    private var trashPanel: NSPanel?
     /// 抽屉真正承载 SwiftUI 的 hosting view（抽屉 contentView 是普通 NSView 容器,故 fittingSize 要读这个）。
     private var drawerContentHost: NSView?
     /// 跨面板拖动（拖卡进抽屉 路线 C）的唯一权威：载体面板 + 鼠标监视器 + 落点收尾都在它里面。
@@ -63,16 +61,12 @@ final class PanelCoordinator: NSObject {
     /// 弹窗锚点（chip 可视矩形,屏幕坐标）。click-away 判定要排除它——监视器在 mouseDown 关、
     /// chip 的 onTapGesture 在 mouseUp 又开,不排除锚点则同 chip 点击永远无法收合。
     private var popupAnchorVisibleRect: CGRect = .zero
-    enum FolderPopupSource: Equatable {
-        case folder(path: String)
-        case trash
-    }
-    private var openPopupSource: FolderPopupSource?
+    /// 当前弹窗对应的固定文件夹 path（nil = 没开）。
+    private var openPopupPath: String?
     /// 弹窗**逻辑**开关态（淡出动画期间面板还可见但逻辑上已关,同 drawerWantsOpen）。
     private var folderPopupWantsOpen = false
     private var lastPopupSize = CGSize(width: 424, height: 240)
     private var pinnedFolderStoreSubscription: AnyCancellable?
-    private var showTrashSubscription: AnyCancellable?
     private var snapshotWidthSubscription: AnyCancellable?
     private var drawerStoreWidthSubscription: AnyCancellable?
     private var messagingStoreWidthSubscription: AnyCancellable?
@@ -107,7 +101,6 @@ final class PanelCoordinator: NSObject {
     private var lastDockTargetFrame: NSRect = .zero
     private var lastCapsuleTargetFrame: NSRect = .zero
     private var lastDrawerTargetFrame: NSRect = .zero
-    private var lastTrashTargetFrame: NSRect = .zero
     /// 首帧布局强制瞬时（面板刚建好,别从初始/原点位置滑过来）。
     private var didInitialLayout = false
     private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "dock-panel")
@@ -139,7 +132,6 @@ final class PanelCoordinator: NSObject {
         setupDragController()
         setupDockPanel()
         setupCapsulePanel()
-        setupTrashPanel()
         subscribeSnapshotWidth()
         subscribeDrawerStoreWidth()
         subscribeMessagingStoreWidth()
@@ -149,8 +141,6 @@ final class PanelCoordinator: NSObject {
         subscribeConvertRelease()
         subscribeSettings()
         subscribePinnedFolderStore()
-        subscribeShowTrash()
-        trashStateStore.start()
         setupFullscreenMonitor()
         setupHoverDiagnostics()
         NotificationCenter.default.addObserver(
@@ -309,32 +299,21 @@ final class PanelCoordinator: NSObject {
 
     // MARK: - 文件夹/废纸篓弹窗（克隆抽屉模板：懒面板 + 普通容器包 hosting + 淡入淡出 + click-away 监视器）
 
-    /// chip 点击入口：同源再点 = 收起；异源 = 瞬时切换目标。anchorVisibleRect 是 chip 可视矩形（屏幕坐标）。
-    func toggleFolderPopup(source: FolderPopupSource, anchorVisibleRect: CGRect) {
-        if folderPopupWantsOpen, openPopupSource == source {
+    /// chip 点击入口：同一文件夹再点 = 收起；换文件夹 = 瞬时切换目标。anchorVisibleRect 是 chip 可视矩形（屏幕坐标）。
+    func toggleFolderPopup(path: String, anchorVisibleRect: CGRect) {
+        if folderPopupWantsOpen, openPopupPath == path {
             closeFolderPopup()
         } else {
-            openFolderPopup(source: source, anchorVisibleRect: anchorVisibleRect)
+            openFolderPopup(path: path, anchorVisibleRect: anchorVisibleRect)
         }
     }
 
-    private func openFolderPopup(source: FolderPopupSource, anchorVisibleRect: CGRect) {
+    private func openFolderPopup(path: String, anchorVisibleRect: CGRect) {
         guard let mainPanel = dockPanel else { return }
         if folderPopupWantsOpen { closeFolderPopup(immediately: true) }   // 换目标：瞬时切,不等淡出
 
-        let rootURL: URL
-        let rootTitle: String
-        let isTrash: Bool
-        switch source {
-        case .folder(let path):
-            rootURL = URL(fileURLWithPath: path)
-            rootTitle = FileManager.default.displayName(atPath: path)
-            isTrash = false
-        case .trash:
-            rootURL = TrashStateStore.userTrashURL
-            rootTitle = "废纸篓"
-            isTrash = true
-        }
+        let rootURL = URL(fileURLWithPath: path)
+        let rootTitle = FileManager.default.displayName(atPath: path)
 
         if folderPopupPanel == nil {
             let panel = NonConstrainingPanel(
@@ -363,7 +342,6 @@ final class PanelCoordinator: NSObject {
         let hosting = NSHostingView(rootView: FolderGridPopupView(
             rootURL: rootURL,
             rootTitle: rootTitle,
-            isTrash: isTrash,
             maxContentHeight: maxContentHeight,
             onFileOpened: { [weak self] in self?.closeFolderPopup() },
             onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) }
@@ -372,7 +350,7 @@ final class PanelCoordinator: NSObject {
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
 
         popupAnchorVisibleRect = anchorVisibleRect
-        openPopupSource = source
+        openPopupPath = path
         folderPopupWantsOpen = true
         setAutoHideInhibitor(.folderPopupOpen, active: true)
 
@@ -432,7 +410,7 @@ final class PanelCoordinator: NSObject {
     func closeFolderPopup(immediately: Bool = false) {
         guard folderPopupWantsOpen else { return }
         folderPopupWantsOpen = false
-        openPopupSource = nil
+        openPopupPath = nil
         setAutoHideInhibitor(.folderPopupOpen, active: false)
         if let m = popupLocalMonitor  { NSEvent.removeMonitor(m); popupLocalMonitor  = nil }
         if let m = popupGlobalMonitor { NSEvent.removeMonitor(m); popupGlobalMonitor = nil }
@@ -470,7 +448,7 @@ final class PanelCoordinator: NSObject {
             .sink { [weak self] paths in
                 guard let self else { return }
                 self.folderCoverStore.sync(paths: paths)
-                if case .folder(let path) = self.openPopupSource, !paths.contains(path) {
+                if let openPath = self.openPopupPath, !paths.contains(openPath) {
                     self.closeFolderPopup()
                 }
                 DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
@@ -675,7 +653,7 @@ final class PanelCoordinator: NSObject {
 
         let hosting = NSHostingView(rootView: DockStripView(
             onFolderPopupToggle: { [weak self] path, anchorRect in
-                self?.toggleFolderPopup(source: .folder(path: path), anchorVisibleRect: anchorRect)
+                self?.toggleFolderPopup(path: path, anchorVisibleRect: anchorRect)
             },
             onAddFolder: { [weak self] in self?.onAddFolder() }
         ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(launchFavoriteStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(dragController))
@@ -714,104 +692,6 @@ final class PanelCoordinator: NSObject {
         panel.contentView = hosting
         panel.orderFrontRegardless()
         capsulePanel = panel
-    }
-
-    /// 垃圾桶卫星面板（胶囊右侧,最外侧）。contentView 是 TrashDropContainerView（NSDraggingDestination,
-    /// 接 Finder 文件拖放）,hosting 钉在里面。**不无脑 orderFront**——按持久化的 showTrash 决定,
-    /// 否则设置为隐藏时启动会闪一下（评审 P2）。
-    private func setupTrashPanel() {
-        let side = Self.capsuleWidth + Self.shadowPadding * 2
-        let panel = NonConstrainingPanel(
-            contentRect: NSRect(origin: .zero, size: CGSize(width: side, height: side)),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-        panel.isFloatingPanel = true
-        panel.isMovable = false
-        panel.isOpaque = false
-        panel.backgroundColor = NSColor(white: 1.0, alpha: 0.0)
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-
-        let hosting = NSHostingView(rootView: TrashCapsuleView(
-            trashState: trashStateStore,
-            onTap: { [weak self] in self?.toggleTrashPopup() },
-            onEmptyTrash: { [weak self] in self?.confirmAndEmptyTrash() },
-            onHide: { [weak self] in self?.settingsStore.setShowTrash(false) }
-        ))
-        hosting.wantsLayer = true
-        hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
-
-        let container = TrashDropContainerView(frame: NSRect(origin: .zero, size: CGSize(width: side, height: side)))
-        container.trashState = trashStateStore
-        container.onDropCompleted = { [weak self] in self?.trashStateStore.refresh() }
-        hosting.frame = container.bounds
-        hosting.autoresizingMask = [.width, .height]
-        container.addSubview(hosting)
-        panel.contentView = container
-
-        if settingsStore.showTrash && panelsAreVisible {
-            panel.orderFrontRegardless()
-        }
-        trashPanel = panel
-    }
-
-    /// 垃圾桶点击 → 废纸篓弹窗。锚点读**存储的目标** frame（非 live,AGENTS 护栏）。
-    private func toggleTrashPopup() {
-        guard lastTrashTargetFrame != .zero else { return }
-        let anchor = lastTrashTargetFrame.insetBy(dx: Self.shadowPadding, dy: Self.shadowPadding)
-        toggleFolderPopup(source: .trash, anchorVisibleRect: anchor)
-    }
-
-    /// 清倒废纸篓：确认弹窗 → AppleScript 让访达执行（首次触发系统「自动化」授权,
-    /// Info.plist 必须带 NSAppleEventsUsageDescription 否则静默拒绝）。-1743 = 授权被拒 → 引导开设置。
-    private func confirmAndEmptyTrash() {
-        closeFolderPopup()
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "确定要清倒废纸篓吗？"
-        alert.informativeText = "废纸篓中的项目将被永久删除，此操作不能撤销。"
-        alert.addButton(withTitle: "清倒")
-        alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        var errorInfo: NSDictionary?
-        NSAppleScript(source: "tell application \"Finder\" to empty trash")?
-            .executeAndReturnError(&errorInfo)
-        if let errorInfo, let code = errorInfo["NSAppleScriptErrorNumber"] as? Int, code == -1743 {
-            let denied = NSAlert()
-            denied.alertStyle = .warning
-            denied.messageText = "没有权限控制访达"
-            denied.informativeText = "请在系统设置 > 隐私与安全性 > 自动化 中，允许 Tungsten Edge 钨极 控制「访达」。"
-            denied.addButton(withTitle: "打开系统设置")
-            denied.addButton(withTitle: "好")
-            if denied.runModal() == .alertFirstButtonReturn,
-               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-                NSWorkspace.shared.open(url)
-            }
-        }
-        trashStateStore.refresh()
-    }
-
-    /// 垃圾桶显隐（状态菜单勾选 / 右键「隐藏垃圾桶」）：orderIn/Out + 关它的弹窗 + 任务条最大宽度随之变。
-    private func subscribeShowTrash() {
-        showTrashSubscription = settingsStore.$showTrash
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] show in
-                guard let self else { return }
-                if show {
-                    if self.panelsAreVisible { self.trashPanel?.orderFrontRegardless() }
-                } else {
-                    if case .trash = self.openPopupSource { self.closeFolderPopup() }
-                    self.trashPanel?.orderOut(nil)
-                }
-                DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
-            }
     }
 
     // MARK: - Content Width via fittingSize
@@ -908,11 +788,9 @@ final class PanelCoordinator: NSObject {
 
     private static let layoutAnimationDuration: TimeInterval = DrawerAnimation.duration
 
-    /// 任务条目标 frame（按内容宽度、居中、限宽）。垃圾桶显示时右侧要多留一列卫星位（对称预留）。
+    /// 任务条目标 frame（按内容宽度、居中、限宽）。
     private func dockTargetFrame(contentWidth: CGFloat, on screen: NSScreen) -> NSRect {
-        PanelGeometry.dockTargetFrame(contentWidth: contentWidth, on: Self.screenGeometry(screen),
-                                      metrics: Self.layoutMetrics,
-                                      satelliteColumns: settingsStore.showTrash ? 2 : 1)
+        PanelGeometry.dockTargetFrame(contentWidth: contentWidth, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
     }
 
     /// 胶囊目标 frame（贴任务条右边、纵向居中）。只依赖传入的 dock **目标** frame。
@@ -938,17 +816,12 @@ final class PanelCoordinator: NSObject {
 
         let dockT = dockTargetFrame(contentWidth: contentWidth, on: screen)
         let capsuleT = capsuleTargetFrame(forDock: dockT, on: screen)
-        let trashT = PanelGeometry.trashTargetFrame(forCapsule: capsuleT, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
         // 任务条目标帧一变（宽度/切屏）就关弹窗——不追动画中的锚点（与原生 Dock 行为一致,保 target-frame 纯度）。
         if folderPopupWantsOpen, dockT != lastDockTargetFrame { closeFolderPopup() }
         lastDockTargetFrame = dockT
         lastCapsuleTargetFrame = capsuleT
-        lastTrashTargetFrame = trashT
 
         var pairs: [(NSPanel, NSRect)] = [(dock, dockT), (capsule, capsuleT)]
-        if let trash = trashPanel, settingsStore.showTrash {
-            pairs.append((trash, trashT))   // 同一动画组,自动跟随切屏/宽度变化
-        }
         if let drawer = drawerPanel, drawer.isVisible, let hosting = drawerContentHost {
             let fitting = hosting.fittingSize
             let drawerSize = CGSize(width: max(fitting.width, 60), height: max(fitting.height, 60))
@@ -1254,8 +1127,7 @@ final class PanelCoordinator: NSObject {
         let actualWidth = PanelGeometry.dockTargetFrame(
             contentWidth: lastDesiredWidth,
             on: Self.screenGeometry(targetScreen),
-            metrics: Self.layoutMetrics,
-            satelliteColumns: settingsStore.showTrash ? 2 : 1
+            metrics: Self.layoutMetrics
         ).width - Self.shadowPadding * 2
         closeFolderPopup()   // 切屏后旧锚点在旧屏,弹窗收起
         layoutPanels(contentWidth: lastDesiredWidth, on: targetScreen, animated: false)
@@ -1418,7 +1290,6 @@ final class PanelCoordinator: NSObject {
             removeEdgeHiddenMouseMonitor()
             dockPanel?.orderFrontRegardless()
             capsulePanel?.orderFrontRegardless()
-            if settingsStore.showTrash { trashPanel?.orderFrontRegardless() }
             if drawerWantsOpen { drawerPanel?.orderFrontRegardless() }
         } else {
             if visibilityState.hideReasons.contains(.fullscreen) { closeDrawer() }
@@ -1426,7 +1297,6 @@ final class PanelCoordinator: NSObject {
             installEdgeHiddenMouseMonitorIfNeeded()
             dockPanel?.orderOut(nil)
             capsulePanel?.orderOut(nil)
-            trashPanel?.orderOut(nil)   // 全屏/边缘隐藏时垃圾桶绝不单飘（AGENTS 护栏）
         }
     }
 
@@ -1446,7 +1316,6 @@ final class PanelCoordinator: NSObject {
         if let dock = dockPanel, dock.frame.contains(mouse) { return false }
         if let capsule = capsulePanel, capsule.frame.contains(mouse) { return false }
         if drawerWantsOpen, let drawer = drawerPanel, drawer.frame.contains(mouse) { return false }
-        if settingsStore.showTrash, let trash = trashPanel, trash.frame.contains(mouse) { return false }
         if folderPopupWantsOpen, let popup = folderPopupPanel, popup.frame.contains(mouse) { return false }
         return true
     }

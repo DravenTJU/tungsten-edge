@@ -39,16 +39,12 @@ struct PanelScreenGeometry: Equatable {
 }
 
 enum PanelGeometry {
-    /// `satelliteColumns` = 任务条右侧悬浮小面板的列数（胶囊恒为 1；垃圾桶显示时传 2）。
-    /// dock 居中，所以预留必须对称；默认 1 与历史公式完全等价。
     static func dockTargetFrame(
         contentWidth: CGFloat,
         on screen: PanelScreenGeometry,
-        metrics: PanelLayoutMetrics = .tungstenEdge,
-        satelliteColumns: Int = 1
+        metrics: PanelLayoutMetrics = .tungstenEdge
     ) -> CGRect {
-        let reserved = metrics.outerMargin + CGFloat(satelliteColumns) * (metrics.capsuleGap + metrics.capsuleWidth)
-        let maxWidth = screen.frame.width - 2 * reserved
+        let maxWidth = screen.frame.width - 2 * (metrics.outerMargin + metrics.capsuleGap + metrics.capsuleWidth)
         let panelWidth = max(min(contentWidth, maxWidth), metrics.minimumDockWidth)
         let x = screen.frame.minX + (screen.frame.width - panelWidth) / 2
         return CGRect(
@@ -76,24 +72,7 @@ enum PanelGeometry {
         )
     }
 
-    /// 垃圾桶卫星面板：胶囊可视右缘再向右 capsuleGap，同一垂直带、同尺寸。
-    /// 顺序固定为 [dock][胶囊][垃圾桶]，垃圾桶最外侧。
-    static func trashTargetFrame(
-        forCapsule capsuleFrame: CGRect,
-        on screen: PanelScreenGeometry,
-        metrics: PanelLayoutMetrics = .tungstenEdge
-    ) -> CGRect {
-        let rawX = capsuleFrame.maxX - metrics.shadowPadding + metrics.capsuleGap
-        let clampedX = min(max(rawX, screen.frame.minX), screen.frame.maxX - metrics.capsuleWidth)
-        return CGRect(
-            x: clampedX - metrics.shadowPadding,
-            y: capsuleFrame.minY,
-            width: metrics.capsuleWidth + metrics.shadowPadding * 2,
-            height: metrics.capsuleWidth + metrics.shadowPadding * 2
-        )
-    }
-
-    /// 文件夹/废纸篓弹窗：锚点（chip 可视矩形，屏幕坐标）上方 8pt，水平居中钳进屏，
+    /// 固定文件夹弹窗：锚点（chip 可视矩形，屏幕坐标）上方 8pt，水平居中钳进屏，
     /// 只向上生长、topUsableY 封顶——同 drawer 的底锚策略。`size` 为含阴影的整面板尺寸。
     static func folderPopupTargetFrame(
         anchorVisibleRect: CGRect,

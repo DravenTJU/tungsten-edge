@@ -25,7 +25,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let launchAtLoginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let openLoginItemsSettingsItem = NSMenuItem(title: "打开登录项设置…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
     private let addPinnedFolderItem = NSMenuItem(title: "添加固定文件夹…", action: #selector(addPinnedFolder), keyEquivalent: "")
-    private let showTrashItem = NSMenuItem(title: "显示垃圾桶", action: #selector(toggleShowTrash), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
 
@@ -101,8 +100,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         addPinnedFolderItem.target = self
         menu.addItem(addPinnedFolderItem)
-        showTrashItem.target = self
-        menu.addItem(showTrashItem)
 
         #if DEBUG
         menu.addItem(.separator())
@@ -153,7 +150,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func refreshCheckmarks() {
         refreshLaunchAtLoginState()
-        showTrashItem.state = store.showTrash ? .on : .off
     }
 
     private func refreshLaunchAtLoginState() {
@@ -180,11 +176,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func addPinnedFolder() { onAddPinnedFolder() }
-
-    @objc private func toggleShowTrash() {
-        store.setShowTrash(!store.showTrash)
-        refreshCheckmarks()
-    }
 
     @objc private func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }

@@ -34,8 +34,6 @@
 		A00000000000000000009231 /* PinnedFolderCoverStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009230 /* PinnedFolderCoverStore.swift */; };
 		A00000000000000000009241 /* FolderGridPopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009240 /* FolderGridPopupView.swift */; };
 		A00000000000000000009251 /* PinnedFolderChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009250 /* PinnedFolderChip.swift */; };
-		A00000000000000000009261 /* TrashPanelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009260 /* TrashPanelViews.swift */; };
-		A00000000000000000009271 /* TrashStateStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009270 /* TrashStateStore.swift */; };
 		A00000000000000000009281 /* FolderContentsLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009280 /* FolderContentsLoaderTests.swift */; };
 		A00000000000000000009041 /* NativeDockPreferencesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009020 /* NativeDockPreferencesService.swift */; };
 		A00000000000000000009051 /* PanelVisibilityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009030 /* PanelVisibilityState.swift */; };
@@ -175,8 +173,6 @@
 		A00000000000000000009230 /* PinnedFolderCoverStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedFolderCoverStore.swift; sourceTree = "<group>"; };
 		A00000000000000000009240 /* FolderGridPopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderGridPopupView.swift; sourceTree = "<group>"; };
 		A00000000000000000009250 /* PinnedFolderChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedFolderChip.swift; sourceTree = "<group>"; };
-		A00000000000000000009260 /* TrashPanelViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashPanelViews.swift; sourceTree = "<group>"; };
-		A00000000000000000009270 /* TrashStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashStateStore.swift; sourceTree = "<group>"; };
 		A00000000000000000009280 /* FolderContentsLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderContentsLoaderTests.swift; sourceTree = "<group>"; };
 		A000000000000000000090B0 /* FullscreenClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullscreenClassificationTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000059 /* macos-dock-cc-v2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "macos-dock-cc-v2Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -260,7 +256,6 @@
 				A000000000000000000019B2 /* BadgeStore.swift */,
 				A00000000000000000009200 /* PinnedFolderStore.swift */,
 				A00000000000000000009230 /* PinnedFolderCoverStore.swift */,
-				A00000000000000000009270 /* TrashStateStore.swift */,
 				A00000000000000000000027 /* ObservationPipeline */,
 				A00000000000000000000028 /* IntentPipeline */,
 			);
@@ -296,7 +291,6 @@
 				A000000000000000000019C1 /* AppMenuFragments.swift */,
 				A00000000000000000009240 /* FolderGridPopupView.swift */,
 				A00000000000000000009250 /* PinnedFolderChip.swift */,
-				A00000000000000000009260 /* TrashPanelViews.swift */,
 			);
 			path = Scenes;
 			sourceTree = "<group>";
@@ -680,8 +674,6 @@
 					A00000000000000000009231 /* PinnedFolderCoverStore.swift in Sources */,
 					A00000000000000000009241 /* FolderGridPopupView.swift in Sources */,
 					A00000000000000000009251 /* PinnedFolderChip.swift in Sources */,
-					A00000000000000000009261 /* TrashPanelViews.swift in Sources */,
-					A00000000000000000009271 /* TrashStateStore.swift in Sources */,
 					A000000000000000000019A2 /* BadgeStore.swift in Sources */,
 					A000000000000000000019A3 /* DockBadgeReader.swift in Sources */,
 					A00000000000000000001004 /* ObservationPipeline.swift in Sources */,
