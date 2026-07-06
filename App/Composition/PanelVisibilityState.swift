@@ -40,6 +40,7 @@ enum FullscreenWindowClassifier {
 enum EdgeAutoHideInhibitor: Hashable {
     case dragging
     case drawerOpen
+    case folderPopupOpen
 }
 
 struct PanelVisibilityState: Equatable {

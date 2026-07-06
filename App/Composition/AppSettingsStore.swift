@@ -13,6 +13,7 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var launchAtLogin: Bool
     @Published private(set) var nativeDockAutoHideDelay: Double
     @Published private(set) var edgeAutoHideDelay: Double
+    @Published private(set) var showTrash: Bool
 
     var nativeDockAutoHideEnabled: Bool { nativeDockAutoHideDelay != Self.neverHideDelay }
     var edgeAutoHideEnabled: Bool { edgeAutoHideDelay != Self.neverHideDelay }
@@ -35,11 +36,19 @@ final class AppSettingsStore: ObservableObject {
             Keys.launchAtLogin: false,
             Keys.nativeDockAutoHideDelay: 1.0,
             Keys.edgeAutoHideDelay: 0.1,
+            Keys.showTrash: true,
         ])
 
         launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         nativeDockAutoHideDelay = Self.snapDelay(defaults.double(forKey: Keys.nativeDockAutoHideDelay))
         edgeAutoHideDelay = Self.snapDelay(defaults.double(forKey: Keys.edgeAutoHideDelay))
+        showTrash = defaults.bool(forKey: Keys.showTrash)
+    }
+
+    func setShowTrash(_ value: Bool) {
+        guard showTrash != value else { return }
+        showTrash = value
+        defaults.set(value, forKey: Keys.showTrash)
     }
 
     func setLaunchAtLogin(_ value: Bool) {
@@ -104,4 +113,5 @@ private enum Keys {
     static let nativeDockAutoHideDelay = "com.tungsten.edge.autoHide.nativeDock.delay"
     static let edgeAutoHideEnabled = "com.tungsten.edge.autoHide.edge.enabled"
     static let edgeAutoHideDelay = "com.tungsten.edge.autoHide.edge.delay"
+    static let showTrash = "com.tungsten.edge.trash.visible"
 }

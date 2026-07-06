@@ -15,6 +15,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let onShowDebugConsole: () -> Void
     private let onExportDebugSnapshot: () -> Void
     private let onQuit: () -> Void
+    // 同上闭包注入：NSOpenPanel 归 AppDelegate 管，本文件不碰 PinnedFolderStore。
+    private let onAddPinnedFolder: () -> Void
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
@@ -22,6 +24,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let permissionWarningSeparator = NSMenuItem.separator()
     private let launchAtLoginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let openLoginItemsSettingsItem = NSMenuItem(title: "打开登录项设置…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
+    private let addPinnedFolderItem = NSMenuItem(title: "添加固定文件夹…", action: #selector(addPinnedFolder), keyEquivalent: "")
+    private let showTrashItem = NSMenuItem(title: "显示垃圾桶", action: #selector(toggleShowTrash), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
 
@@ -31,7 +35,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
          isAccessibilityTrusted: @escaping () -> Bool,
          onShowDebugConsole: @escaping () -> Void,
          onExportDebugSnapshot: @escaping () -> Void,
-         onQuit: @escaping () -> Void) {
+         onQuit: @escaping () -> Void,
+         onAddPinnedFolder: @escaping () -> Void = {}) {
         self.store = store
         self.launchAtLoginService = launchAtLoginService
         self.nativeDockPreferencesService = nativeDockPreferencesService
@@ -39,6 +44,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.onShowDebugConsole = onShowDebugConsole
         self.onExportDebugSnapshot = onExportDebugSnapshot
         self.onQuit = onQuit
+        self.onAddPinnedFolder = onAddPinnedFolder
         nativeDockSliderView = PreferenceSliderMenuItemView(title: "系统 Dock", subtitle: "⌘⌥D 显示/隐藏")
         edgeSliderView = PreferenceSliderMenuItemView(title: "Tungsten Edge 钨极")
         super.init()
@@ -92,6 +98,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         edgeItem.view = edgeSliderView
         menu.addItem(edgeItem)
 
+        menu.addItem(.separator())
+        addPinnedFolderItem.target = self
+        menu.addItem(addPinnedFolderItem)
+        showTrashItem.target = self
+        menu.addItem(showTrashItem)
+
         #if DEBUG
         menu.addItem(.separator())
         let debugMenu = NSMenu()
@@ -141,6 +153,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func refreshCheckmarks() {
         refreshLaunchAtLoginState()
+        showTrashItem.state = store.showTrash ? .on : .off
     }
 
     private func refreshLaunchAtLoginState() {
@@ -164,6 +177,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openLoginItemsSettings() {
         launchAtLoginService.openSystemSettings()
+    }
+
+    @objc private func addPinnedFolder() { onAddPinnedFolder() }
+
+    @objc private func toggleShowTrash() {
+        store.setShowTrash(!store.showTrash)
+        refreshCheckmarks()
     }
 
     @objc private func openAccessibilitySettings() {

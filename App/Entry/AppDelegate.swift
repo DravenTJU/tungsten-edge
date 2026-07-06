@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let stripOrderStore = StripOrderStore()
     let drawerOrderStore = DrawerOrderStore()
     let settingsStore = AppSettingsStore()
+    let pinnedFolderStore = PinnedFolderStore()
+    let folderCoverStore = PinnedFolderCoverStore()
     private var panelCoordinator: PanelCoordinator?
     private var debugWindow: NSWindow?
     private var workspaceObservers: [NSObjectProtocol] = []
@@ -24,7 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isAccessibilityTrusted: { PermissionService().hasRequiredPermissions() },
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
-        onQuit: { NSApp.terminate(nil) }
+        onQuit: { NSApp.terminate(nil) },
+        onAddPinnedFolder: { [weak self] in self?.presentAddPinnedFolderPanel() }
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -77,11 +80,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.messagingStore.autoRegister(runningBundleIDs: running)
             }
 
-        let coordinator = PanelCoordinator(runtime: runtime, drawerStore: drawerStore, messagingStore: messagingStore, launchFavoriteStore: launchFavoriteStore, badgeStore: badgeStore, stripOrderStore: stripOrderStore, drawerOrderStore: drawerOrderStore, settingsStore: settingsStore)
+        let coordinator = PanelCoordinator(runtime: runtime, drawerStore: drawerStore, messagingStore: messagingStore, launchFavoriteStore: launchFavoriteStore, badgeStore: badgeStore, stripOrderStore: stripOrderStore, drawerOrderStore: drawerOrderStore, settingsStore: settingsStore, pinnedFolderStore: pinnedFolderStore, folderCoverStore: folderCoverStore)
         panelCoordinator = coordinator
         runtime.onToggleDrawer = { [weak coordinator] in coordinator?.toggleDrawer() }
+        coordinator.onAddFolder = { [weak self] in self?.presentAddPinnedFolderPanel() }
         coordinator.start()
         badgeStore.start()
+    }
+
+    /// 「添加固定文件夹…」统一入口（状态菜单 + 文件夹 chip 右键共用）。
+    /// accessory app 必须先 activate，否则 NSOpenPanel 不上前台。
+    func presentAddPinnedFolderPanel() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "固定"
+        panel.message = "选择要固定到任务条的文件夹"
+        if panel.runModal() == .OK {
+            for url in panel.urls { pinnedFolderStore.add(url.path) }
+        }
     }
 
     func exportDebugSnapshot() {

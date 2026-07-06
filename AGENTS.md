@@ -1,236 +1,255 @@
 # AGENTS
 
-> **📍 New agent: read this first.**
-> The source of truth for current product state, roadmap, and design decisions is the owner's Obsidian vault — **not** this file or `Docs/`:
-> `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/` — entry note: `00 macos-dock-cc-v2 总览.md`. Follow its own links for what's current; don't hardcode a sub-note list here, it drifts as the vault grows.
-> **Division of labor:** `AGENTS.md` holds engineering **do-not-revisit guardrails** — the hard constraints touching window identity, placement, taskbar trust, card identity, and input mechanism. A UX feature earns a section here **only once it hardens into such a constraint** (e.g. native-tab single-seat, strip drag-reorder); each entry stays terse and points to Obsidian for the full rationale + reversal log. Pure product surface with no engine-level constraint (badge styling, drawer copy, hover labels) stays **Obsidian-only**. Obsidian remains the source of truth for product state, decisions, and roadmap. Dated `Docs/*` are historical records, not live status — except `Docs/05-known-platform-quirks.md`, kept current as repo-local engineering reference.
+> **New agent: read this first.**
+> Live product state, roadmap, and rationale live in the owner's Obsidian vault, not here:
+> `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/` — entry note `00 macos-dock-cc-v2 总览.md`.
+>
+> `AGENTS.md` is only for engineering **do-not-revisit guardrails**: placement, taskbar trust, window/card identity, focus/action semantics, drag mechanics, panel geometry, and compatibility traps. Product wording, roadmap, UX rationale, and reversal logs stay in Obsidian. Dated `Docs/*` are historical records except `Docs/05-known-platform-quirks.md`, which is kept as a repo-local platform reference.
 
 ## Purpose
 
-This repo is `v2` of a macOS window-oriented bottom taskbar experiment. The foundation-engine phase is done; current work is in the UX feature layer tracked in Obsidian (see top of file). Do not rebuild the Finder foundation or return to bottom-up "every CG/AX window-like surface" discovery — these were deliberately replaced by the inventory-first model in Taskbar Trust and should not be reintroduced.
+This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine phase is done; current work is UX/behavior refinement. Do not rebuild the Finder foundation or return to bottom-up discovery of every CG/AX window-like surface. The mainline is inventory-first taskbar trust.
 
-## Product Rules
+## Source Of Truth
 
-### Placement
+- Product state / roadmap / decision rationale: Obsidian entry `00 macos-dock-cc-v2 总览.md`.
+- Engineering hard constraints: this file.
+- Platform quirks: `Docs/05-known-platform-quirks.md`.
+- Focus / activation debug history: `Docs/22-window-focus-flicker-debugging.md`.
+- Finder P0 implementation / samples: `Docs/17-finder-p0-implementation.md`, `Docs/18-real-sample-finder-findings.md`.
+
+## Placement And Trust
+
+### Slot Placement
 
 - Minimize does **not** release a slot.
 - Hide does **not** release a slot.
-- Temporary `CG` disappearance does **not** release a slot.
+- Temporary CG disappearance does **not** release a slot.
 - Only true close releases a slot.
+- Do not reintroduce held-slot TTL or "expire then return to tail" as the default placement rule.
 
-Do not reintroduce held-slot TTL or "expire then return to tail" as the default placement rule.
+### Taskbar Trust
+
+- Only trusted, user-operable windows enter the bottom strip. Filter system internals, widgets, app extensions, transparent/fake surfaces before any keep-slot or disappeared retention.
+- The trust model starts from app-level window inventory: `WorkspaceSource` enumerates normal user apps through `NSWorkspace`, reads `AXWindows`, and emits `.appWindowInventory`.
+- Inventory reads use a 100ms per-app AX timeout, up to 12 concurrent app reads, and 30-round unread degradation before CG can help decide whether windows still exist.
+- While inventory-first is available, CG and generic `.accessibility` observations must not create ordinary new strip entries; they may prove/enrich inventory entries. Reduced-permission mode may create CG fallback entries.
+- Debug rollback flags: `DOCK_INVENTORY_FIRST_ENABLED=0`, `DOCK_AX_ADMISSION_MODE=legacy`.
+- Do not widen AX sampling again without strict window-type filtering and an observation-count guardrail. Full incident/history: `Docs/19-taskbar-trust-incident.md`, `Docs/20-inventory-first-taskbar-trust.md`.
+
+### Long-Gap Duplicate Cards
+
+- Before creating a new identity, match conservatively against current `DockSnapshot` seats for same process and same app.
+- Prefer title + nearby frame; ambiguous candidates do not merge.
+- Never revive `app-*` ids or `closedPending` records.
+- Details: `Docs/21-long-gap-duplicate-card-fix.md`.
+
+## App-Specific Rules
+
+### Finder
+
+- Finder always has a persistent taskbar slot. `seedRunningApps` adds Finder unconditionally, so the chip survives when all Finder windows are closed.
+- Closed-window Finder appears as `app-com.apple.finder`; clicking it opens the home directory, matching system Dock behavior.
+- Never plan `hideApp` / minimize for the Finder persistent `app-*` chip. Always activate/open, even if Finder is frontmost after its last window closes.
+- Do not let process-death reconcile remove Finder's app entry. `handleAppTerminated` clears windows but keeps the slot; reconcile must skip Finder when sweeping dead pids.
+- Finder process existence alone does **not** mean there is a Finder window.
+- Concrete Finder folder windows remain window-level items when title/frame are available.
+- If a specific Finder window target cannot be captured, do **not** fall back to whole-app activation; that can bring the wrong Finder window(s) forward.
+- Finder minimize feedback accepts either `minimized` or temporary `disappeared`, because macOS can report concrete minimized Finder windows either way.
 
 ### Feishu
 
 - Feishu window-level handling is opportunistic.
-- If frontmost AX windows are unreliable, titles are generic, or titles are missing, Feishu may fall back to a single stable app-level item.
-- Do not block the taskbar mainline on perfect Feishu per-window fidelity.
-- For current V2 validation, a stable app-level Feishu fallback is sufficient; real frontmost AX samples are future window-level enhancement evidence, not a blocker.
+- If frontmost AX windows are unreliable, titles are generic/missing, or AX samples are weak, fall back to one stable app-level item.
+- Do not block the taskbar mainline on perfect Feishu per-window fidelity. A stable app-level Feishu fallback is sufficient for current validation.
 
-### Finder
+## Window And Card Identity
 
-- Finder always has a persistent slot in the taskbar: `seedRunningApps` adds Finder unconditionally so its chip survives even when all windows are closed.
-- When all Finder windows are closed the slot shows as an `app-com.apple.finder` chip. Clicking it opens the home directory in a new Finder window (mirrors system Dock behavior). This is intentional app-level persistence, not an AX fallback.
-- Do not plan a `hideApp`/minimize action for the Finder persistent (`app-*`) chip on toggle — always plan activate/open, even when Finder is still frontmost right after its last window closes.
-- Do not let the dead-process reconcile sweep remove Finder's app entry — `handleAppTerminated` clears its windows but keeps the slot, and reconcile must skip Finder when sweeping dead pids.
+### Native Tabs — single-seat model
 
-Both fixed 2026-06-16; full rationale documented in Obsidian `03 设计决策` ("Finder 持久图标").
-- Finder process existence alone does **not** mean there is a Finder window.
-- Concrete Finder folder windows should remain window-level items when titles / frames are available.
-- Do not fall back to activating the whole Finder app when a specific Finder window target cannot be captured; that can bring forward the wrong Finder window or multiple windows.
-- Finder P0 implementation details are documented in `Docs/17-finder-p0-implementation.md`.
-- Finder real sample findings are documented in `Docs/18-real-sample-finder-findings.md`.
-- Finder minimize feedback treats either `minimized` or temporary `disappeared` observation as success, because macOS can report a minimized concrete Finder window through either path.
+- Model: **one physical window = one seat = one chip**. Background native tabs are not separate seats.
+- Seat token is stable (`tabgrp-<pid>-s<serial>`) from a monotonic counter. Never derive the stable token from `cgWindowID`; active tab cgIDs are reused and swap.
+- `WindowRecord.id` may be `cgw-<activeCgID>`, but the chip's stable identity is `groupID = seat.token`; action target is the current active cgID.
+- Tab switch: if the active cgID leaves AX and a new cgID appears at the same frame, adopt it into the same seat only when exactly one seat claims that frame.
+- Tear-out: if the old active cgID moves to a new frame while another tab takes the old frame, the old-frame seat adopts the new active tab and the moved cgID becomes a fresh seat.
+- Minimized multi-tab windows: Ghostty can expose all tabs as eligible AX windows with `min=true`. Fold background tabs into the already-placed seat; do not create one chip per tab. Fold by exact frame first, then by `min=true` + off-screen + same width/height as the placed minimized seat. Do **not** revert to exact-frame-only.
+- Seat removal: minimized or hidden seats stay; normal AX-absent-but-CG-present windows get only a short close grace; if cgID is gone from full CG list, drop immediately.
+- Superseded: do not revive "reap any AX-absent-but-CG-present seat after grace" or "keep every tab as a seat then collapse by token".
 
-### Taskbar Trust
+### Strip Action Target
 
-- Only trusted, user-operable windows should enter the bottom strip.
-- System internals, widgets, app extensions, transparent windows, and other fake window-like surfaces must be filtered before they can benefit from keep-slot or `disappeared` retention.
-- Do not widen `AX` sampling again without strict window-type filtering and an observation-count guardrail.
-- The current trust model starts from app-level window inventory: `WorkspaceSource` enumerates normal user apps through `NSWorkspace`, reads their `AXWindows`, and emits `.appWindowInventory` observations.
-- Inventory reads use a 100ms per-app AX messaging timeout, up to 12 concurrent app reads, and a 30-round unread degradation threshold. Once an app is degraded, `CG` may help decide whether its windows still exist.
-- `CG` and generic `.accessibility` observations should not create ordinary new strip entries while inventory-first is available. They should prove or enrich entries from inventory, except for documented Finder and Feishu rules.
-- If AX permission is unavailable, `CG` fallback may still create entries so the app remains useful in reduced-permission mode.
-- Debug rollback flags exist for local diagnosis: `DOCK_INVENTORY_FIRST_ENABLED=0` or `DOCK_AX_ADMISSION_MODE=legacy`.
-- The 2026-05-07 trust incident is documented in `Docs/19-taskbar-trust-incident.md`.
-- The inventory-first implementation is documented in `Docs/20-inventory-first-taskbar-trust.md`.
+- A strip chip id is a stable identity token, not necessarily an actionable window id.
+- All strip show/hide/minimize/toggle calls must use `item.actionWindowID`.
+- Drawer actions are app-centric and must not use strip chip ids for window-level toggle.
 
-### Long-Gap Duplicate Cards
+## Action Planning And Focus
 
-Root cause and full fix documented in `Docs/21-long-gap-duplicate-card-fix.md`. Current fix: before creating a new identity, match against the current `DockSnapshot` seats when the candidate is same process and same app. Matching is conservative — title + nearby frame preferred; ambiguous candidates do not merge; `app-*` IDs and `closedPending` records are never revived.
+### Minimize Returns Focus To Previous App
 
-### Native Tab Groups & Stable Card Identity — single-seat model (Ghostty 根治)
+- Minimizing the frontmost focused window A1 of multi-window app A should return focus to the previous **other** app B, not A's sibling A2.
+- Mechanism: before minimizing, `findBackgroundActivationTarget(for:)` picks B, then `switchFrontmostWithoutReorder(toPID:)` uses `SetFrontProcessWithOptions(.frontWindowOnly)`.
+- Guard: only fire when the handle is the frontmost app's focused AX window; right-click-minimizing a non-focused sibling must not steal focus. Candidate B must be `.regular` and pass `DockWindowEligibilityPolicy`.
+- If the symbol is missing or switch fails, fall back to the old post-activate path for that call.
+- Do not chase zero-flicker again. Probes showed suppressing A2's promotion requires bringing B front.
 
-> Empirically grounded (2026-06-19 spike): Finder **and** Ghostty native tab groups expose **only the active tab** as an eligible AX window; all tabs of one window share a pixel-identical frame; switching tabs **atomically swaps** which single cgID is AX-visible (no overlap, no gap). Safari "tabs" are in-app (one NSWindow per window). Ghostty minimized windows stay in AX (`min=true`); Safari minimized windows **leave AX entirely**.
+### Activation / Restore Focus
 
-- **Model: one physical window = one seat = one chip.** A `WindowEntry` is a **physical-window seat** with a stable `token` (`tabgrp-<pid>-s<serial>`, from a monotonic counter — **never derived from a cgID**, which gets reused and would collide) plus a current `cgWindowID` = the **active tab** (the action target, swaps as you switch tabs). Background tabs are **not** separate seats. `WindowRecord.id` is `cgw-<activeCgID>` but the chip's stable identity is `groupID = seat.token`; everything is contained in `AppTracker` — the external `DockSnapshot`/`WindowRecord` shape is unchanged.
-- **Seat reconciliation (`AppTracker.reconcileSeats`)** maps each app's current eligible AX windows onto seats, frame-anchored, with these cases:
-  - *Tab switch*: a seat's active cgID leaves AX and a new cgID appears at the **same frame** → seat adopts it in place (token unchanged → chip never jumps). Guarded: only if exactly one seat claims that frame (overlap ambiguity → don't adopt).
-  - *Tear out the current tab*: the active cgID is still visible but moved to a **new** frame while another tab took its old frame → seat stays at the old frame and adopts the new tab; the moved cgID is **evicted** to a fresh seat (so the torn-out window gets its own chip).
-  - *New window / torn-out background tab*: an eligible cgID matching no seat → new seat, new token.
-  - *Minimize a multi-tab window*: minimizing makes Ghostty expose **all** the window's tabs as eligible AX windows at once (all `min=true`), unlike the active-only exposure when not minimized. A `min=true` eligible window is **folded** into an already-placed seat (background tab of the minimized window), not given its own seat — otherwise the chip splits into one-per-tab on minimize. Fold uses **exact frame match first, then size fallback**: background tabs (order-out NSWindows) do **not** receive `kAXWindowMovedNotification`, so after dragging the window their AX origin is stale while the active tab's frame is current → exact match fails. Fallback: `min=true` + off-screen (not in `onScreenCGWindowIDSet()`) + same width/height as a placed minimized seat → fold. **Do not revert to exact-frame-only** — move-then-minimize would split every time. A non-`min` on-screen same-frame window is still two overlapping separate windows → kept separate.
-- **Seat removal — minimize vs close (the hard distinction; both are "AX-absent + still in CG").** When a seat's active cgID leaves AX with no takeover:
-  - If it was **minimized** (`seat.isMinimized`, latched via `kAXWindowMiniaturizedNotification`) **or** the app is hidden → keep the seat. This is why Safari-minimize (leaves AX) keeps its chip.
-  - Else (a normal window that left AX) → it's a **close** whose NSWindow lingers in the CG list (Ghostty does this); keep for a short `closedReapGrace` (~1.5s, absorbs AX read misses) then drop. Do **not** force `isMinimized` while in this grace, or the close would masquerade as a minimize and never reap.
-  - If the cgID is gone from the full CG list (or freshly `destroyed`) → drop immediately.
-- **Superseded approaches — do not revisit:** (1) the 2026-06-17 "reap any AX-absent-but-CG-present seat after a grace" — falsified because Safari minimize leaves AX (killed real minimized windows). (2) the 2026-06-19 first cut "keep every tab as a seat + collapse by a stable token" — the token-inheritance/merge was fragile under tear-out (couldn't tell tear-out from switch/new-tab without guessing). The single-seat model removes the root (background-tab seats) instead of stitching grouping logic on top.
-- **Order-layer stickiness (`StripOrderStore.rankRetentionGrace` ~5s)** stays: a chip id that briefly leaves the live set keeps its rank instead of being dropped-and-reappended.
-- **Known step-1 edges (acceptable / future):** two genuinely separate windows at a pixel-identical frame won't be disambiguated by frame alone (rare); closing the active tab relies on a takeover tab appearing promptly. `Docs` not yet written; this section is the live reference.
+- `postSkyLightWindowFocus` is the shared core: `_SLPSSetFrontProcessWithOptions(psn, wid, kCPSUserGenerated)` plus two make-key events. Byte layout is load-bearing: `[0x04]=0xf8`, `[0x08]=0x0d`, first `[0x8a]=0x02`, second `[0x8a]=0x01`, wid at `0x3c`, no `0xff` fill.
+- Early focus applies only to `.activateWindow`, cross-app, visible active/inactive windows, using snapshot `record.cgWindowID`. It must happen before handle capture and must not resolve wid via AX or on-screen CG.
+- Minimized restore = **restore-then-switch**, never switch-early. While target B1 is order-out, any front-process switch can promote visible sibling B2 above old front app A1. Exclude `.minimized` from `focusWindowEarly`; after `setMinimized(false)`, immediately call `postSkyLightWindowFocus` with snapshot wid (`knownCGWindowID`) and zero AX in between.
+- Minimized restore must set `kAXMainAttribute=true` after restore+switch. Make-key while a window is order-out can land on a visible sibling; keep the correction.
+- Action-decision paths must not use `NSWorkspace.frontmostApplication`; it is a lagging notification cache after SkyLight switches. Use fresh `NSRunningApplication(processIdentifier:)?.isActive`.
+- Kill switch: `DOCK_SKYLIGHT_FOCUS=0` disables early and post-capture SkyLight focus. SkyLight private return codes are diagnostics only; do not re-add nonzero-return fallback gating.
+- Full debug record: `Docs/22-window-focus-flicker-debugging.md`.
 
-### Strip Drag-Reorder Mechanism — self-drawn in-app drag (路线 A, 残影根治)
+### Optimistic Action State
 
-> 2026-06-20. The live-zone chip drag carries a **self-rendered floating copy** (`DockStripView.floatingDragCopy`), driven by an in-app `DragGesture(coordinateSpace: .named("strip"))` — **not** SwiftUI system drag. The reorder logic underneath (`StripOrdering` / `StripOrderStore`, seat-lifecycle ranks) is unchanged; only the *carried image* changed. Full rationale + reversal log: Obsidian `03 设计决策`「拖动载体改自绘（松手残影根治）」.
+- Clicking a chip writes an `OptimisticWindowState` for predicted **status only**, cleared when snapshot confirms or after ~4s. No spinner.
+- Do not re-add predicted `isAppFrontmost`. The frontmost axis is always a fresh `NSRunningApplication(pid).isActive` read, injectable in `LifecycleActionPlanner.init` for tests.
+- The old `isAppFrontmost=true` could linger for 4s and turn a background-window click into minimize. Accepted micro-edge: a click within the few ms before activation lands may repeat activate; that is harmless.
+- Scope is show/hide only: toggle / activate / minimize / hide. Close / quit stay locked until confirmed.
 
-- **Do not reintroduce SwiftUI `.onDrag` / `NSItemProvider` for the strip.** The system snapshots the chip and fades that image **in place on release** — an un-suppressible "release ghost". That ghost is exactly the bug this mechanism replaced; the API gives no handle to stop the fade.
-- **Do not switch to AppKit `beginDraggingSession` (路线 B) to gain cross-panel drag-into-drawer.** The cross-panel convenience and the ghost are the *same coin*: a system-owned drag image floats above all panels AND can't be suppressed. Route B keeps that image, so it can't guarantee a ghost-free release — it's the one path that would be wasted work.
-- **Cross-panel endgame (C) = extend the self-drawn copy, not the system session.** Drag-into-drawer should grow the floating copy into a screen-spanning carrier (global mouse monitor + drop-into-drawer hit-test), keeping full ownership of the image. 路线 A is deliberately step 1 of this. **C now shipped (2026-06-20) — see Cross-Panel Drag-into-Drawer below.** The carried image + mouse-up fallback (old in-panel `floatingDragCopy` / `watchDragEnd`) moved into `DragController`; `DockStripView` keeps only the `"strip"`-space reorder + `grabOffset` (guardrails 1–2 below still hold).
-- **Implementation guardrails that must hold:** (1) one `"strip"` coordinate space shared by chip frames (`ChipFramePreferenceKey`, read via `.background` GeometryReader — never `.overlay`, which steals clicks), the finger location, and the floating copy — else horizontal scroll skews finger↔copy↔target. (2) `grabOffset` (chip center − press point) so an edge-grab doesn't snap the copy's center to the cursor. (3) a slim `watchDragEnd` mouse-up fallback (a `DragGesture` can cancel without `.onEnded`) plus a `liveOrderIDs` onChange that clears a stale drag if the dragged window vanishes mid-drag — together they stop a hidden chip's slot from sticking as a gap. (4) the floating copy forces the hovered visual (`ChipView.forceHover`, since it's `allowsHitTesting(false)`) so it doesn't pop size on grab.
+## Drag, Drawer, And Ordering
 
-### Cross-Panel Drag-into-Drawer — screen-spanning self-drawn carrier (路线 C 第一步)
+### No System Drag Image
 
-> 2026-06-20. Drag a live-zone chip onto the capsule (drawer button) to stash it (= 收进抽屉, previously context-menu only). This is step C of the strip-drag endgame: the self-drawn floating copy grew from an in-strip overlay into a screen-spanning carrier. Everything cross-panel lives in `DragController`. Full rationale + reversal log: Obsidian `03 设计决策`「拖卡进抽屉（跨面板自绘载体）」.
+- Do not reintroduce SwiftUI `.onDrag` / `NSItemProvider` or AppKit `beginDraggingSession` for strip/drawer drags. System-owned drag images cause an unsuppressible release ghost.
+- The carried image is self-drawn and owned by `DragController` for cross-panel drags.
 
-- **`DragController` is the single authority** for the local+global mouse monitors, the carrier `NSPanel`, the drop decision, and the idempotent teardown. `DockStripView` only: starts the drag (`beginDrag`), reads `draggingItem` to hide the in-place chip, reads `isOverDropZone` to suppress reorder. Do not split monitor/panel lifecycle back across views — a SwiftUI view rebuild would strand a monitor or lose drag state.
-- **The carrier is a screen-spanning, transparent, click-through panel** (`level .popUpMenu`, `ignoresMouseEvents = true`, covers `screen.frame`). Required because the in-strip floating copy is clipped by the 92pt dock panel and cannot escape it. Created on `beginDrag`, `orderOut` on every teardown path (no ghost panel).
-- **Probe-verified mouse mechanism (2026-06-20):** a mouse-down drag from our nonactivating panel holds an implicit grab → events stay with our app → the **LOCAL** monitor catches the whole drag incl. `leftMouseUp`, even over the drawer / other windows. The GLOBAL monitor fires 0× (kept only as a cheap backstop). Use `NSEvent.mouseLocation` (screen coords) for the carrier position + drop hit-test — never strip-internal coords (the gesture's `value.location` + chip frames live in the `"strip"` space, a different system).
-- **The SwiftUI `DragGesture` does NOT stop when the finger leaves the panel** (keeps firing `onChanged` far outside). So reorder must be **explicitly** gated: skip `reorderTarget` while `isOverDropZone`, and hit-test the dragged-over chip with its **full frame** (x+y), not x-only — else lifting toward the capsule still reorders the strip.
-- **Drop zone = capsule content area + small tolerance:** `capsulePanel.frame.insetBy(shadowPadding − 8)` (the visible 52×52 capsule + 8pt), plus the drawer's `insetBy(shadowPadding)` frame only while the drawer is open. Do NOT use the full panel frame (it includes the 20pt transparent shadow margin) and do NOT widen the tolerance much — the capsule abuts the strip, too wide stashes on a near-miss.
-- **`canStash` rejects only: missing bundleID, and `com.apple.finder`** (Finder keeps its strip slot — see Finder rules). Do **not** reject `isAppLevelFallback`: the drawer running zone renders app-level icons fine, and a background app whose windows aren't currently sampled shows as an app-level chip; rejecting it caused "Safari/Dia can't be dragged in until activated" (2026-06-20 reversal).
-- **Teardown is idempotent + clear-before-commit:** monitor mouseUp, gesture `onEnded`, and the `pressedMouseButtons == 0` poll may all fire; `endDrag` guards on `draggingItem`, clears state first, then commits the stash. The `liveOrderIDs` onChange is only the mid-drag window-vanish safety net (`cancelDrag`), not the normal-release path.
-- **Same no-system-drag guardrail as the strip:** do not reintroduce SwiftUI `.onDrag` / AppKit `beginDraggingSession` — the release ghost. The screen-spanning carrier is the deliberate alternative.
+### Strip Drag-Reorder
 
-### Strip action target — route to `actionWindowID`, never the chip id token
+- Strip in-panel reorder uses one `"strip"` coordinate space for chip frames, finger location, and floating copy.
+- Chip frames are read via `.background` GeometryReader, not `.overlay`, because overlay can steal clicks.
+- Keep `grabOffset` so edge-grabs do not snap the copy center to the cursor.
+- Keep mouse-up fallback and live-order disappearance cleanup so canceled gestures or vanished windows do not leave gaps.
+- Floating copy forces hovered visual (`ChipView.forceHover`) and disables hit testing.
 
-- A **strip** chip's `StripItem.id` is its **stable identity token** (`tabgrp-…`), not a window id; the action target is `item.actionWindowID` (the representative window). All strip show/hide/minimize/toggle calls must pass `actionWindowID`. (The **drawer** no longer does window-level actions at all — it's app-centric, see below; so the old drawer-tap-uses-`item.id` bug is gone with that path.)
+### Cross-Panel Drag Controller
 
-### Drawer = app-centric, one-icon-per-app, ordered by `DrawerOrderStore` (2026-06-21)
+- `DragController` is the single authority for local/global monitors, carrier `NSPanel`, source/destination conversion, drop decisions, and idempotent teardown.
+- Carrier panel is screen-spanning, transparent, click-through, level `.popUpMenu`, and ordered out on every teardown path.
+- Use `NSEvent.mouseLocation` screen coordinates for carrier position and cross-panel hit testing; do not use strip/drawer local coordinates for those decisions.
+- Reorder while dragging is driven by `dragController.globalLocation`, not per-chip `DragGesture.onChanged`. SwiftUI cancels a chip gesture once the grid moves the dragged icon.
+- Timers used during drag must be added to `.common` run-loop mode; scheduled default-mode timers may not fire while dragging.
 
-> The drawer is the deliberate **app-view** island (原则 2). Drawer-internal drag-reorder + drag-back-to-strip ship as the symmetric mate of 拖卡进抽屉. Full rationale: Obsidian `03 设计决策`「抽屉内拖动排序 + 拖回任务条」.
+### Drawer Model
 
-- **One bundleID = one icon.** The drawer renders every member as an app-level `LauncherChip` (not per-window `ChipView`). A multi-window stashed app shows one icon. Click = **app-level** (`LauncherChip.handleTap`: frontmost→hide, else unhide+open; not-running→launch) — **never** window-level toggle. Do not reintroduce per-window drawer chips or a window-id tap target.
-- **Launch-zone chips pass `isRunning: false` (zone-based, not the live value).** A launching app's process appears before its window; passing the live `isRunning` flips it true mid-launch → `LauncherChip.onChange(of:isRunning)` calls `stopBounce` early → the launch bounce dies before the window shows. Running zone → `running: true`, launch zone → `running: false`.
-- **`DrawerOrderStore` = single display-order layer, keyed by bundleID, persisted permanently** (bundleID is reuse-stable across reboots → no boot-time guard, unlike `StripOrderStore`). **Order is kept over the MEMBER SET (`drawerStore ∪ launchFavoriteStore`), not the currently-visible icons** — a pure favorite leaves the drawer while running and returns on quit; syncing only on visible ids would drop then re-append it (lost order). `PanelCoordinator.syncDrawerOrder()` runs on either store's change, even with the drawer closed. Membership (stashed vs pinned) still lives in the two original stores; only *order* is unified here.
-- **Same-zone reorder only.** Running-zone icons reorder relative to running-zone icons, launch-zone likewise (`reorderTarget` filters candidates to the dragged item's zone). Cross-divider drops are meaningless (zone = running-state, not order) and would surface invisibly later.
-- **Generalized `DragPayload`** (`source + id + bundleID + item: StripItem? + visualKind + canExternalDrop`) replaces the StripItem-only drag — drawer icons have no `StripItem`, so `bundleID` is the key. `id` is the source-region reorder key (strip = `item.id` token, drawer = bundleID).
-- **Symmetric cross-panel drag via the same `DragController` carrier.** Drop zones by source: `.strip`→capsule (stash, `drawerStore.add`); `.drawer`→dock strip panel (unstash, `drawerStore.remove`). `isOverStashZone`/`isOverUnstashZone` drive the capsule vs strip highlight. `canExternalDrop`: strip = `canStash`; drawer = `drawerStore.contains(bid)` — **pure favorites are reorder-only** (no external drop, no highlight; dragging one to the strip is a no-op snap-back, matching their no-`移回` menu).
-- **Drag-out = `drawerStore.remove` only (= 右键「移回任务栏」 semantics).** A coexisting favorite pin survives, so a stashed+favorited closed app stays in the drawer launch zone after drag-out — **not a bug**.
-- **Carrier renders by `visualKind`:** drawer drags use the lightweight `DrawerDragIconView` (icon only — no `LauncherChip` menu/bounce/tap in the carrier).
-- **Reorder (drawer-internal AND strip-into-drawer) is driven by `dragController.globalLocation`, NOT a per-chip `DragGesture.onChanged` (2026-06-22, hard guardrail).** The per-chip `DragGesture` on a drawer chip is kept **only to start the drag** (`beginDrag` once); the moment the first reorder moves the dragged chip in the `LazyVGrid`, SwiftUI **cancels that gesture** → `onChanged` stops → "挤一下就卡住" (carrier still follows via the monitor, so it *looks* alive). So `DrawerView.updateDrawerReorder()` (and the strip→drawer enter/revert) run off the `globalLocation` `onChange`, mapping screen→`"drawer"` space via the live `drawerRootScreenRect`. Do **not** move reorder back into the chip gesture.
-- **Strip-into-open-drawer = convert-on-enter, reversible (2026-06-22, supersedes the 2026-06-21 placeholder/precise-insertion mechanism — do not revisit that).** When a strip chip enters the open drawer body, `DragController.convertStripToDrawer()` **adds it to `drawerStore` and flips the payload to `.drawer`**; from then it's an ordinary drawer member reordered by the same global-mouse path (one grow when added, no per-hover panel resize → none of the old placeholder/`dropPreview`/panel-resize-feedback flicker). **Reversible:** dragging back out of the body calls `revertStripFromDrawer()` (remove + restore the `.strip` payload) so a re-opened drawer shows its **original** layout, not the jostled one; only release **inside** the drawer commits. Enter/exit use **hysteresis** (enter tol 28pt, exit must clear 48pt) to stop boundary flap (add/remove churn = grow/shrink flicker). The deleted machinery: `dropPreview`/`setDropPreview`/`stashAtCommit`/`DrawerOrderStore.insert`/`baseRunningFrames`/placeholder cells/`subscribeDropPreviewRelayout`.
-- **Spring-load keyed on `dragOriginatedFromStrip`, not live `source` (2026-06-22).** A strip-origin drag earns spring even after it converts to `.drawer`. Hover capsule → open after ~0.4s; leave drawer+capsule → close after a **~0.35s delay** (not immediate — a brief excursion over the strip must not close it; the old immediate `inDock`→close was the "drawer randomly closes mid-drag" bug); re-hover capsule → reopen, repeatable. `springOpenDrawer` re-tests **capsule hit** (not `isOverDropZone`, which after convert means the dock strip and is false over the capsule → would block reopen). Both timers **must** use `RunLoop.main.add(_, forMode: .common)` (a `scheduledTimer` never fires during drag event-tracking). After opening call `dragController.bringCarrierToFront()`.
-- **Known accepted (blocked item):** a small residual top-edge flicker can still occur when a strip chip hovers right at the drawer's bottom boundary (gate re-eval). Deferred — see Obsidian Backlog. The egregious downward-overlap dip is fixed (see Panel relayout NSHostingView rule).
+- Drawer is app-centric: **one bundleID = one icon**. Use `LauncherChip`, not per-window `ChipView`.
+- Drawer click is app-level: frontmost -> hide; otherwise unhide/open; not-running -> launch. Never reintroduce per-window drawer toggle.
+- Launch-zone chips pass `isRunning: false` by zone, not live process state, or launch bounce stops too early.
+- `DrawerOrderStore` is the single persistent display-order layer keyed by bundleID. Sync order over the member set (`drawerStore ∪ launchFavoriteStore`), not just visible icons.
+- Same-zone reorder only: running-zone icons reorder with running-zone icons, launch-zone with launch-zone icons. Cross-divider drops are meaningless.
+- `DragPayload` is generalized: strip id = stable chip token; drawer id = bundleID; `bundleID` is the cross-panel app key.
 
-### Drawer-back-to-strip = precise landing, running apps only, app→N-chip block (2026-06-22)
+### Strip To Drawer
 
-> The symmetric mate of 拖卡进抽屉: dragging a drawer icon back onto the strip lands its window chip(s) **where you release**, others slide aside live (convert-on-enter, reversible). Scope deliberately narrow. Full rationale: Obsidian `03 设计决策`.
+- `canStash` rejects only missing bundleID and `com.apple.finder`. Do **not** reject `isAppLevelFallback`; drawer running zone can render app-level icons.
+- Drop zone is capsule visible content + small tolerance, plus drawer content only while open. Do not use full panel shadow frame or a wide tolerance.
+- Strip-into-open-drawer converts on enter: add to `drawerStore`, flip payload to `.drawer`, then use normal drawer reorder. Revert on exit; only release inside commits.
+- Enter/exit hysteresis is load-bearing; do not restore placeholder cells, `dropPreview`, `stashAtCommit`, or panel-resize-per-hover insertion.
+- Spring-load is keyed on drag origin from strip, not live source after conversion.
 
-- **Scope = running app with ≥1 real live window only.** Gate via `DockStripView.canConvertToStrip` reading **snapshot** (`StripItem.items(from:snapshot)` has a non-`isAppLevelFallback` window), **not** the live zone — pre-convert the app is still a `drawerStore` member and filtered out of `liveNatural`, so a live-zone check would read empty and mis-judge "not running". **Reject** Finder, messaging apps (their chips go to the pinned zone / pop-out handling is special), app-level-fallback-only stashes, and not-running stashes — all **fall back to the old `drawerStore.remove`-on-release** (no precise position).
-- **One drawer icon = the app's whole window-chip block.** Multi-window apps land all chips contiguous, internal order = current display order (`appLiveChipIDs` reads `stripEntries`). New primitive `StripOrdering.movingBlock(order, move: ids, relativeTo: target?, after:)` (target `nil` = append; only moves ids already in `order`).
-- **Landing goes through staged placement consumed inside `sync` — never write `liveOrder` outside `sync` (hard guardrail).** At convert the chips aren't in the live zone yet (`drawerStore.remove` materializes them next render), so you can't know their ids. `StripOrderStore.stageExternalBlock(bundleID, relativeTo, after)` records the **bundleID + target**; the next `sync(current:appKeyOf:)` resolves `blockIDs = next.filter{ appKeyOf==bid && !app-* }`, applies `movingBlock`, records `boundIDs`. Writing `liveOrder` directly outside `sync` gets clobbered by the very `sync` that `drawerStore.remove` triggers (reconcile re-appends new ids next-to-sibling/tail). Continuous reorder after materialization uses `reorderBlock(ids:…)` direct (ids now remembered → reconcile keeps them).
-- **Convert/revert/commit responsibilities are split and single-owner.** `DragController.convertDrawerToStrip()` = `drawerStore.remove` + record `convertedDrawerBundleID` (does **not** flip `source`, so `.drawer` keeps `isOverUnstashZone` + the `endDrag` `.drawer` branch valid). **Realtime leave** (DockStripView clearlyOut) → `stripOrderStore.cancelExternalBlock()` **then** `revertDrawerToStrip()` (order matters — cancel must clear `liveOrder` + `absentSince` before `drawerStore.add` re-triggers `sync`, else the 5s rank-retention grace revives a ghost rank). **Normal mouseUp** is only ever seen by `endDrag` → if converted it fires `onDrawerToStripCommitted` (PanelCoordinator → `commitExternalBlock`) and does **not** touch membership again; do not infer commit from `draggingPayload → nil` in the view.
-- **`DrawerView`'s `allMembers` onChange `cancelDrag` must exempt `isConvertedToStrip`** — convert intentionally removes the dragged bundleID from the drawer; without the exemption that safety net cancels the whole drag the instant it converts.
-- **Reuses the same `DragController` carrier + `ScreenRectReader` (now module-internal, shared with DrawerView) + global-mouse-driven reorder + hysteresis** as 拖卡进抽屉. Same no-system-drag guardrail.
-- **Strip width is frozen during any cross-panel converted drag; it changes only on release — both directions (owner 2026-06-22).** Convert (either way) would resize the centered panel mid-drag (drag-back materializes chips → wider; drag-out removes a chip → narrower). Owner wants the length change to happen **after** the item lands. Mechanism = a single clamp in `PanelCoordinator.relayout`: while converted it lays out the dock at `frozenDockContentWidth` (captured = the pre-drag width) instead of the measured `fittingSize`, so chips just **overflow** (drag-back: the normal too-many-chips scroll/edge-fade) or leave **trailing space** (drag-out) — the panel width never moves; live slide-aside is fully kept. `subscribeConvertRelease` watches `Publishers.CombineLatest($convertedDrawerBundleID, $isConvertedFromStrip)`: on the false→true edge it captures `frozenDockContentWidth = lastDesiredWidth` (the convert flags are set **before** the `drawerStore` mutation so this captures the pre-drag width); on true→false (commit **or** revert) it clears the clamp and fires one `relayout` — that's when the taskbar animates to final length. Do **not** go back to gating individual relayout subscriptions per-direction (misses spring-open's own relayout); the single clamp in `relayout` is the chokepoint. `isConvertedFromStrip` is now a stored `@Published` (was computed) so the strip→drawer side can drive this too.
-- **Carrier visual is aligned to in-strip drag (owner feedback): once converted, the carrier morphs from the small drawer icon into the full `ChipView`, the representative chip is hidden in place (gap), and the carrier stops shrinking (no 0.82 over-drop-zone scale).** Single source of truth `DragController.convertedRepresentative: StripItem?` (@Published, set by `DockStripView.syncConvertedCarrier` to the display-order-first **materialized** live chip) drives **both** the carrier render and the `draggingID` gap — they must use the **same** id or you get "carry A, gap opens at B". `convertedDrawerBundleID` is `@Published` too (carrier must re-render on convert). Pre-materialization the representative is nil → carrier stays the drawer icon (never a chip without a gap). For multi-window you carry the representative chip + one gap; siblings ride along as the contiguous block.
+### Drawer Back To Strip
 
-### Minimize returns focus to the previous app — pre-switch, never post-correct (2026-06-24)
+- Precise drawer->strip landing applies only to running apps with at least one real live non-fallback window. Reject Finder, messaging special cases, app-level-fallback-only, and not-running stashes to old remove-on-release semantics.
+- One drawer icon represents the app's whole window-chip block; land all chips contiguously in current display order.
+- Landing goes through staged placement consumed inside `StripOrderStore.sync(current:appKeyOf:)`. Never write `liveOrder` outside sync before materialization.
+- Convert/revert/commit ownership: convert removes from `drawerStore` and records converted bundle; realtime leave cancels external block before restoring drawer membership; normal mouse-up commits through `endDrag`.
+- `DrawerView` membership safety cleanup must exempt converted-to-strip drags.
+- Freeze strip width during any converted cross-panel drag; release or revert clears the clamp and relayouts once.
+- Converted carrier visual and in-place gap must share `convertedRepresentative`; do not carry one chip while opening a gap at another.
 
-> Minimizing the frontmost focused window A1 of a multi-window app A should return focus to the previous **other** app B, not to A's sibling window A2 (macOS's default "promote the next same-app window"). Full probe matrix + reversal log: Obsidian `03 设计决策`.
+## Pinned Folders, Folder Popup, And Trash
 
-- **Zero-flicker is impossible — do not chase it again.** A standalone probe (5 mechanisms, frame-by-frame z-order sampling) proved a hard macOS coupling: **suppressing A2's promotion REQUIRES bringing B to the front** (and vice-versa: not raising B ⇒ A2 always surfaces). They are bound. So the only choices are "A2 flashes" or "B appears a beat early" — there is no "B stays put, A1 just shrinks away" path. Don't reopen the search for one.
-- **Mechanism: pre-switch B to active BEFORE `minimize()`, not after.** `PlatformActionExecutor.execute()` `.minimizeWindow` branch: `findBackgroundActivationTarget(for:)` picks B, then `switchFrontmostWithoutReorder(toPID:)` makes B the active process via **`SetFrontProcessWithOptions(.frontWindowOnly)`** (deprecated-but-public, `dlsym`-loaded like `_AXUIElementGetWindow`). With B already active, A1's disappearance promotes nothing. Owner-confirmed: A2 never surfaces, B's return feels natural (better, even).
-- **`findBackgroundActivationTarget` guards (keep all):** only fires when the handle is the **frontmost app's focused window** (bounded 0.2s AX `kAXFocusedWindow` check) → right-click "最小化" on a non-focused sibling no-ops; candidate B must pass `DockWindowEligibilityPolicy` **and** be `.regular` (returns to a real app, not a menu-bar accessory).
-- **Hard fallback to v3, all-or-nothing per call.** If the symbol is missing or the switch returns non-`noErr`, `switchFrontmostWithoutReorder` returns false and the branch reverts to clean v3 (minimize, then `postMinimizeActivateDelayMicroseconds` settle + `NSRunningApplication.activate(B)`). A future macOS dropping the symbol degrades to v3, not breakage.
-- **Superseded, do not revisit:** (1) **v2 pre-activate** via `NSRunningApplication.activate(B)` before minimize — B's window raised over A1 = visible flash + a race where A2 still won. (2) **v3 post-activate** B after minimize with a settle delay — correct end state but A2 flashes one frame. (3) The AX `kAXFocusedApplication` set (probe: errors `-25202`, A2 still surfaces) and SkyLight `_SLPSSetFrontProcessWithOptions` (private; `SetFrontProcessWithOptions` is the public equivalent and preferred).
-- **Activate-flash — ROOT-CAUSED AND FIXED via early focus (2026-07-03, supersedes the 2026-06-25 "residual ~30% accepted as macOS limitation" verdict — that diagnosis was wrong).** The **windowID-targeted SkyLight focus** (yabai/AeroSpace technique) **stays** as the shared core `postSkyLightWindowFocus` (called by `focusWindowViaSkyLight` and `focusWindowEarly`). Mechanism = `_SLPSSetFrontProcessWithOptions(psn, wid, kCPSUserGenerated)` + two synthesized "make key window" events (+ raise-last in the post-capture path). **Load-bearing byte layout** (yabai `window_manager_make_key_window`): `[0x04]=0xf8`, `[0x08]=0x0d`, first event `[0x8a]=0x02` / second `[0x8a]=0x01`, wid at `0x3c`, **no `0xff` fill** — a guessed-wrong layout silently focuses the *wrong* window (broke activation once).
-  - **The real root cause (falsifies the 06-25 "WindowServer compositing transient" theory): our own pipeline latency.** Handle capture (`inventoryWindows` 0.5s AX messaging timeout), the minimized pre-read, and the cgID read all block **400–900ms** against a napping/minimized target app BEFORE the front-process switch lands. In that gap the initial `AXRaise` has already put the target on top while the **source app is still the active app** — and a **re-asserter source (Ghostty + Chromium family: Chrome, Dia)** floats its window back at ~+450ms = the flash. Probe-proven (2026-07-03, 9 instrumented rounds): flash occurrence tracked slps-landing time exactly; well-behaved sources (Finder/Safari/WeChat/Feishu/PS/AI…) never flashed even with a 600ms gap; "warm clicks don't flash" and the old "~30%" were both artifacts of target-app nap state.
-  - **The fix: `focusWindowEarly(pid:cgWindowID:)` at the top of `PlatformActionExecutor.execute`** — for `.activateWindow`, cross-app (fresh `isActive` check), status active/inactive (**minimized excluded since 2026-07-05** — see next bullet), using the snapshot's `record.cgWindowID`. **Zero AX round-trips before the switch** (that's the whole point — do not move it after handle capture, and do not resolve the wid via AX or via the on-screen CG list: napping apps' windows drop off the on-screen list). Covered by the same `DOCK_SKYLIGHT_FOCUS` kill-switch.
-  - **Minimized restore = restore-then-switch, never switch-early (2026-07-05, supersedes the 07-03 "accepted cosmetic" verdict — the sibling hoist was a real persistent z-order bug, now fixed).** While the target B1 is still order-out, **any** front-process switch — full make-key (v0), bare psn `0x200` (v1), `kCPSNoWindows 0x600` (v2) — makes the app promote its visible sibling B2 **above the old front app A1**, permanently (probe-proven on Finder/WeChat/Dia targets, `Docs/22` §13). So `.minimized` is excluded from `focusWindowEarly`; instead `activate()` posts `postSkyLightWindowFocus` with the snapshot wid (`knownCGWindowID` param threaded from `execute`) **immediately after `setMinimized(false)`, zero AX in between** — that adjacency is load-bearing: nothing is raised while the source app is still active, and the µs gap beats re-asserter sources (~450ms to re-float). No flash even with Ghostty/Dia sources + 500ms simulated worst-case pipeline gap. This is NOT the falsified 07-03 experiment 2 ("skip early focus → flash back"): that path raised via AXRaise then switched late behind an AX cgID read; this one switches before any raise, wid from the snapshot.
-  - **Minimized restore MUST set `kAXMainAttribute=true` right after the restore+switch in `activate()` — do not remove.** Make-key sent while a window is order-out gets applied by the app to its visible sibling (Chrome/Finder verified 2026-07-03); the correction keeps keyboard input and the minimize-preswitch focused-window guard on the restored window in any residual race (e.g. snapshot says visible but the window is actually minimized → early focus fires on an order-out window).
-  - **`NSWorkspace.frontmostApplication` is a lagging notification cache (~0.4–1.5s stale after SkyLight switches) — action-decision paths must use a fresh `NSRunningApplication(processIdentifier:)?.isActive` instead.** Two sites fixed 2026-07-03: `LifecycleActionPlanner` toggle `appIsFrontmost` (stale read made the second click re-plan activate = "click does nothing, need a second click") and the `findBackgroundActivationTarget` frontmost guard (stale read silently skipped the minimize pre-switch → macOS promoted the same-app sibling). Do not reintroduce `frontmostApplication` reads in decision paths; probe-only display uses are fine.
-  - **Falsified in the 2026-07-03 probe rounds — do not revisit:** (1) self-interpose (make our own accessory app the front process before switching, to break the "previous front app" chain) — mechanically succeeded every time, zero effect on flash rate; (2) posting a `[0x8a]=0x02` deactivate event to the old front window (yabai's same-app trick, tried cross-app) — no effect. Still do not revisit the 06-25 falsifications: pre-raise+wait, post-SkyLight forced activate, `kAXMain` *as a cure for which window activation restores* (its 2026-07-03 use is different: keying an already-visible just-unminimized window — that works), post-correct/deferred-reraise.
-  - **Safety nets (keep all):** (1) kill-switch `DOCK_SKYLIGHT_FOCUS=0` (default on) disables both early and post-capture SkyLight focus → standard `NSRunningApplication.activate`, no rebuild needed; (2) SkyLight focus returns false **only on "can't even attempt"** — kill-switch off / missing symbols / missing PSN / missing cgID. **SkyLight private-call return codes are best-effort diagnostics, NOT a fallback condition — do NOT re-add a `non-0 → fallback` gate** (yabai ignores them too; gating on them regressed cold activations once); (3) `activate()` returns `focusedViaSkyLight || raised || isActive`. Finder `confirmFocused` keeps top priority (Finder is fully included in early focus since 2026-07-03 — excluding it made Finder the only remaining flasher). Full path + diagnostic log: `Docs/22` §10–§12.
+### Pinned Folder Zone
 
-### Optimistic Action State — interruptible interaction (去转圈 + 可打断)
+- Strip layout is `[messaging][divider][pinned folders][divider][live windows]`; empty zones drop their adjacent divider. Folder chips are click-only (no DragGesture), like the messaging zone.
+- Folder chip frames go into the separate `FolderChipFramePreferenceKey`/`folderChipFrames`, used only for popup anchoring. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames` — that dict feeds live-zone drag-reorder and drawer-to-strip landing hit-tests.
+- Covers come from `PinnedFolderCoverStore`: background enumeration plus a per-folder generation counter; async QL callbacks must re-check the generation before publishing, or stale thumbnails overwrite fresh covers. Do not enumerate directories or fetch icons synchronously on the main thread.
+- `FolderCover.isThumbnail` decides rendering: real thumbnails get square-crop + border; icons render fit. Do not square-crop icon covers.
 
-> 2026-06-13. Deliberately relaxes the older "lock the chip while an action is in flight" rule — that rule is **superseded, do not reinstate**.
+### Folder Popup
 
-- Clicking a chip writes an **optimistic state** (predicted **status only**) immediately; UI render and toggle-planning read it first, cleared when the real snapshot confirms or after a ~4s timeout (silent rollback, no shake/red). This *is* the feedback — **no spinner**.
-- **The optimistic overlay predicts status ONLY — the frontmost axis is ALWAYS a fresh `NSRunningApplication(pid).isActive` read (injectable in `LifecycleActionPlanner.init` for tests). Do not re-add a predicted `isAppFrontmost` (2026-07-05 fix).** The old predicted `isAppFrontmost: true` could linger the full 4s (activate B1 → switch to another app before the snapshot ever shows B1 `.active` → confirmation never comes) and overrode the correct fresh read → clicking B1's chip while app A was frontmost got planned as **minimize** instead of activate ("点卡片偶发直接最小化"). Accepted micro-edge of the fix: a second click within the few ms before the activation lands re-plans activate (harmless idempotent repeat) instead of pretending frontmost for a minimize.
-- **Scope = show/hide only** (toggle / activate / minimize / hide). **close / quit stay locked until confirmed** — making a chip vanish optimistically then bounce back on failure is worse than a brief wait. Re-entrancy guard lives in `AppRuntime.trigger`, not UI graying.
-- Grounding diagnostic: a spinner (`pending`) ≠ "action running" — execution is a one-shot AX call, pending is just awaiting the snapshot. The real bug was `toggle` re-reading a not-yet-flipped snapshot → repeating one action instead of alternating; the optimistic state fixes both that and the interruptibility.
-- Known accepted: `hideApp` only optimistically covers the clicked chip; other windows of the same app wait for the snapshot.
+- One shared lazy popup panel serves both folders and trash — "only one popup at a time" falls out of the single-panel design. Lifecycle lives inside `PanelCoordinator` (needs private target frames / inhibitors); it clones the drawer recipe: plain `NSView` container + pinned `NSHostingView`, alpha fade, local+global `leftMouseDown` monitors.
+- `dismissFolderPopupIfOutside` must exclude the anchor chip rect (+4pt tolerance): the monitor fires on mouseDown, the chip's tap on mouseUp — without the exclusion, clicking the same chip closes-then-reopens forever.
+- The popup closes whenever the dock target frame changes (`layoutPanels`), on screen-parameter change, hover screen switch, fullscreen, or panel hide. Do not reposition it to chase an animating anchor.
+- Popup width is fixed by the grid's column count; only height varies. Keep it that way — variable width feeds a `fittingSize` width oscillation loop.
+- Edge auto-hide is inhibited while the popup is open via `EdgeAutoHideInhibitor.folderPopupOpen`.
 
-### Chip right-click menu = hand-built AppKit NSMenu, not SwiftUI `.contextMenu` (2026-06-26)
+### Trash Satellite
 
-> Both the strip chip (`ChipView`) and drawer/launcher chip (`LauncherChip`) menus are built as AppKit `NSMenu` so「退出 App」/「强制退出」can be a native *alternate item* (hold Option while the menu is open → live swap, like the system Dock). Full rationale + reversal log: Obsidian `03 设计决策`「右键菜单加原生 Dock 功能」.
+- Panel order is fixed `[dock][capsule][trash]`, trash outermost. `trashTargetFrame` keys off the capsule **target** frame; dock width reservation uses `dockTargetFrame(satelliteColumns:)` (2 when trash shown, 1 hidden) — symmetric, the dock stays centered.
+- `setupTrashPanel` must not unconditionally `orderFrontRegardless`; gate on `showTrash && panelsAreVisible`, or a persisted-hidden trash flashes at launch. Fullscreen/edge hide must take the trash down with dock/capsule — never leave it floating alone.
+- `TrashDropContainerView` is the repo's only `NSDraggingDestination`; the hosting subview stays unregistered so file drags route to the container. `MenuHostNSView` still claims only right-clicks.
+- Scope: **user home trash only** (`~/.Trash`). Files trashed from external volumes land in that volume's `.Trashes/<uid>` — the full/empty icon and popup grid intentionally do not cover them (batch-2 candidate).
+- Listing `~/.Trash` requires Full Disk Access; `trashItem` drops and AppleScript empty-trash do not. Degrade to the hint row + settings deep-link; never block.
+- Empty trash goes through Finder AppleScript. `NSAppleEventsUsageDescription` in Info.plist is load-bearing — without it the Automation prompt never appears and Apple events are silently denied. Error -1743 → guide to Automation settings.
+- `DirectoryWatcher`: the fd is closed only in the dispatch source's cancel handler; `stop()` is idempotent. Never close the fd before cancel.
 
-- **Do not revert these menus to SwiftUI `.contextMenu`.** SwiftUI's context menu is a static snapshot once open and cannot do the in-menu Option swap. An earlier cut tried a `ModifierKeyMonitor` (publish live Option state, read it in the SwiftUI menu builder) — falsified: `.contextMenu` content is cached at build time and not re-read on right-click, so it only ever caught "Option held *before* the right-click", never the native menu-open swap. That monitor was deleted; do not reintroduce it.
-- **All menu infra lives in `App/Scenes/AppMenuFragments.swift`:** `ClosureMenuItem` (NSMenuItem carrying a closure), `MenuHostNSView` + `NativeMenuHost` (the click-through overlay), the `.nativeContextMenu { NSMenu }` View extension, and `AppMenuBuilder` (the alternate quit pair + Finder items). Each chip builds its menu fresh on every right-click via a `build…Menu() -> NSMenu` method that captures live `runtime` + stores + `effectiveStatus`.
-- **`MenuHostNSView` is a transparent `.overlay` that claims ONLY right-click / Control-click and returns `nil` from `hitTest` otherwise**, so left-click tap-to-activate and the `"strip"`-space drag-reorder pass through untouched. The decision reads `NSApp.currentEvent` inside `hitTest`. This is the deliberate exception to the "never `.overlay`, it steals clicks" frame-reader guardrail — it explicitly does *not* steal non-menu clicks. Do not widen it to swallow other events.
-- **「强制退出」alternate item:** `isAlternate = true` + `keyEquivalentModifierMask = [.option]`, added immediately after the plain「退出 App」(modifier mask `[]`, empty key equivalent). It is omitted when `bundleID == Bundle.main.bundleIdentifier` (never force-quit ourselves) — compare via `Bundle.main`, never a hardcoded id.
-- **Finder items** (`前往文件夹…` / `连接服务器…`) gate on `bundleIdentifier == "com.apple.finder"` (covers both the persistent app-level chip and concrete Finder window chips). They activate Finder then `postToPid` Cmd+Shift+G / Cmd+K after ~80ms (same `.combinedSessionState` + `postToPid` pattern as `AccessibilitySource`).
-- **Recent docs/folders section** (inline at the menu top, grayed header + items — not a submenu) = best-effort read of a non-public data source (`RecentDocumentsReader`): per-app via `.sfl` shared-file-lists under `…/com.apple.sharedfilelist/…ApplicationRecentDocuments/<bundleID>.sfl4`; Finder via `com.apple.finder` defaults `FXRecentFolders`. All parsing is `do/catch`-guarded (failure → empty, never blocks the menu) and dir checks use `.isDirectoryKey`, not `hasDirectoryPath`. **Do not retry these — no public/stable API:** native Dock's per-app `applicationDockMenu` (Spotify-style) private hook; browser "recent" (= history DB, needs Full Disk Access + locked while running); Adobe recents (private prefs). Product status/rationale lives in Obsidian.
+## Menus
 
-### Panel Layout — shadowPadding coordinate rule
+### Native Chip Menus
 
-> SwiftUI `.shadow()` draws the panel shadow, so each panel window reserves `shadowPadding = 20pt` of transparent margin on all sides (AppKit `NSWindow` shadow is off; `clipShape` does the rounding).
+- Strip and drawer chip menus are hand-built AppKit `NSMenu`, not SwiftUI `.contextMenu`.
+- Do not revert to SwiftUI context menus; they cannot do native Option alternate items after the menu opens.
+- `MenuHostNSView` overlay claims only right-click / Control-click and returns `nil` from `hitTest` otherwise. Do not widen it to swallow normal left-click or drag events.
+- Force Quit is a native alternate item after Quit, gated out for this app itself.
+- Finder menu items (`前往文件夹…`, `连接服务器…`) apply to both persistent Finder chip and concrete Finder windows.
+- Recent files/folders are best-effort only. Per-app `.sfl*` lists and Finder `FXRecentFolders` may fail; failures must produce an empty section, never block the menu. Do not retry private Dock hooks, browser history DBs, or Adobe private prefs as "public" features.
 
-- **Any coordinate math on `dockFrame` / `capsuleFrame` must subtract `shadowPadding` first** to reach the visual content edge — forgetting this offsets placement (4 such bugs fixed 2026-06-19, `c44d17e`).
-- **Reading `fittingSize.width` must subtract `2 × shadowPadding`**, else the panel sizes ~80pt too wide.
+## Panel Geometry And Visibility
 
-### Panel relayout = target-frame-driven + animated transitions (2026-06-21)
+### Shadow Padding
 
-> The strip is centered, so any width change re-centers it and the capsule (anchored to its right edge) + drawer (anchored to the capsule) follow — the whole cluster shifts. Owner chose to **animate** that shift (smooth slide) rather than leave it an instant jump. Full rationale: Obsidian `03 设计决策`「面板平滑过渡 + 目标 frame 驱动」.
+- SwiftUI shadow margin is `shadowPadding = 20pt`.
+- Coordinate math on `dockFrame` / `capsuleFrame` must subtract `shadowPadding` to reach visual content.
+- `fittingSize.width` must subtract `2 * shadowPadding`.
 
-- **Never chain-read a panel's live `.frame` to position the next panel during an animated relayout.** `animator().setFrame` only *starts* the animation; reading `.frame` right after returns the **old** frame, so the capsule lands relative to the pre-animation strip and the drawer relative to the pre-animation capsule → misalignment / drawer-overlaps-strip (the 2026-06-21 bug). Instead compute all targets with **pure functions** (`dockTargetFrame`/`capsuleTargetFrame(forDock:)`/`drawerTargetFrame(forCapsule:size:)`) fed each other's *target*, via the single entry `layoutPanels(contentWidth:on:animated:)` → `relayout(animated:)`.
-- **All panels animate in one `NSAnimationContext` group** (`setFrames`, 0.22s easeInEaseOut) so they share one timeline. Content changes (snapshot / stash / drawer resize) → `animated: true`; **open / `screenParametersChanged` / hover-switch / first layout → `animated: false`** (those shifts are expected, animating them is wrong). `didInitialLayout` forces the first layout instant.
-- **Drop zones + drawer-open read the stored target frames** (`lastDockTargetFrame`/`lastCapsuleTargetFrame`/`lastDrawerTargetFrame`, live-frame fallback when `.zero`), not live `.frame` — mid-animation live frames disagree with the visual/landing position.
-- **The drawer's `contentView` is a plain `NSView` container with the `NSHostingView` pinned inside via `autoresizingMask` — the `NSHostingView` is NOT the window's `contentView` directly (2026-06-22, hard guardrail).** When an `NSHostingView` *is* the contentView, AppKit resizes the window to the SwiftUI content size **top-anchored** the instant content grows — so a row-add dropped the drawer's bottom edge DOWN (`y 68→24`, top pinned at 218) a frame before our bottom-anchored `setFrame` pulled it back up = the "抽屉先向下扩展再上移" dip (logs: `cur(y=24 h=194)` under `anim=false`). The plain-container interposition stops the window from sizing to content; height is driven only by `layoutPanels`/`setFrames`. We still read the hosting view's `fittingSize` for layout via the stored `drawerContentHost`. (`sizingOptions = []` was tried first and broke content fill — detached drawer; do not use it.)
+### Relayout
 
-### Multi-screen placement = NonConstrainingPanel + dwell hover-switch (2026-06-23)
+- Relayout is target-frame-driven. Never position one panel from another panel's live `.frame` during animation.
+- Compute dock/capsule/drawer target frames via pure target functions; animate all panels in one `NSAnimationContext`.
+- Content changes animate; open, screen changes, hover-switch, and first layout are instant.
+- Drop zones and drawer-open checks read stored target frames, not live frames.
+- Drawer window content must be a plain `NSView` container with the `NSHostingView` pinned inside. Do not make `NSHostingView` the direct `contentView`; AppKit top-anchors content growth and causes the drawer downward dip.
 
-> Multi-monitor, vertically stacked screens (an upper screen whose bottom edge == a lower screen's top edge, a **shared y edge**). Full rationale + reversal log: Obsidian `03 设计决策`「多屏共享边落点根治 + 悬停切换加驻留」.
+### Multi-Screen Placement
 
-- **All four placement panels (dock / capsule / drawer / drag carrier) MUST be `NonConstrainingPanel`, never a plain `NSPanel`.** AppKit's automatic `constrainFrameRect(_:to:)` repositions a window to fit the "current" screen's visible area (below the menu bar). On a shared-edge layout, placing the strip at the upper screen's bottom puts the window **origin** (bottom-left, y = screen.minY + bottomGap − shadowPadding) **below** the shared edge → on the lower screen → AppKit constrains it to the lower screen and snaps the whole window down under the lower screen's menu bar (measured: target y=970 became y=857 = lower visibleFrame.maxY 949 − windowHeight 92). Result: strip+capsule jump to the wrong screen / only the drawer-capsule shows on the intended screen. `NonConstrainingPanel` overrides `constrainFrameRect` to return the rect unchanged. Safe because our panels are always manually placed at a screen bottom and never cover a menu bar. **Do not "simplify" these back to `NSPanel`.**
-- **Bottom-anchored panel placement MUST use `screen.frame`, not `screen.visibleFrame`, for bottom Y and horizontal clamp (2026-07-01, `d914abf`).** `visibleFrame` changes when the native Dock appears/disappears via Cmd+Opt+D and when the native Dock sits on the left/right edge; using it for bottom panels made the dock/drawer/capsule move or resize even though they should stay glued to the physical screen edge. The bottom strip, capsule, drawer, and drag carrier are deliberately outside the native Dock's reserved visible area. Do not restore `visibleFrame.minY/minX/maxX` for their bottom anchor or horizontal clamp.
-- **Keep `visibleFrame` only where the code is explicitly protecting the top/menu-bar usable area.** The drawer's maximum height/top cap still uses the smaller of `visibleFrame.maxY` and `screen.frame.maxY - safeAreaInsets.top`; do not "clean up" this branch to all-`screen.frame`, or a tall drawer can run into the menu bar/notch area. Menu bar auto-hide can still change that height cap on non-notch screens; that is an accepted boundary, not the native Dock movement bug.
-- **The root cause was NOT placement math or screen selection** — `centeredPanelFrame` / hover target were correct all along. Do not re-touch them chasing this symptom (two earlier attempts wrongly blamed hover trigger timing; see reversal log).
-- **Hover-switch uses a dwell, not instant edge-trigger.** Cursor must stay on the target screen for `hoverSwitchDwell` (~350ms) before the strip moves, armed on entering that screen's bottom hot zone and kept alive while anywhere on it (a "must stay in the 4pt strip" dwell is unreachable when approaching an upper screen from directly below — its hot zone == the shared edge you cross through). Prevents accidental switches when clicking near a screen's bottom edge.
-- **Fullscreen hide must hide the capsule (and close the drawer) too, not just the dock** — else the capsule floats alone on screen.
+- All placement panels (dock, capsule, drawer, drag carrier) must be `NonConstrainingPanel`, never plain `NSPanel`.
+- Bottom-anchored panels use `screen.frame`, not `screen.visibleFrame`, for bottom Y and horizontal clamp.
+- Keep `visibleFrame` only for the drawer top/menu-bar height cap.
+- Hover screen switching uses dwell (~350ms), not instant edge-trigger.
+- Fullscreen hide hides the capsule and closes the drawer too; do not leave capsule floating alone.
 
-### Fullscreen detection — AX path requires the role gate (2026-07-05)
+### Fullscreen Detection
 
-> Restoring a minimized Finder window made the taskbar vanish for 1–3s: Finder exposes a **desktop pseudo-window** (role `AXScrollArea`, frame **exactly** == screen, subrole/title/AXFullScreen all read NoValue) that becomes `AXFocusedWindow` whenever Finder is active with no regular window up — the frame≈screen fallback in the async AX probe then misclassified it as fullscreen. Probe-proven and fixed 2026-07-05.
+- `FullscreenWindowClassifier.isFullscreen` is the single AX fullscreen predicate.
+- Its `role == kAXWindowRole` gate is load-bearing. Only real `AXWindow` elements may reach frame≈screen fallback.
+- Do not tighten the gate to subrole; minimized Finder windows can report `AXDialog`, while desktop pseudo-windows may have no readable subrole.
+- Do not use `NSWorkspace.frontmostApplication` in fullscreen decision paths. Use notification PID or a fresh active-app scan.
 
-- **`FullscreenWindowClassifier.isFullscreen` (in `PanelVisibilityState.swift`, unit-tested in `FullscreenClassificationTests`) is the single AX fullscreen predicate; its `role == kAXWindowRole` gate is load-bearing — do not remove or bypass it.** Only real `AXWindow` elements may reach the frame≈full-screen fallback. Do not "tighten" it to subrole either: minimized Finder windows report subrole `AXDialog`, and the desktop pseudo-window has no readable subrole at all.
-- **The classifier deliberately lives in `PanelVisibilityState.swift`, not `PanelCoordinator.swift`** — the test target compiles a subset of production sources directly (no `@testable import`) and `PanelCoordinator.swift` is not in it. Moving the predicate back into the coordinator makes it untestable.
-- **No `NSWorkspace.frontmostApplication` in the fullscreen decision path** (same lagging-cache rule as the 2026-07-03 activate-flash fixes): `handleAppActivated` uses the PID carried by the notification (`NSWorkspace.applicationUserInfoKey`); the PID-less callers (space change, 5s reconcile timer) resolve via a fresh `runningApplications.first(where: { $0.isActive })` scan.
-- The sync CG probe (`checkFullscreenViaCGSync`) keeps `.excludeDesktopElements` + layer 0; the AX role gate is the AX-side equivalent of that trust filter. Real native fullscreen still hides via both paths (verified: enter → `active=true` within ~10ms of the space change).
+## Settings And Compatibility
 
-### Status menu + Edge auto-hide settings (2026-06-30)
+### Status Menu / Edge Auto-Hide
 
-> The status menu now owns launch-at-login, native Dock wake delay, and Tungsten Edge wake delay. Product state and copy live in Obsidian; this section keeps only implementation guardrails.
+- Do not reintroduce the multi-display strategy menu; runtime behavior is fixed to dwell hover-switch.
+- Native Dock slider applies only on commit, never continuously while dragging. Do not restore a separate apply item or confirmation dialog unless owner changes product decision.
+- Native Dock writes are non-sandbox only; keep the sandbox entitlement gate.
+- Tungsten Edge slider controls wake delay, not hide delay. Finite wake delay is `0.1s...3.0s`; `不唤醒` still allows hide but disables bottom-edge wake.
+- Hidden-state bottom-edge detection is load-bearing and must keep probing while the dock panel is hidden.
 
-- **Do not reintroduce the multi-display strategy menu.** Runtime behavior is fixed to the multi-screen dwell model above: another screen's bottom edge can switch placement; the current screen's bottom edge can wake Tungsten Edge.
-- **The native Dock slider applies only on commit, never continuously while dragging.** Drag changes save the preference; mouse-up with a real value change writes `com.apple.dock` and restarts Dock directly. Do not bring back a separate "应用到系统 Dock…" menu item or confirmation dialog unless the owner explicitly changes the product decision.
-- **Native Dock writes remain non-sandbox only.** Keep the `SecTaskCopyValueForEntitlement("com.apple.security.app-sandbox")` gate; sandboxed builds must not attempt `defaults write com.apple.dock` or `killall Dock`.
-- **The Tungsten Edge slider is a wake-delay control, not a hide-delay control.** Finite wake delays run `0.1s...3.0s`; `不唤醒` may still hide but must not arm the bottom-edge wake timer. Idle hide after leaving the dock/capsule/drawer is fixed at `0.2s`.
-- **Hidden-state bottom-edge detection is load-bearing.** Edge wake must keep probing while the dock panel is hidden and flow through the same bottom-edge detector as multi-screen switching.
+### Minimum OS
 
-### Minimum deployment target = macOS 12 (Monterey) — gate newer APIs
-
-> 2026-06-22. Lowered from 14.0 to 12.0 so older Macs can install (a Monterey user hit "can't be used with this version of macOS"). `MACOSX_DEPLOYMENT_TARGET` = 12.0 in all configs; `LSMinimumSystemVersion` = 12.0.
-
-- **Do not use macOS 13+/14+ APIs unguarded** — it silently re-raises the minimum OS and re-breaks old Macs (the build only *warns* via deprecation, it doesn't stop you; the gate failure shows up only at install time on the old OS). Wrap any newer API in `if #available(macOS X, *)` with a ≤12 fallback.
-- Already converted for 12.0: `defaultScrollAnchor` → `compatLeadingScrollAnchor()` (availability-gated helper in `DockStripView`); the two-parameter `onChange(of:_:)` / `onChange(of:initial:)` → the old single-value `onChange(of:perform:)` (the `initial: true` seed is replicated with `.onAppear` calling the same `reconcileLiveOrder()`); `Task.sleep(for: .seconds(_))` (macOS 13+) → `Task.sleep(nanoseconds:)`.
-- The deprecation warnings from the old single-value `onChange` are expected back-deployment noise, not bugs.
-- Compile-verify by building at target 12 (`MACOSX_DEPLOYMENT_TARGET=12.0`) — a clean build proves no >12 API slipped in. Note: CI/dev machines run newer macOS, so runtime behavior on 12/13 still needs a real old-OS check.
+- Minimum deployment target is **macOS 12**. Do not use macOS 13+/14+ APIs unguarded.
+- Guard newer APIs with availability checks and a Monterey-compatible fallback.
+- Known converted APIs: `defaultScrollAnchor`, new two-parameter `onChange`, `Task.sleep(for:)`.
+- Old single-value `onChange` deprecation warnings are expected back-deployment noise.
 
 ## Collaboration Rule
 
-The project owner directs the product but does not read code, and does not read English comfortably — reply in Chinese.
+The project owner directs product but does not read code and does not read English comfortably. Reply in Chinese.
 
-- Write every status update, plan, and result so it's fully understandable with no engineering background: lead with what changed, what it means for how the app behaves, and what's next, in everyday language.
-- Technical detail (file names, APIs, mechanisms) is a supplement that comes after the plain explanation, never the only way to follow the message. Don't make the owner decode jargon to understand what you did or why.
-- When a choice needs the owner's input, frame it as product behavior and trade-offs they can weigh, not as implementation details.
+- Status updates and results should first explain behavior in plain Chinese, then add file/API details if useful.
+- Choices should be framed as product behavior and trade-offs, not implementation trivia.
+- For coding tasks, read code first and implement through the repo's existing patterns.
+- For "打检查点", create a local git commit unless the user says otherwise; do not push or create PRs unless asked.

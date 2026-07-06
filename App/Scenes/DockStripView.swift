@@ -11,8 +11,10 @@ enum StripEntry: Identifiable, Hashable {
     /// equivalent) so the app recreates it — verified to work for WeChat even with
     /// other chat windows visible.
     case messagingApp(bundleID: String, mainWindow: StripItem?)
-    /// Visual separator between the pinned messaging zone and the live window zone.
-    case divider
+    /// 固定文件夹区的一格（消息区右侧、窗口区左侧）。path 即身份。
+    case pinnedFolder(path: String)
+    /// Visual separator between zones. 现在最多两条（消息|文件夹、文件夹|窗口），id 必须唯一。
+    case divider(id: String)
 
     var id: String {
         switch self {
@@ -20,7 +22,8 @@ enum StripEntry: Identifiable, Hashable {
         // Stable id regardless of main-window presence, so the chip doesn't churn
         // when the main window opens/closes.
         case let .messagingApp(bid, _): return "msg-app-\(bid)"
-        case .divider: return "zone-divider"
+        case let .pinnedFolder(path): return "folder-\(path)"
+        case let .divider(id): return id
         }
     }
 }
@@ -31,6 +34,13 @@ struct DockStripView: View {
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var badgeStore: BadgeStore
     @EnvironmentObject var stripOrderStore: StripOrderStore
+    @EnvironmentObject var pinnedFolderStore: PinnedFolderStore
+    @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
+
+    /// 文件夹 chip 点击 → 弹窗 toggle（path + chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
+    var onFolderPopupToggle: (String, CGRect) -> Void = { _, _ in }
+    /// 「添加文件夹…」统一入口（NSOpenPanel 归 AppDelegate 管）。
+    var onAddFolder: () -> Void = {}
     /// 跨面板拖动权威（拖卡进抽屉 路线 C）：起拖 → beginDrag；读 draggingItem 隐藏原位卡片、
     /// 读 isOverDropZone 在进投放区时停掉条内重排。载体面板/监视器/收尾都在它里面，本视图不碰。
     @EnvironmentObject var dragController: DragController
@@ -52,6 +62,10 @@ struct DockStripView: View {
     /// preference — feeds the grab offset at drag start and the full-frame landing hit-test.
     /// `.background` GeometryReader (not overlay) so it never steals chip clicks.
     @State private var chipFrames: [String: CGRect] = [:]
+
+    /// 文件夹 chip 帧（弹窗锚点专用）。**独立字典,绝不混入 chipFrames**——那是 live 窗口区
+    /// 拖拽重排与抽屉拖回落点的输入,混入会让窗口拖动命中文件夹区、落点 no-op（评审 P1）。
+    @State private var folderChipFrames: [String: CGRect] = [:]
 
     /// 任务条内容区（"strip" 空间）在屏幕坐标系的 frame（bottom-left）。抽屉拖回任务条·精确落点用它把
     /// 全局鼠标位置映回 "strip" 空间命中卡片，并判进/出任务条区（迟滞）。与 "strip" 命名空间挂同一视图。
@@ -131,8 +145,16 @@ struct DockStripView: View {
         let order = stripOrderStore.reconciled(current: liveNatural.map(\.id), appKeyOf: appKeyOf)
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let orderedLive = order.compactMap { byID[$0] }.map(StripEntry.window)
-        guard !pinned.isEmpty, !orderedLive.isEmpty else { return pinned + orderedLive }
-        return pinned + [.divider] + orderedLive
+        // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
+        let folderEntries = pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
+        var zones = [pinned, folderEntries, orderedLive].filter { !$0.isEmpty }
+        guard !zones.isEmpty else { return [] }
+        var out = zones.removeFirst()
+        for (index, zone) in zones.enumerated() {
+            out.append(.divider(id: "zone-divider-\(index)"))
+            out += zone
+        }
+        return out
     }
 
     private var stripLayoutKeys: [StripLayoutKey] {
@@ -201,6 +223,7 @@ struct DockStripView: View {
         .onChange(of: liveOrderIDs) { _ in reconcileLiveOrder() }
         .onAppear { reconcileLiveOrder() }
         .onPreferenceChange(ChipFramePreferenceKey.self) { chipFrames = $0 }
+        .onPreferenceChange(FolderChipFramePreferenceKey.self) { folderChipFrames = $0 }
         // No .frame(maxWidth: .infinity) here — lets NSHostingView.fittingSize reflect
         // the natural content width so AppDelegate can read it for panel sizing.
     }
@@ -368,6 +391,16 @@ struct DockStripView: View {
                 )
         case .messagingApp:
             stripEntryView(entry)
+        case .pinnedFolder:
+            // v1 只点击不拖拽（同消息区）。帧上报进**独立**的 FolderChipFramePreferenceKey,
+            // 只给弹窗锚点用（评审 P1：不得混入 live 重排的 chipFrames）。
+            stripEntryView(entry)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: FolderChipFramePreferenceKey.self,
+                                               value: [entry.id: geo.frame(in: .named("strip"))])
+                    }
+                )
         case .divider:
             stripEntryView(entry)
         }
@@ -385,6 +418,14 @@ struct DockStripView: View {
                 .fill(.white.opacity(0.18))
                 .frame(width: 1, height: 20)
                 .padding(.horizontal, 2)
+        case let .pinnedFolder(path):
+            PinnedFolderChip(
+                path: path,
+                cover: folderCoverStore.covers[path],
+                onTap: { folderChipTapped(path) },
+                onAddFolder: onAddFolder,
+                onRemove: { pinnedFolderStore.remove(path) }
+            )
         case let .messagingApp(bid, main):
             // Explicit ZStack: the badge is the LAST child + zIndex, guaranteed to
             // draw on top of the icon (classic Dock badge sits over the icon corner).
@@ -413,6 +454,20 @@ struct DockStripView: View {
                 }
             }
         }
+    }
+
+    /// 文件夹 chip 点击：把 "strip" 空间帧（top-left,y-down）换算成屏幕坐标（bottom-left）传给弹窗
+    /// toggle。镜像 stripPoint(from:) 的逆映射。帧未就绪（首帧）就不弹,下次点击再说。
+    private func folderChipTapped(_ path: String) {
+        let entryID = StripEntry.pinnedFolder(path: path).id
+        guard let frame = folderChipFrames[entryID], stripRootScreenRect != .zero else { return }
+        let screenRect = CGRect(
+            x: stripRootScreenRect.minX + frame.minX,
+            y: stripRootScreenRect.maxY - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+        onFolderPopupToggle(path, screenRect)
     }
 
     /// Dock-icon-click equivalent: unhide + reopen. The app recreates its main window
@@ -796,9 +851,20 @@ private struct StripLayoutKey: Equatable {
             else                        { form = .single }
         case .messagingApp:
             form = .launcher    // both states render as a fixed-size icon chip
+        case .pinnedFolder:
+            form = .launcher    // fixed-size folder chip
         case .divider:
             form = .launcher    // fixed-size separator, no animation form change
         }
+    }
+}
+
+/// 文件夹 chip 帧（弹窗锚点专用）。独立于 ChipFramePreferenceKey——后者是 live 窗口区
+/// 拖拽重排/落点命中的输入,文件夹 id 混进去会被当成落点目标（评审 P1）。
+struct FolderChipFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 

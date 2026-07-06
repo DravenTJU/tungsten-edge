@@ -251,6 +251,19 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertFalse(EdgeAutoHideRuntimeRules.canArmIdleHide(state: state, delay: 0.9))
     }
 
+    func testShowTrashDefaultsToTrueAndPersistsToggle() {
+        let defaults = makeDefaults()
+
+        let store = AppSettingsStore(defaults: defaults)
+        XCTAssertTrue(store.showTrash)
+
+        store.setShowTrash(false)
+        XCTAssertFalse(store.showTrash)
+
+        let reloaded = AppSettingsStore(defaults: defaults)
+        XCTAssertFalse(reloaded.showTrash)
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "com.tungsten.edge.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
