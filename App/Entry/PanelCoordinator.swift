@@ -11,6 +11,17 @@ enum DrawerAnimation {
     static let duration: TimeInterval = 0.22
 }
 
+/// 弹窗/抽屉「面板开合 + 内容入场」动效（快出缓停，贴原生 Stacks 手感，owner 2026-07-06）。
+/// 任务条宽度/面板 frame 布局动画仍用 DrawerAnimation.duration=0.22，两组时长不得合并（AGENTS）。
+enum PopoverAnimation {
+    static let openDuration: TimeInterval = 0.18
+    static let closeDuration: TimeInterval = 0.13
+    /// 强 ease-out：起步快、收尾缓，原生弹出手感。
+    static func curve() -> CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+    }
+}
+
 /// 关闭 AppKit 的窗口自动约束。系统默认会把靠近/跨越屏幕边缘的窗口挪回"当前屏"可用区内（避开菜单栏）。
 /// 多屏**共享边**场景下这会致命：把任务条放到上方屏底部时，窗口原点 y 落在下方屏那一侧，系统就拿下方屏
 /// 来约束，把整窗按到下方屏菜单栏正下方 → 任务条/胶囊跑到错误的屏（2026-06-23 三屏 bug 根因；实测 y=970
@@ -66,6 +77,8 @@ final class PanelCoordinator: NSObject {
     /// 弹窗**逻辑**开关态（淡出动画期间面板还可见但逻辑上已关,同 drawerWantsOpen）。
     private var folderPopupWantsOpen = false
     private var lastPopupSize = CGSize(width: 424, height: 240)
+    /// 开窗时刻：入场窗口期（250ms）内的重定位一律瞬时,不与入场缩放叠加出晃动。
+    private var popupOpenedAt: Date = .distantPast
     private var pinnedFolderStoreSubscription: AnyCancellable?
     private var snapshotWidthSubscription: AnyCancellable?
     private var drawerStoreWidthSubscription: AnyCancellable?
@@ -213,30 +226,38 @@ final class PanelCoordinator: NSObject {
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
 
-        let initialFrame = drawerTargetFrame(forCapsule: capsuleRef, size: lastDrawerSize, on: screen)
-        lastDrawerTargetFrame = initialFrame
-
         // 关键：用普通 NSView 当 contentView,hosting 作为子视图自适应填充——**不让 NSHostingView 直接当 contentView**。
         // 否则内容变高时 macOS 会用内容尺寸**顶边锚定、向下撑大**窗口（日志实测 cur(y=24 h=194)、top 恒=218），
         // 我们的布局随后才把它纠正成底边锚定向上长（y=68）——这一前一后打架 = owner 看到的"先向下扩展再上移"
         // 的真因（2026-06-22）。普通 NSView 不把子视图内容尺寸传给窗口,窗口高度只由 layoutPanels/setFrames 控制;
         // fittingSize 改读 hosting（存进 drawerContentHost）。
-        let container = NSView(frame: NSRect(origin: .zero, size: initialFrame.size))
+        let container = NSView(frame: NSRect(origin: .zero, size: lastDrawerSize))
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
         panel.contentView = container
         drawerContentHost = hosting
 
+        // 首帧就位（owner 2026-07-06「不丝滑」主因之一）：orderFront **前**同步量真实尺寸,
+        // 首帧即最终大小,不再「旧尺寸弹出→瞬间校正」。量不到合理值退回 lastDrawerSize,
+        // 后面的 double-defer 复测仍在,作兜底校正。
+        panel.layoutIfNeeded()
+        let sync = hosting.fittingSize
+        if sync.width >= 60, sync.height >= 60 {
+            lastDrawerSize = sync
+        }
+        let initialFrame = drawerTargetFrame(forCapsule: capsuleRef, size: lastDrawerSize, on: screen)
+        lastDrawerTargetFrame = initialFrame
+
         panel.setFrame(initialFrame, display: false)
         if !panel.isVisible { panel.alphaValue = 0 }   // 重开中途若仍可见,从当前 alpha 续上,不跳回 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = DrawerAnimation.duration
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            ctx.duration = PopoverAnimation.openDuration
+            ctx.timingFunction = PopoverAnimation.curve()
             panel.animator().alphaValue = 1
         }
-        // 弹出后量真实 fittingSize 重新布局（瞬时,刚弹出不滑）。
+        // 弹出后复测 fittingSize 重新布局（瞬时,刚弹出不滑）——同步量偏差时的兜底校正。
         DispatchQueue.main.async { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 self?.relayout(animated: false)
@@ -275,8 +296,8 @@ final class PanelCoordinator: NSObject {
         if let m = drawerGlobalMonitor { NSEvent.removeMonitor(m); drawerGlobalMonitor = nil }
         guard let panel = drawerPanel else { return }
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = DrawerAnimation.duration
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            ctx.duration = PopoverAnimation.closeDuration
+            ctx.timingFunction = PopoverAnimation.curve()
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
@@ -310,10 +331,22 @@ final class PanelCoordinator: NSObject {
 
     private func openFolderPopup(path: String, anchorVisibleRect: CGRect) {
         guard let mainPanel = dockPanel else { return }
-        if folderPopupWantsOpen { closeFolderPopup(immediately: true) }   // 换目标：瞬时切,不等淡出
+        // 可打断：面板可见时换文件夹**原地切换**——不 orderOut（根除黑一下的 blink），
+        // 只撤旧监视器（随后重装），内容瞬换、帧滑向新目标。仅淡出中/未开时才走关闭路径。
+        let isSwitching = folderPopupWantsOpen && (folderPopupPanel?.isVisible ?? false)
+        if folderPopupWantsOpen {
+            if isSwitching {
+                if let m = popupLocalMonitor  { NSEvent.removeMonitor(m); popupLocalMonitor  = nil }
+                if let m = popupGlobalMonitor { NSEvent.removeMonitor(m); popupGlobalMonitor = nil }
+            } else {
+                closeFolderPopup(immediately: true)
+            }
+        }
 
         let rootURL = URL(fileURLWithPath: path)
-        let rootTitle = FileManager.default.displayName(atPath: path)
+        // 先载入后亮相（散装感根因修复）：最多等 150ms 拿到完整内容,首帧即完整网格+最终尺寸,
+        // 面板作为一个整体入场,期间内容零变化。超时（网络卷等）传 nil,视图走异步回填。
+        let preloadedEntries = FolderContentsLoader.preload(url: rootURL, timeout: 0.15)
 
         if folderPopupPanel == nil {
             let panel = NonConstrainingPanel(
@@ -341,7 +374,7 @@ final class PanelCoordinator: NSObject {
 
         let hosting = NSHostingView(rootView: FolderGridPopupView(
             rootURL: rootURL,
-            rootTitle: rootTitle,
+            initialEntries: preloadedEntries,
             maxContentHeight: maxContentHeight,
             onFileOpened: { [weak self] in self?.closeFolderPopup() },
             onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) }
@@ -354,27 +387,45 @@ final class PanelCoordinator: NSObject {
         folderPopupWantsOpen = true
         setAutoHideInhibitor(.folderPopupOpen, active: true)
 
-        let initialFrame = PanelGeometry.folderPopupTargetFrame(
-            anchorVisibleRect: anchorVisibleRect, size: lastPopupSize, on: screenGeometry, metrics: Self.layoutMetrics)
-        lastPopupTargetFrame = initialFrame
-
         // 同抽屉：普通 NSView 容器 + hosting 钉入,防 NSHostingView 当 contentView 时顶边锚定向下撑（AGENTS 护栏）。
-        let container = NSView(frame: NSRect(origin: .zero, size: initialFrame.size))
+        let container = NSView(frame: NSRect(origin: .zero, size: lastPopupSize))
         hosting.frame = container.bounds
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
         panel.contentView = container
         folderPopupContentHost = hosting
 
-        panel.setFrame(initialFrame, display: false)
-        if !panel.isVisible { panel.alphaValue = 0 }
-        panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = DrawerAnimation.duration
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            panel.animator().alphaValue = 1
+        // 首帧就位（owner 2026-07-06「不丝滑」主因之一）：orderFront **前**同步量真实尺寸,
+        // 首帧即最终大小,不再「旧尺寸弹出→瞬间校正」。量不到合理值退回 lastPopupSize,
+        // 后面的 double-defer 复测仍在,作兜底校正。
+        panel.layoutIfNeeded()
+        let sync = hosting.fittingSize
+        if sync.width >= 160, sync.height >= 100 {
+            lastPopupSize = sync
         }
-        // 弹出后量真实 fittingSize 重新定位（瞬时,刚弹出不滑;双重 defer 等 SwiftUI 布局完成,同抽屉）。
+        let initialFrame = PanelGeometry.folderPopupTargetFrame(
+            anchorVisibleRect: anchorVisibleRect, size: lastPopupSize, on: screenGeometry, metrics: Self.layoutMetrics)
+        lastPopupTargetFrame = initialFrame
+
+        if isSwitching {
+            // 原地切换：alpha 保持 1,帧从当前位置滑向新目标,内容已瞬换。随时可再切（可打断）。
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = PopoverAnimation.openDuration
+                ctx.timingFunction = PopoverAnimation.curve()
+                panel.animator().setFrame(initialFrame, display: true)
+            }
+        } else {
+            panel.setFrame(initialFrame, display: false)
+            if !panel.isVisible { panel.alphaValue = 0 }
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = PopoverAnimation.openDuration
+                ctx.timingFunction = PopoverAnimation.curve()
+                panel.animator().alphaValue = 1
+            }
+        }
+        popupOpenedAt = Date()
+        // 弹出后复测 fittingSize（双重 defer 等 SwiftUI 布局完成）——同步量偏差时的兜底校正,瞬时。
         DispatchQueue.main.async { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 self?.repositionFolderPopup(animated: false)
@@ -390,12 +441,14 @@ final class PanelCoordinator: NSObject {
         }
     }
 
-    /// 内容尺寸变化（首测/下钻/实时刷新）→ 按锚点重算目标帧。宽度由弹窗固定列数撑住,只有高度变。
+    /// 内容尺寸变化（首测/下钻/实时刷新）→ 按锚点重算目标帧。宽高都由内容推导（列数确定宽）。
     private func repositionFolderPopup(animated: Bool) {
         guard folderPopupWantsOpen,
               let panel = folderPopupPanel,
               let hosting = folderPopupContentHost,
               let dock = dockPanel else { return }
+        // 入场窗口期内一律瞬时校正,不与入场缩放/淡入叠加出晃动（散装感修复）。
+        let animated = animated && Date().timeIntervalSince(popupOpenedAt) > 0.25
         let fitting = hosting.fittingSize
         let size = CGSize(width: max(fitting.width, 160), height: max(fitting.height, 120))
         lastPopupSize = size
@@ -420,8 +473,8 @@ final class PanelCoordinator: NSObject {
             return
         }
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = DrawerAnimation.duration
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            ctx.duration = PopoverAnimation.closeDuration
+            ctx.timingFunction = PopoverAnimation.curve()
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             Task { @MainActor [weak self] in

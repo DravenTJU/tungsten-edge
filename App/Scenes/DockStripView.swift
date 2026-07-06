@@ -497,9 +497,19 @@ struct ChipView: View {
     var forceHover: Bool = false
 
     @State private var isHovering = false
+    /// 点击确认脉冲：与状态无关的按压回弹。激活「已可见」窗口在亮/暗轴上零变化,
+    /// 没有它就"毫无反应"（owner 2026-07-06）。纯视图层信号,永不喂 planner/frontmost 轴（AGENTS）。
+    /// 声明式 .animation(value:) 驱动（LauncherChip 僵尸动画教训:禁 repeatForever+复位）。
+    @State private var isTapPressed = false
 
     /// Visual hover state: the real pointer hover OR forced (drag copy).
     private var showsHover: Bool { forceHover || isHovering }
+
+    /// 短促按压(0.93)后由 spring 回弹;90ms 后复位状态,动画由 value 变化声明式触发。
+    private func fireTapPulse() {
+        isTapPressed = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { isTapPressed = false }
+    }
 
     /// 乐观态优先（交互打磨 2026-06-13）：点击瞬间 chip 立刻按预测态渲染
     ///（minimize → 变暗），不等快照 round-trip，也不再转圈。
@@ -557,14 +567,17 @@ struct ChipView: View {
                     .padding(.bottom, 2)
             }
         }
+        .scaleEffect(isTapPressed ? 0.93 : 1.0)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture {
+            fireTapPulse()
             if let drawerTap { drawerTap() } else { runtime.toggle(windowID: item.actionWindowID) }
         }
         .nativeContextMenu { buildChipMenu() }
         .help(displayTitle)
         .animation(.easeInOut(duration: 0.18), value: isHovering)
+        .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
     }
 
     // MARK: - Labeled chip
@@ -619,14 +632,17 @@ struct ChipView: View {
             Spacer(minLength: 0)
         }
         .frame(height: 52 * scale)
+        .scaleEffect(isTapPressed ? 0.93 : 1.0)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture {
+            fireTapPulse()
             if let drawerTap { drawerTap() } else { runtime.toggle(windowID: item.actionWindowID) }
         }
         .nativeContextMenu { buildChipMenu() }
         .help(displayTitle)
         .animation(.easeInOut(duration: 0.18), value: isHovering)
+        .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
     }
 
     // MARK: - Shared Icon

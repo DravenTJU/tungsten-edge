@@ -45,4 +45,19 @@ enum FolderContentsLoader {
     static func newestFile(in entries: [Entry]) -> Entry? {
         sortedByDateAdded(entries).first { !$0.isDirectory }
     }
+
+    /// 弹窗「先载入后亮相」（散装感根因修复）：后台枚举 + 排序，最多等 `timeout`
+    /// （本地文件夹一般 <20ms）。超时或读取失败返回 nil（网络卷等罕见场景），
+    /// 调用方走原异步回填路径。超时后后台块继续跑完自然释放，结果不再被读取。
+    static func preload(url: URL, timeout: TimeInterval) -> [Entry]? {
+        final class Box { var entries: [Entry]? }
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = Box()
+        DispatchQueue.global(qos: .userInteractive).async {
+            box.entries = (try? load(directory: url)).map(sortedByDateAdded)
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + timeout) == .success else { return nil }
+        return box.entries
+    }
 }

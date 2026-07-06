@@ -114,9 +114,11 @@ struct DrawerView: View {
         .coordinateSpace(name: "drawer")
         // 入场：从贴胶囊的右下角轻微放大入场（配合面板 alpha 淡入）。scaleEffect 是渲染变换,不改布局/命中。
         .scaleEffect(isPresented ? 1 : 0.96, anchor: .bottomTrailing)
-        .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
+        // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20),否则底部在透明边处被硬切（同弹窗）。
+        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
         .padding(PanelCoordinator.shadowPadding)
-        .onAppear { withAnimation(.easeOut(duration: DrawerAnimation.duration)) { isPresented = true } }
+        // 入场用弹窗同款快出缓停参数（PopoverAnimation）;网格重排等内容动画仍用 DrawerAnimation.duration。
+        .onAppear { withAnimation(.easeOut(duration: PopoverAnimation.openDuration)) { isPresented = true } }
         .onPreferenceChange(DrawerChipFramePreferenceKey.self) { drawerFrames = $0 }
         .onPreferenceChange(DrawerContentHeightKey.self) { contentHeight = $0 }
         // 拖动中被拖图标的 app 从成员里消失（外部移除等）→ 取消拖动，免得空位卡死。

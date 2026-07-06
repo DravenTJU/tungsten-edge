@@ -108,6 +108,7 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 - Do not re-add predicted `isAppFrontmost`. The frontmost axis is always a fresh `NSRunningApplication(pid).isActive` read, injectable in `LifecycleActionPlanner.init` for tests.
 - The old `isAppFrontmost=true` could linger for 4s and turn a background-window click into minimize. Accepted micro-edge: a click within the few ms before activation lands may repeat activate; that is harmless.
 - Scope is show/hide only: toggle / activate / minimize / hide. Close / quit stay locked until confirmed.
+- The chip tap pulse (`ChipView.isTapPressed`, brief 0.93 press-and-spring) is a **view-local acknowledgment only** — it exists because activating an already-visible window changes nothing on the bright/dim axis. It must stay declarative (`.animation(value:)`, per the LauncherChip zombie-animation lesson) and must never feed the planner or any frontmost decision. A persistent "frontmost highlight" axis (Option 2, 2026-07-06) is deliberately NOT built; it brushes against the no-predicted-frontmost fence — needs an owner decision first.
 
 ## Drag, Drawer, And Ordering
 
@@ -175,7 +176,12 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 - One shared lazy popup panel serves both folders and trash — "only one popup at a time" falls out of the single-panel design. Lifecycle lives inside `PanelCoordinator` (needs private target frames / inhibitors); it clones the drawer recipe: plain `NSView` container + pinned `NSHostingView`, alpha fade, local+global `leftMouseDown` monitors.
 - `dismissFolderPopupIfOutside` must exclude the anchor chip rect (+4pt tolerance): the monitor fires on mouseDown, the chip's tap on mouseUp — without the exclusion, clicking the same chip closes-then-reopens forever.
 - The popup closes whenever the dock target frame changes (`layoutPanels`), on screen-parameter change, hover screen switch, fullscreen, or panel hide. Do not reposition it to chase an animating anchor.
-- Popup width is fixed by the grid's column count; only height varies. Keep it that way — variable width feeds a `fittingSize` width oscillation loop.
+- Popup layout mirrors native Stacks (owner 2026-07-06): **no header row**; "在访达中打开" is the grid's tail cell with the Finder icon; drill-in shows a floating back chip top-leading. Do not regress to a title/header design.
+- Popup width is **derived** — column count = clamp(cell count, 3, 6), width computed from it. It is never a measured value; measured-width feedback loops cause `fittingSize` oscillation.
+- First-frame sizing: both popup and drawer measure `hosting.fittingSize` synchronously (`panel.layoutIfNeeded()`) **before** `orderFrontRegardless`, so the panel appears at its final size. The double-defer re-measure stays as fallback correction only. Do not go back to "open at last size, then snap-correct" — that jump was the owner-reported jank.
+- Switching folders while the popup is open is an **in-place switch**: panel stays visible (alpha untouched), content swaps, frame animates from current to the new target, monitors reinstall. Never regress to orderOut-then-reopen — that blink was an owner complaint (可打断 2026-07-06).
+- The popup must **preload folder contents before orderFront** (`FolderContentsLoader.preload`, 150ms timeout fallback to async fill): first frame = complete grid at final size, panel enters as one solid unit with zero content changes during entrance ("整体一块" is the owner's acceptance bar). First population never uses per-cell insertion animation (`animatesGridChanges` gate), and repositions within the 250ms entrance window are instant, never animated. Do not regress to "show first, fill later".
+- Open/close + entrance animations use `PopoverAnimation` (fast ease-out, 0.18s open / 0.13s close). Taskbar width / panel-frame layout animation stays on `DrawerAnimation.duration` (0.22s), as do drawer-grid reorder animations. Never merge the two constant groups.
 - Edge auto-hide is inhibited while the popup is open via `EdgeAutoHideInhibitor.folderPopupOpen`.
 
 ## Menus
@@ -194,6 +200,7 @@ This repo is v2 of a macOS window-oriented bottom taskbar. The foundation-engine
 ### Shadow Padding
 
 - SwiftUI shadow margin is `shadowPadding = 20pt`.
+- Floating panels (popup, drawer) must keep shadow extent `radius + |y-offset| ≤ shadowPadding`, or the shadow hard-clips at the panel edge (owner-reported 裁切感; current values 12/5). The bottom strip may exceed it because its clip zone sits below the screen edge.
 - Coordinate math on `dockFrame` / `capsuleFrame` must subtract `shadowPadding` to reach visual content.
 - `fittingSize.width` must subtract `2 * shadowPadding`.
 
