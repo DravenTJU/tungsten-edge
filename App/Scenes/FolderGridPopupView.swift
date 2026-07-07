@@ -57,6 +57,10 @@ final class FolderPopupModel: ObservableObject {
     }
 }
 
+final class PopupState: ObservableObject {
+    @Published var isPresented: Bool = false
+}
+
 /// 固定文件夹弹窗网格——对齐原生 Stacks 网格（owner 2026-07-06）：
 /// **无表头**；「在访达中打开」是网格**尾格**（带访达图标）；下钻后左上角浮小返回箭头。
 /// 64pt 大图标、96pt 格宽、列数 = clamp(总格数, 3, 6)——宽度由条目数**推导**（确定值），
@@ -76,9 +80,9 @@ struct FolderGridPopupView: View {
     var isFolderPinned: ((URL) -> Bool)?
 
     @StateObject private var model: FolderPopupModel
+    @EnvironmentObject var popupState: PopupState
     /// 下钻栈：空 = 根目录；push 子文件夹 URL。
     @State private var drillStack: [URL] = []
-    @State private var isPresented = false
     /// 网格自然高度（量出来）。超过可用高度就内部滚动（同 DrawerView 的封顶策略）。
     @State private var gridHeight: CGFloat = 0
     /// 首次内容就位**之后**才开网格增删动画——首播（预载或超时回填）一律整块出现,不逐格插入。
@@ -146,13 +150,13 @@ struct FolderGridPopupView: View {
         }
         // 原生同款：下钻后左上角浮返回箭头（无表头,不占布局）。
         .overlay(alignment: .topLeading) { backChip }
-        .scaleEffect(isPresented ? 1 : 0.85, anchor: .bottom)
+        .scaleEffect(popupState.isPresented ? 1 : 0.85, anchor: .bottom)
+        .animation(.easeOut(duration: popupState.isPresented ? PopoverAnimation.openDuration : PopoverAnimation.closeDuration), value: popupState.isPresented)
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20),否则在面板透明边处被硬切（owner 反馈的裁切感）。
         .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
         .padding(PanelCoordinator.shadowPadding)
         .onAppear {
             model.display(url: rootURL)
-            withAnimation(.easeOut(duration: PopoverAnimation.openDuration)) { isPresented = true }
             if model.didFirstLoad { animatesGridChanges = true }   // 预载路径:首帧已完整,后续变化可动画
         }
         .onDisappear { model.stop() }
@@ -205,13 +209,14 @@ struct FolderGridPopupView: View {
             }
             LazyVGrid(columns: columns, spacing: Style.cellSpacing) {
                 ForEach(model.entries, id: \.url) { entry in
-                    FolderGridCell(icon: FolderGridCell.icon(forPath: entry.url.path),
+                    FolderGridCell(iconPath: entry.url.path,
+                                   staticIcon: nil,
                                    label: entry.name,
                                    dragURL: entry.url,
                                    contextMenu: { cellMenu(for: entry) }) { open(entry) }
                 }
                 // 原生同款尾格：在访达中打开当前目录。
-                FolderGridCell(icon: Self.finderIcon, label: "在访达中打开") {
+                FolderGridCell(iconPath: nil, staticIcon: Self.finderIcon, label: "在访达中打开") {
                     NSWorkspace.shared.open(currentURL)
                     onFileOpened()
                 }
@@ -276,13 +281,15 @@ enum FolderPopupStyle {
 /// `dragURL` 非 nil → 挂系统文件拖拽 `.onDrag`（真文件拖出到别的 app;系统拖影=原生效果,
 /// AGENTS「No System Drag Image」护栏限任务条/抽屉 chip 拖拽,文件拖出在豁免范围）。
 struct FolderGridCell: View {
-    let icon: NSImage
+    let iconPath: String?
+    let staticIcon: NSImage?
     let label: String
     var dragURL: URL? = nil
     var contextMenu: (() -> NSMenu)? = nil
     let onTap: () -> Void
 
     @State private var isHovering = false
+    @State private var resolvedIcon: NSImage?
 
     var body: some View {
         if let dragURL {
@@ -294,11 +301,21 @@ struct FolderGridCell: View {
 
     private var core: some View {
         VStack(spacing: 5) {
-            Image(nsImage: icon)
+            Image(nsImage: currentIcon)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 64, height: 64)
+                .opacity(resolvedIcon == nil && staticIcon == nil ? 0 : 1)
+                .task(id: iconPath) {
+                    guard let path = iconPath, resolvedIcon == nil else { return }
+                    let img = await Task.detached(priority: .userInitiated) {
+                        FolderGridCell.icon(forPath: path)
+                    }.value
+                    withAnimation(.easeIn(duration: 0.15)) {
+                        resolvedIcon = img
+                    }
+                }
             Text(label)
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.9))
@@ -321,6 +338,14 @@ struct FolderGridCell: View {
         .help(label)
         .animation(.easeInOut(duration: 0.12), value: isHovering)
     }
+
+    private var currentIcon: NSImage {
+        if let s = staticIcon { return s }
+        if let r = resolvedIcon { return r }
+        return Self.placeholderIcon
+    }
+
+    private static let placeholderIcon = NSImage(size: NSSize(width: 64, height: 64))
 
     /// 共享缓存对象必须 copy 再改 size（AppMenuFragments 惯例）。LazyVGrid 只实例化可见格,同步取图标够快。
     static func icon(forPath path: String, size: CGFloat = 64) -> NSImage {

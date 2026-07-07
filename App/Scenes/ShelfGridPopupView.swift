@@ -13,7 +13,7 @@ struct ShelfGridPopupView: View {
     var onPinFolder: ((URL) -> Void)?
     var isFolderPinned: ((URL) -> Bool)?
 
-    @State private var isPresented = false
+    @EnvironmentObject var popupState: PopupState
     @State private var gridHeight: CGFloat = 0
 
     private typealias Style = FolderPopupStyle
@@ -47,13 +47,11 @@ struct ShelfGridPopupView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
         }
-        .scaleEffect(isPresented ? 1 : 0.85, anchor: .bottom)
+        .scaleEffect(popupState.isPresented ? 1 : 0.85, anchor: .bottom)
+        .animation(.easeOut(duration: popupState.isPresented ? PopoverAnimation.openDuration : PopoverAnimation.closeDuration), value: popupState.isPresented)
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20)（AGENTS 护栏,同文件夹弹窗）。
         .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
         .padding(PanelCoordinator.shadowPadding)
-        .onAppear {
-            withAnimation(.easeOut(duration: PopoverAnimation.openDuration)) { isPresented = true }
-        }
         .onChange(of: gridHeight) { _ in onContentResize() }
         .onChange(of: columnCount) { _ in onContentResize() }
     }
@@ -70,7 +68,8 @@ struct ShelfGridPopupView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(Style.cellWidth), spacing: Style.cellSpacing), count: columnCount),
                       spacing: Style.cellSpacing) {
                 ForEach(entries, id: \.url) { entry in
-                    FolderGridCell(icon: FolderGridCell.icon(forPath: entry.url.path),
+                    FolderGridCell(iconPath: entry.url.path,
+                                   staticIcon: nil,
                                    label: entry.name,
                                    dragURL: entry.url,
                                    contextMenu: { cellMenu(for: entry) }) {

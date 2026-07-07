@@ -51,6 +51,7 @@ final class PanelCoordinator: NSObject {
     private let pinnedFolderStore: PinnedFolderStore
     private let folderCoverStore: PinnedFolderCoverStore
     private let shelfStore: ShelfStore
+    private let popupState = PopupState()
     /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
@@ -354,9 +355,11 @@ final class PanelCoordinator: NSObject {
     private func openFolderPopup(path: String, anchorVisibleRect: CGRect) {
         let rootURL = URL(fileURLWithPath: path)
         let sortOrder = pinnedFolderStore.sortOrder(for: path)
-        // 先载入后亮相（散装感根因修复）：最多等 150ms 拿到完整内容,首帧即完整网格+最终尺寸,
-        // 面板作为一个整体入场,期间内容零变化。超时（网络卷等）传 nil,视图走异步回填。
-        let preloadedEntries = FolderContentsLoader.preload(url: rootURL, timeout: 0.15, order: sortOrder)
+        // 混合兜底：先查热缓存（0ms，且校验了排序一致性），Miss 则回退到短时 preload（最多阻塞 150ms），确保首帧完整。
+        let preloadedEntries = folderCoverStore.cachedEntries(for: path, order: sortOrder) 
+            ?? FolderContentsLoader.preload(url: rootURL, timeout: 0.15, order: sortOrder)
+        
+        let popupState = self.popupState
         presentPopup(content: .folder(path: path), anchorVisibleRect: anchorVisibleRect) { [weak self] maxContentHeight in
             NSHostingView(rootView: FolderGridPopupView(
                 rootURL: rootURL,
@@ -367,12 +370,14 @@ final class PanelCoordinator: NSObject {
                 onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) },
                 onPinFolder: { [weak self] url in self?.pinnedFolderStore.add(url.path) },
                 isFolderPinned: { [weak self] url in self?.pinnedFolderStore.contains(url.path) ?? true }
-            ))
+            ).environmentObject(popupState))
         }
     }
 
     private func openShelfPopup(anchorVisibleRect: CGRect) {
         shelfStore.prune()   // 打开即剔除已失效的引用（文件被移走/删除）
+        
+        let popupState = self.popupState
         presentPopup(content: .shelf, anchorVisibleRect: anchorVisibleRect) { [weak self, shelfStore] maxContentHeight in
             NSHostingView(rootView: ShelfGridPopupView(
                 shelfStore: shelfStore,
@@ -381,7 +386,7 @@ final class PanelCoordinator: NSObject {
                 onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) },
                 onPinFolder: { [weak self] url in self?.pinnedFolderStore.add(url.path) },
                 isFolderPinned: { [weak self] url in self?.pinnedFolderStore.contains(url.path) ?? true }
-            ))
+            ).environmentObject(popupState))
         }
     }
 
@@ -456,19 +461,27 @@ final class PanelCoordinator: NSObject {
 
         if isSwitching {
             // 原地切换：alpha 保持 1,帧从当前位置滑向新目标,内容已瞬换。随时可再切（可打断）。
+            popupState.isPresented = true
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = PopoverAnimation.openDuration
                 ctx.timingFunction = PopoverAnimation.curve()
                 panel.animator().setFrame(initialFrame, display: true)
             }
         } else {
-            panel.setFrame(initialFrame, display: false)
+            popupState.isPresented = false
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0
+                panel.setFrame(initialFrame, display: false)
+            }
             if !panel.isVisible { panel.alphaValue = 0 }
             panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = PopoverAnimation.openDuration
                 ctx.timingFunction = PopoverAnimation.curve()
                 panel.animator().alphaValue = 1
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.popupState.isPresented = true
             }
         }
         popupOpenedAt = Date()
@@ -515,6 +528,9 @@ final class PanelCoordinator: NSObject {
         if let m = popupLocalMonitor  { NSEvent.removeMonitor(m); popupLocalMonitor  = nil }
         if let m = popupGlobalMonitor { NSEvent.removeMonitor(m); popupGlobalMonitor = nil }
         guard let panel = folderPopupPanel else { return }
+        
+        popupState.isPresented = false // 触发 SwiftUI 反向缩放
+        
         if immediately {
             panel.orderOut(nil)
             return

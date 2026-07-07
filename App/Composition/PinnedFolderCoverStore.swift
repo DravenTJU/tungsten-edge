@@ -15,6 +15,13 @@ final class PinnedFolderCoverStore: ObservableObject {
     /// path → 封面。兜底链：最新文件缩略图 → 最新文件图标 → 文件夹图标（空文件夹）。
     @Published private(set) var covers: [String: FolderCover] = [:]
 
+    private struct CacheEntry {
+        let order: FolderSortOrder
+        let entries: [FolderContentsLoader.Entry]
+    }
+    /// 后台主动预读并缓存的文件夹完整内容，专供弹窗零延迟提取。热缓存优先，不带 @Published 避免全局不必要重绘。
+    private var cache: [String: CacheEntry] = [:]
+
     private var watchers: [String: DirectoryWatcher] = [:]
     private var generations: [String: Int] = [:]
     /// coverFilePath|modDate → 缩略图；封面文件没变就不再生成。
@@ -27,6 +34,12 @@ final class PinnedFolderCoverStore: ObservableObject {
         self.sortOrderProvider = sortOrderProvider
     }
 
+    /// 提取命中且排序一致的热缓存。如果为 nil，调用方应执行同步的 preload 兜底。
+    func cachedEntries(for path: String, order: FolderSortOrder) -> [FolderContentsLoader.Entry]? {
+        guard let entry = cache[path], entry.order == order else { return nil }
+        return entry.entries
+    }
+
     /// 与 PinnedFolderStore.folderPaths 对账：多退少补 watcher，全量刷新一次封面。
     func sync(paths: [String]) {
         let wanted = Set(paths)
@@ -34,6 +47,7 @@ final class PinnedFolderCoverStore: ObservableObject {
             watchers[gone]?.stop()
             watchers[gone] = nil
             covers[gone] = nil
+            cache[gone] = nil
             generations[gone] = nil
         }
         for path in paths {
@@ -55,9 +69,11 @@ final class PinnedFolderCoverStore: ObservableObject {
 
         Task.detached(priority: .utility) { [weak self] in
             let entries = (try? FolderContentsLoader.load(directory: folderURL)) ?? []
-            let newest = FolderContentsLoader.coverFile(in: entries, order: order)
+            let sortedEntries = FolderContentsLoader.sorted(entries, by: order)
+            let newest = FolderContentsLoader.coverFile(in: sortedEntries, order: order)
             await MainActor.run { [weak self] in
                 guard let self, self.generations[path] == generation else { return }
+                self.cache[path] = CacheEntry(order: order, entries: sortedEntries)
                 self.publishCover(path: path, newest: newest, generation: generation)
             }
         }
