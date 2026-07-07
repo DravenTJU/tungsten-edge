@@ -57,8 +57,51 @@ final class FolderPopupModel: ObservableObject {
     }
 }
 
-final class PopupState: ObservableObject {
-    @Published var isPresented: Bool = false
+/// 弹窗格子图标的解析 + 缓存（照 `AppIconResolver` 的形状：命名空间 enum 持 NSCache，与视图解耦）。
+/// 协调器开窗前 `warm` 首批可见格，格子 init 同步查 `cached`，保证首帧"整体一块"（含图标）；
+/// 没预热到的（滚动到深处/下钻）由格子 `.task` 走 `resolve` 兜底,解析好瞬间显示、**不逐格淡入**。
+enum FolderIconResolver {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.countLimit = 512   // 有界,免长会话里每开一个文件夹都往里堆图标
+        return c
+    }()
+
+    static func cached(_ path: String) -> NSImage? {
+        cache.object(forKey: path as NSString)
+    }
+
+    /// 命中返回缓存,否则解析并写回（主线程同步够快：LazyVGrid 只实例化可见格）。
+    static func resolve(_ path: String, size: CGFloat = 64) -> NSImage {
+        if let hit = cache.object(forKey: path as NSString) { return hit }
+        let img = makeIcon(path, size: size)
+        cache.setObject(img, forKey: path as NSString)
+        return img
+    }
+
+    /// 开窗前预热：后台取首批可见格子的图标进缓存,最多阻塞 timeout（冷路径的取舍,换首帧图标全亮；
+    /// NSWorkspace 图标一般 <2ms/个,热路径全命中时 ≈ 0ms）。超时后后台块继续跑完自然写入缓存,
+    /// 首帧读不到的个别图标由格子 `.task` 兜底瞬间补上。
+    static func warm(paths: [String], timeout: TimeInterval) {
+        let pending = paths.filter { cache.object(forKey: $0 as NSString) == nil }
+        guard !pending.isEmpty else { return }
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInteractive).async {
+            for path in pending {
+                cache.setObject(makeIcon(path), forKey: path as NSString)
+            }
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + timeout)
+    }
+
+    /// 共享缓存对象必须 copy 再改 size（AppMenuFragments 惯例）。
+    private static func makeIcon(_ path: String, size: CGFloat = 64) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        guard let copy = icon.copy() as? NSImage else { return icon }
+        copy.size = NSSize(width: size, height: size)
+        return copy
+    }
 }
 
 /// 固定文件夹弹窗网格——对齐原生 Stacks 网格（owner 2026-07-06）：
@@ -80,7 +123,6 @@ struct FolderGridPopupView: View {
     var isFolderPinned: ((URL) -> Bool)?
 
     @StateObject private var model: FolderPopupModel
-    @EnvironmentObject var popupState: PopupState
     /// 下钻栈：空 = 根目录；push 子文件夹 URL。
     @State private var drillStack: [URL] = []
     /// 网格自然高度（量出来）。超过可用高度就内部滚动（同 DrawerView 的封顶策略）。
@@ -150,8 +192,8 @@ struct FolderGridPopupView: View {
         }
         // 原生同款：下钻后左上角浮返回箭头（无表头,不占布局）。
         .overlay(alignment: .topLeading) { backChip }
-        .scaleEffect(popupState.isPresented ? 1 : 0.85, anchor: .bottom)
-        .animation(.easeOut(duration: popupState.isPresented ? PopoverAnimation.openDuration : PopoverAnimation.closeDuration), value: popupState.isPresented)
+        // 面板整体的淡入淡出由协调器在 AppKit 层做（panel.alphaValue，含背景/阴影一起淡）,
+        // 内容层不再另加缩放/透明度——两层淡入叠加=曲线相乘,且缩放对大内容会呈现"从角落展开"。
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20),否则在面板透明边处被硬切（owner 反馈的裁切感）。
         .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
         .padding(PanelCoordinator.shadowPadding)
@@ -254,9 +296,7 @@ struct FolderGridPopupView: View {
         ))
     }
 
-    private static let finderIcon: NSImage = {
-        FolderGridCell.icon(forPath: "/System/Library/CoreServices/Finder.app")
-    }()
+    private static let finderIcon: NSImage = FolderIconResolver.resolve("/System/Library/CoreServices/Finder.app")
 }
 
 /// 弹窗网格的共享尺寸常量（文件夹弹窗 + 中转弹窗共用,别在两边各写一份漂移）。
@@ -291,6 +331,24 @@ struct FolderGridCell: View {
     @State private var isHovering = false
     @State private var resolvedIcon: NSImage?
 
+    init(iconPath: String?,
+         staticIcon: NSImage?,
+         label: String,
+         dragURL: URL? = nil,
+         contextMenu: (() -> NSMenu)? = nil,
+         onTap: @escaping () -> Void) {
+        self.iconPath = iconPath
+        self.staticIcon = staticIcon
+        self.label = label
+        self.dragURL = dragURL
+        self.contextMenu = contextMenu
+        self.onTap = onTap
+        // 首帧同步查缓存：协调器开窗前已预热（FolderIconResolver.warm）,命中则首帧图标就亮。
+        // 没有这一步,所有图标都走异步补——逐个从左上角往右下浮现,就是 owner 报的
+        // "弹窗从左上角开始出现"的真因（2026-07-07,48a2415 引入）。
+        _resolvedIcon = State(initialValue: iconPath.flatMap { FolderIconResolver.cached($0) })
+    }
+
     var body: some View {
         if let dragURL {
             core.onDrag { NSItemProvider(contentsOf: dragURL) ?? NSItemProvider() }
@@ -309,12 +367,11 @@ struct FolderGridCell: View {
                 .opacity(resolvedIcon == nil && staticIcon == nil ? 0 : 1)
                 .task(id: iconPath) {
                     guard let path = iconPath, resolvedIcon == nil else { return }
-                    let img = await Task.detached(priority: .userInitiated) {
-                        FolderGridCell.icon(forPath: path)
-                    }.value
-                    withAnimation(.easeIn(duration: 0.15)) {
-                        resolvedIcon = img
-                    }
+                    // 兜底路径（预热没赶上/滚动到深处/下钻的格子）：off-main 解析+写缓存,再从线程安全
+                    // 缓存读回（不跨 actor 传 NSImage,免 macOS 14 Sendable 警告）。解析好直接显示、
+                    // **不做逐格淡入**——带动画的逐格淡入会按完成顺序从左上角扫到右下,复现 owner 报的方向感。
+                    await Task.detached(priority: .userInitiated) { _ = FolderIconResolver.resolve(path) }.value
+                    resolvedIcon = FolderIconResolver.cached(path)
                 }
             Text(label)
                 .font(.system(size: 11))
@@ -346,14 +403,6 @@ struct FolderGridCell: View {
     }
 
     private static let placeholderIcon = NSImage(size: NSSize(width: 64, height: 64))
-
-    /// 共享缓存对象必须 copy 再改 size（AppMenuFragments 惯例）。LazyVGrid 只实例化可见格,同步取图标够快。
-    static func icon(forPath path: String, size: CGFloat = 64) -> NSImage {
-        let icon = NSWorkspace.shared.icon(forFile: path)
-        guard let copy = icon.copy() as? NSImage else { return icon }
-        copy.size = NSSize(width: size, height: size)
-        return copy
-    }
 }
 
 private struct FolderGridHeightKey: PreferenceKey {

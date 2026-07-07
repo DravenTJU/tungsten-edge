@@ -72,6 +72,19 @@ enum PanelGeometry {
         )
     }
 
+    /// 弹窗锚定+钳位的**单一真相**：给定"期望中心 X / 期望底边 Y / 尺寸"，算出贴屏钳位后的 origin。
+    /// folderPopupTargetFrame（首帧/重定位）和切换动画的每帧插值都走它，避免钳位规则在两处各写一份漂移。
+    static func folderPopupClampedOrigin(
+        desiredCenterX: CGFloat,
+        desiredBottomY: CGFloat,
+        size: CGSize,
+        on screen: PanelScreenGeometry
+    ) -> CGPoint {
+        let bottom = max(desiredBottomY, screen.frame.minY)
+        let x = min(max(desiredCenterX - size.width / 2, screen.frame.minX), screen.frame.maxX - size.width)
+        return CGPoint(x: x, y: bottom)
+    }
+
     /// 固定文件夹弹窗：锚点（chip 可视矩形，屏幕坐标）上方 8pt，水平居中钳进屏，
     /// 只向上生长、topUsableY 封顶——同 drawer 的底锚策略。`size` 为含阴影的整面板尺寸。
     static func folderPopupTargetFrame(
@@ -80,11 +93,11 @@ enum PanelGeometry {
         on screen: PanelScreenGeometry,
         metrics: PanelLayoutMetrics = .tungstenEdge
     ) -> CGRect {
-        let bottom = max(anchorVisibleRect.maxY + 8, screen.frame.minY)
-        let height = min(size.height, max(metrics.minimumDrawerExtent, screen.topUsableY - bottom))
-        let rawX = anchorVisibleRect.midX - size.width / 2
-        let clampedX = min(max(rawX, screen.frame.minX), screen.frame.maxX - size.width)
-        return CGRect(x: clampedX, y: bottom, width: size.width, height: height)
+        let origin = folderPopupClampedOrigin(
+            desiredCenterX: anchorVisibleRect.midX, desiredBottomY: anchorVisibleRect.maxY + 8,
+            size: size, on: screen)
+        let height = min(size.height, max(metrics.minimumDrawerExtent, screen.topUsableY - origin.y))
+        return CGRect(x: origin.x, y: origin.y, width: size.width, height: height)
     }
 
     static func maxFolderPopupContentHeight(

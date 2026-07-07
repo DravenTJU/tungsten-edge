@@ -22,6 +22,52 @@ enum PopoverAnimation {
     }
 }
 
+/// CAMediaTimingFunction 的数值求解版：CALayer 隐式动画只能按"单一属性"整体插值，
+/// 而弹窗切换要按 centerX/bottomY/width/height 四个语义量分别插值再拼回 frame，
+/// 只能自己按时间步进算 progress。直接吃调用方已有的 CAMediaTimingFunction，不重复定义
+/// 控制点（两个调用点用的曲线不同：PopoverAnimation.curve() 与 .easeInEaseOut）。
+/// WebKit UnitBezier 同款：牛顿迭代求解 x(t)=elapsed，再取 y(t) 作为缓动进度，迭代不收敛时二分兜底。
+private struct UnitBezierEase {
+    private let ax, bx, cx: Double
+    private let ay, by, cy: Double
+
+    init(_ timingFunction: CAMediaTimingFunction) {
+        var p1 = [Float](repeating: 0, count: 2)
+        var p2 = [Float](repeating: 0, count: 2)
+        timingFunction.getControlPoint(at: 1, values: &p1)
+        timingFunction.getControlPoint(at: 2, values: &p2)
+        let (p1x, p1y, p2x, p2y) = (Double(p1[0]), Double(p1[1]), Double(p2[0]), Double(p2[1]))
+        cx = 3 * p1x; bx = 3 * (p2x - p1x) - cx; ax = 1 - cx - bx
+        cy = 3 * p1y; by = 3 * (p2y - p1y) - cy; ay = 1 - cy - by
+    }
+
+    private func sampleX(_ t: Double) -> Double { ((ax * t + bx) * t + cx) * t }
+    private func sampleY(_ t: Double) -> Double { ((ay * t + by) * t + cy) * t }
+    private func sampleDX(_ t: Double) -> Double { (3 * ax * t + 2 * bx) * t + cx }
+
+    private func solveX(_ x: Double) -> Double {
+        var t = x
+        for _ in 0..<8 {
+            let dx = sampleX(t) - x
+            if abs(dx) < 1e-6 { return t }
+            let d = sampleDX(t)
+            if abs(d) < 1e-6 { break }
+            t -= dx / d
+        }
+        var lo = 0.0, hi = 1.0
+        t = x
+        while lo < hi {
+            let cur = sampleX(t)
+            if abs(cur - x) < 1e-6 { return t }
+            if x > cur { lo = t } else { hi = t }
+            t = (hi - lo) / 2 + lo
+        }
+        return t
+    }
+
+    func progress(at t: Double) -> Double { sampleY(solveX(t)) }
+}
+
 /// 关闭 AppKit 的窗口自动约束。系统默认会把靠近/跨越屏幕边缘的窗口挪回"当前屏"可用区内（避开菜单栏）。
 /// 多屏**共享边**场景下这会致命：把任务条放到上方屏底部时，窗口原点 y 落在下方屏那一侧，系统就拿下方屏
 /// 来约束，把整窗按到下方屏菜单栏正下方 → 任务条/胶囊跑到错误的屏（2026-06-23 三屏 bug 根因；实测 y=970
@@ -51,7 +97,6 @@ final class PanelCoordinator: NSObject {
     private let pinnedFolderStore: PinnedFolderStore
     private let folderCoverStore: PinnedFolderCoverStore
     private let shelfStore: ShelfStore
-    private let popupState = PopupState()
     /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
@@ -89,8 +134,19 @@ final class PanelCoordinator: NSObject {
     /// 弹窗**逻辑**开关态（淡出动画期间面板还可见但逻辑上已关,同 drawerWantsOpen）。
     private var folderPopupWantsOpen = false
     private var lastPopupSize = CGSize(width: 424, height: 240)
-    /// 开窗时刻：入场窗口期（250ms）内的重定位一律瞬时,不与入场缩放叠加出晃动。
+    /// 开窗时刻：入场窗口期（250ms）内的重定位一律瞬时,不与入场淡入叠加出晃动。
     private var popupOpenedAt: Date = .distantPast
+    /// 弹窗切换/重定位的手搓逐帧插值 timer（按 centerX/bottomY/width/height 插值,取代
+    /// NSWindow.animator().setFrame 的原始 x/y/宽/高线性插值——后者没有锚点概念,两个文件夹
+    /// frame 相对位置一变,生长方向就随机偏向某个角落,而不是稳定的"贴底、水平居中"）。
+    private var folderPopupFrameTimer: Timer?
+    /// 每次开一个新 tween 就 +1。tick 回调里核对这个 token 再改 frame——
+    /// Timer.invalidate() 挡不住"已经 fire、Task 还排在主 actor 队列里没跑到"的那一次回调,
+    /// 光 invalidate 不够,得靠 token 让过期的排队任务自己变成 no-op。
+    private var folderPopupTweenToken: Int = 0
+    /// 当前在飞 tween 的目标帧（nil = 没在飞）。双重 defer 的兜底校正常带着**同一个**目标再进来,
+    /// 若无脑重启就会打断刚起步的动画、重置时钟(速度突变+总时长变长);目标相同直接放行让它走完。
+    private var folderPopupTweenTarget: NSRect?
     private var pinnedFolderStoreSubscription: AnyCancellable?
     private var pinnedFolderSortSubscription: AnyCancellable?
     private var snapshotWidthSubscription: AnyCancellable?
@@ -189,6 +245,7 @@ final class PanelCoordinator: NSObject {
         }
         springOpenTimer?.invalidate()
         springCloseTimer?.invalidate()
+        folderPopupFrameTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         NotificationCenter.default.removeObserver(self)
     }
@@ -356,10 +413,14 @@ final class PanelCoordinator: NSObject {
         let rootURL = URL(fileURLWithPath: path)
         let sortOrder = pinnedFolderStore.sortOrder(for: path)
         // 混合兜底：先查热缓存（0ms，且校验了排序一致性），Miss 则回退到短时 preload（最多阻塞 150ms），确保首帧完整。
-        let preloadedEntries = folderCoverStore.cachedEntries(for: path, order: sortOrder) 
+        let preloadedEntries = folderCoverStore.cachedEntries(for: path, order: sortOrder)
             ?? FolderContentsLoader.preload(url: rootURL, timeout: 0.15, order: sortOrder)
-        
-        let popupState = self.popupState
+        // 首帧完整**包含图标**：预热首批可见格（8 列 × 网格高上限 ≈ 40 格,取 48 宽裕值）的图标缓存,
+        // 否则格子先出、图标按解析顺序从左上角逐个浮现（owner 2026-07-07 报的"从左上角出现"真因）。
+        if let entries = preloadedEntries {
+            FolderIconResolver.warm(paths: entries.prefix(48).map(\.url.path), timeout: 0.1)
+        }
+
         presentPopup(content: .folder(path: path), anchorVisibleRect: anchorVisibleRect) { [weak self] maxContentHeight in
             NSHostingView(rootView: FolderGridPopupView(
                 rootURL: rootURL,
@@ -370,14 +431,15 @@ final class PanelCoordinator: NSObject {
                 onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) },
                 onPinFolder: { [weak self] url in self?.pinnedFolderStore.add(url.path) },
                 isFolderPinned: { [weak self] url in self?.pinnedFolderStore.contains(url.path) ?? true }
-            ).environmentObject(popupState))
+            ))
         }
     }
 
     private func openShelfPopup(anchorVisibleRect: CGRect) {
         shelfStore.prune()   // 打开即剔除已失效的引用（文件被移走/删除）
-        
-        let popupState = self.popupState
+        // 同 openFolderPopup：首帧图标全亮,不逐个浮现。
+        FolderIconResolver.warm(paths: Array(shelfStore.itemPaths.prefix(48)), timeout: 0.1)
+
         presentPopup(content: .shelf, anchorVisibleRect: anchorVisibleRect) { [weak self, shelfStore] maxContentHeight in
             NSHostingView(rootView: ShelfGridPopupView(
                 shelfStore: shelfStore,
@@ -386,7 +448,7 @@ final class PanelCoordinator: NSObject {
                 onContentResize: { [weak self] in self?.repositionFolderPopup(animated: true) },
                 onPinFolder: { [weak self] url in self?.pinnedFolderStore.add(url.path) },
                 isFolderPinned: { [weak self] url in self?.pinnedFolderStore.contains(url.path) ?? true }
-            ).environmentObject(popupState))
+            ))
         }
     }
 
@@ -461,14 +523,12 @@ final class PanelCoordinator: NSObject {
 
         if isSwitching {
             // 原地切换：alpha 保持 1,帧从当前位置滑向新目标,内容已瞬换。随时可再切（可打断）。
-            popupState.isPresented = true
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = PopoverAnimation.openDuration
-                ctx.timingFunction = PopoverAnimation.curve()
-                panel.animator().setFrame(initialFrame, display: true)
-            }
+            animateFolderPopupFrame(
+                panel: panel, to: initialFrame,
+                duration: PopoverAnimation.openDuration, timingFunction: PopoverAnimation.curve())
         } else {
-            popupState.isPresented = false
+            // 首帧就位后整体淡入：panel.alphaValue 0→1 把背景/网格/阴影当一块淡进来
+            // （内容层不再另做缩放/透明度,见 FolderGridPopupView）。
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0
                 panel.setFrame(initialFrame, display: false)
@@ -479,9 +539,6 @@ final class PanelCoordinator: NSObject {
                 ctx.duration = PopoverAnimation.openDuration
                 ctx.timingFunction = PopoverAnimation.curve()
                 panel.animator().alphaValue = 1
-            }
-            DispatchQueue.main.async { [weak self] in
-                self?.popupState.isPresented = true
             }
         }
         popupOpenedAt = Date()
@@ -507,7 +564,7 @@ final class PanelCoordinator: NSObject {
               let panel = folderPopupPanel,
               let hosting = folderPopupContentHost,
               let dock = dockPanel else { return }
-        // 入场窗口期内一律瞬时校正,不与入场缩放/淡入叠加出晃动（散装感修复）。
+        // 入场窗口期内一律瞬时校正,不与入场淡入叠加出晃动（散装感修复）。
         let animated = animated && Date().timeIntervalSince(popupOpenedAt) > 0.25
         let fitting = hosting.fittingSize
         let size = CGSize(width: max(fitting.width, 160), height: max(fitting.height, 120))
@@ -516,7 +573,94 @@ final class PanelCoordinator: NSObject {
         let target = PanelGeometry.folderPopupTargetFrame(
             anchorVisibleRect: popupAnchorVisibleRect, size: size, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
         lastPopupTargetFrame = target
-        setFrames([(panel, target)], animated: animated)
+
+        if folderPopupFrameTimer != nil {
+            // 正有一个手搓 tween 在飞（多半是刚触发的切换动画）——双重 defer 的兜底校正不能瞬时打断它,
+            // 只把它的终点纠正到最新测量值,继续飞（不然切换动画刚起步就被这里焊死到终点）。
+            animateFolderPopupFrame(
+                panel: panel, to: target,
+                duration: PopoverAnimation.openDuration, timingFunction: PopoverAnimation.curve())
+        } else if animated {
+            animateFolderPopupFrame(
+                panel: panel, to: target,
+                duration: Self.layoutAnimationDuration, timingFunction: CAMediaTimingFunction(name: .easeInEaseOut))
+        } else {
+            panel.setFrame(target, display: true)
+        }
+    }
+
+    /// 弹窗切换/重定位 tween 的统一取消入口：invalidate 挡不住"已经 fire、Task 还没跑到"的那一次
+    /// 回调,靠 token 递增让过期的排队任务在 tick 里自己变成 no-op。
+    private func cancelFolderPopupFrameTween() {
+        folderPopupFrameTimer?.invalidate()
+        folderPopupFrameTimer = nil
+        folderPopupTweenTarget = nil
+        folderPopupTweenToken &+= 1
+    }
+
+    /// 弹窗切换/重定位 tween 的每帧 frame 计算：不直接插值两个已经各自算好、各自钳位过的端点位置
+    /// （那样会把"要不要钳位"这件事当成两点间的直线搬移，忽略了钳位只在宽度够大时才触发的
+    /// 非线性——宽内容贴边、窄内容不贴边，直线插值会在中途出现方向不自然的滑动）。
+    /// 改成插值"期望中心点"（未钳位的锚点中心）+ 宽高，每帧重新走一遍居中+钳位公式，
+    /// 与 `PanelGeometry.folderPopupTargetFrame` 同一套规则，保证任何中间尺寸都表现得
+    /// 像"用这个尺寸真的锚定在这个 chip 上"。
+    /// 首帧起点用 `start.midX`/`start.minY` 而不是"旧锚点"——start 本身永远是当前合法、
+    /// 已经在屏幕内的 frame，用它自己的中心反推永远精确等于 start，天然保证 p=0 时不瞬移；
+    /// 终点用 `popupAnchorVisibleRect`（当前/新锚点的原始位置）配合插值到 target 的宽度，
+    /// 同样保证 p=1 精确落回 target（AGENTS「只向上生长」的设计意图）。
+    private func animateFolderPopupFrame(
+        panel: NSPanel, to target: NSRect, duration: TimeInterval, timingFunction: CAMediaTimingFunction
+    ) {
+        // 已经在飞向同一目标 → 别重启,让它按原时钟走完（双重 defer 兜底校正的常见情形,
+        // 重启会打断刚起步的动画、重置进度时钟,凭空制造速度突变+更长时长）。
+        if folderPopupFrameTimer != nil, folderPopupTweenTarget == target { return }
+        cancelFolderPopupFrameTween()
+        let token = folderPopupTweenToken
+
+        let start = panel.frame
+        guard start != target, duration > 0, let dock = dockPanel else {
+            panel.setFrame(target, display: true)
+            return
+        }
+        let screen = Self.screenGeometry(panelCurrentScreen(panel: dock))
+
+        let ease = UnitBezierEase(timingFunction)
+        let (w0, w1) = (start.width, target.width)
+        let (h0, h1) = (start.height, target.height)
+        let startCenterX = start.midX
+        let endCenterX = popupAnchorVisibleRect.midX
+        let startBottomY = start.minY
+        let endBottomY = popupAnchorVisibleRect.maxY + 8
+        let clockStart = CACurrentMediaTime()
+
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] t in
+            Task { @MainActor [weak self] in
+                guard let self, self.folderPopupTweenToken == token, let panel = self.folderPopupPanel else {
+                    t.invalidate()
+                    return
+                }
+                let raw = min(max((CACurrentMediaTime() - clockStart) / duration, 0), 1)
+                if raw >= 1 {
+                    panel.setFrame(target, display: true)   // 落到精确目标值,不依赖浮点误差刚好踩中 1.0
+                    self.folderPopupFrameTimer = nil
+                    self.folderPopupTweenTarget = nil
+                    t.invalidate()
+                } else {
+                    let p = ease.progress(at: raw)
+                    let width = w0 + (w1 - w0) * p
+                    let height = h0 + (h1 - h0) * p
+                    // 每帧用当前尺寸重走 PanelGeometry 的居中+钳位公式（与首帧/重定位同一真相）。
+                    let origin = PanelGeometry.folderPopupClampedOrigin(
+                        desiredCenterX: startCenterX + (endCenterX - startCenterX) * p,
+                        desiredBottomY: startBottomY + (endBottomY - startBottomY) * p,
+                        size: CGSize(width: width, height: height), on: screen)
+                    panel.setFrame(NSRect(origin: origin, size: CGSize(width: width, height: height)), display: true)
+                }
+            }
+        }
+        folderPopupFrameTimer = timer
+        folderPopupTweenTarget = target
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     /// 可打断淡出关闭（同 closeDrawer）。immediately=true 用于换目标瞬切。
@@ -527,10 +671,9 @@ final class PanelCoordinator: NSObject {
         setAutoHideInhibitor(.folderPopupOpen, active: false)
         if let m = popupLocalMonitor  { NSEvent.removeMonitor(m); popupLocalMonitor  = nil }
         if let m = popupGlobalMonitor { NSEvent.removeMonitor(m); popupGlobalMonitor = nil }
+        cancelFolderPopupFrameTween()   // 关闭时任何在飞的 tween 都要停,免得 orderOut 之后还偷偷挪 frame
         guard let panel = folderPopupPanel else { return }
-        
-        popupState.isPresented = false // 触发 SwiftUI 反向缩放
-        
+
         if immediately {
             panel.orderOut(nil)
             return
