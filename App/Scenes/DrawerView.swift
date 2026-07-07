@@ -144,7 +144,9 @@ struct DrawerView: View {
         return VStack(alignment: .leading, spacing: 0) {
             if hasRunningZone {
                 LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(runningIDs, id: \.self) { id in drawerChip(id, zone: runningIDs, running: true) }
+                    ForEach(Array(runningIDs.enumerated()), id: \.element) { index, id in 
+                        drawerChip(id, index: index, zone: runningIDs, running: true) 
+                    }
                 }
                 .animation(.easeInOut(duration: DrawerAnimation.duration), value: runningIDs)
             }
@@ -153,7 +155,9 @@ struct DrawerView: View {
                     Spacer().frame(height: 12)
                 }
                 LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(launchIDs, id: \.self) { id in drawerChip(id, zone: launchIDs, running: false) }
+                    ForEach(Array(launchIDs.enumerated()), id: \.element) { index, id in 
+                        drawerChip(id, index: index, zone: launchIDs, running: false) 
+                    }
                 }
                 .animation(.easeInOut(duration: DrawerAnimation.duration), value: launchIDs)
             }
@@ -175,8 +179,9 @@ struct DrawerView: View {
     /// `isRunning` 就翻 true 会让 `LauncherChip` 的 `onChange(of:isRunning)` 提前 `stopBounce`,弹跳被掐断
     /// （owner 2026-06-21 报告"启动弹跳没了"的真因）。窗口出现门控期内它仍在启动区,该一直弹到真窗口出现。
     @ViewBuilder
-    private func drawerChip(_ id: String, zone: [String], running: Bool) -> some View {
+    private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let stashed = drawerStore.contains(id)
+        let delay = Double(min(index, 6)) * 0.018
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
@@ -185,6 +190,9 @@ struct DrawerView: View {
                      onRemove: { if stashed { drawerStore.remove(id) } },
                      onLaunch: { runtime.beginLaunch(id) },
                      onPrimaryAction: onPrimaryAction)
+            .offset(y: isPresented ? 0 : 20)
+            .opacity(isPresented ? 1 : 0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(delay), value: isPresented)
             .opacity(isDragging(id) ? 0 : 1)
             // `"drawer"` 空间里的 frame，背景 GeometryReader（不夺点击），喂抓取偏移 + 同区落点。
             .background(
