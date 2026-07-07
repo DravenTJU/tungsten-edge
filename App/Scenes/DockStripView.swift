@@ -86,6 +86,9 @@ struct DockStripView: View {
     /// 全局鼠标位置映回 "strip" 空间命中卡片，并判进/出任务条区（迟滞）。与 "strip" 命名空间挂同一视图。
     @State private var stripRootScreenRect: CGRect = .zero
 
+    /// 记录已经播放过入场动画的固定区元素 ID（避免重复播，且支持新增元素播动画）。
+    @State private var animatedEntryIDs: Set<String> = []
+
     private var allNonDrawerItems: [StripItem] {
         StripItem.items(from: runtime.snapshot)
             .filter { !drawerStore.contains($0.bundleIdentifier ?? "") }
@@ -253,6 +256,10 @@ struct DockStripView: View {
         .onPreferenceChange(ChipFramePreferenceKey.self) { chipFrames = $0 }
         .onPreferenceChange(FolderChipFramePreferenceKey.self) { folderChipFrames = $0 }
         .onPreferenceChange(ShelfFramePreferenceKey.self) { shelfFrame = $0 }
+        .onChange(of: pinnedFolderStore.folderPaths) { currentPaths in
+            let validIDs = Set(["shelf"] + currentPaths.map { "folder-\($0)" })
+            animatedEntryIDs.formIntersection(validIDs)
+        }
         // No .frame(maxWidth: .infinity) here — lets NSHostingView.fittingSize reflect
         // the natural content width so AppDelegate can read it for panel sizing.
     }
@@ -549,6 +556,8 @@ struct DockStripView: View {
                 .frame(width: 1, height: 20)
                 .padding(.horizontal, 2)
         case let .pinnedFolder(path):
+            let index = 1 + (pinnedFolderStore.folderPaths.firstIndex(of: path) ?? 0)
+            let delay = Double(min(index, 6)) * 0.018
             PinnedFolderChip(
                 path: path,
                 cover: folderCoverStore.covers[path],
@@ -558,6 +567,7 @@ struct DockStripView: View {
                 onRemove: { pinnedFolderStore.remove(path) },
                 onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) }
             )
+            .stripEntrance(id: entry.id, delay: delay, animatedEntryIDs: $animatedEntryIDs)
         case .shelf:
             ShelfChip(
                 itemCount: shelfStore.itemPaths.count,
@@ -567,6 +577,7 @@ struct DockStripView: View {
                 onClear: { shelfStore.clear() },
                 onAddFolder: onAddFolder
             )
+            .stripEntrance(id: entry.id, delay: 0, animatedEntryIDs: $animatedEntryIDs)
         case let .messagingApp(bid, main):
             // Explicit ZStack: the badge is the LAST child + zIndex, guaranteed to
             // draw on top of the icon (classic Dock badge sits over the icon corner).
@@ -1274,5 +1285,40 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+// MARK: - Strip Entrance Modifier
+
+struct StripEntranceModifier: ViewModifier {
+    let id: String
+    let delay: Double
+    @Binding var animatedEntryIDs: Set<String>
+
+    @State private var isAppeared = false
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: isAppeared ? 0 : 8)
+            .opacity(isAppeared ? 1 : 0)
+            .onAppear {
+                if animatedEntryIDs.contains(id) {
+                    isAppeared = true
+                } else {
+                    // 错开首帧布局，避免坐标原点飞入
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8).delay(delay)) {
+                            isAppeared = true
+                        }
+                        animatedEntryIDs.insert(id)
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    func stripEntrance(id: String, delay: Double, animatedEntryIDs: Binding<Set<String>>) -> some View {
+        self.modifier(StripEntranceModifier(id: id, delay: delay, animatedEntryIDs: animatedEntryIDs))
     }
 }
