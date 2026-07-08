@@ -571,7 +571,6 @@ struct DockStripView: View {
         case .shelf:
             ShelfChip(
                 itemCount: shelfStore.itemPaths.count,
-                previewImage: shelfStore.itemPaths.first.map { PinnedFolderCoverStore.icon(forPath: $0) },
                 isDropTargeted: externalDropTarget == .stash,
                 onTap: { shelfChipTapped() },
                 onClear: { shelfStore.clear() },
@@ -1113,9 +1112,11 @@ struct StripFileDropDelegate: DropDelegate {
             }
         }
         group.notify(queue: .main) {
+            onTargetChange(nil)
             let urls = box.urls.compactMap { $0 }
             guard !urls.isEmpty else { return }
             onCommit(target, urls)
+            onTargetChange(nil)
         }
         return true
     }

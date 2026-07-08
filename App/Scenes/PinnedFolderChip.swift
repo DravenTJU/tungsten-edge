@@ -46,8 +46,7 @@ struct PinnedFolderChip: View {
     }
 
     /// 堆叠观感：两片「纸」垫底（依次上移、略小），封面盖最前。封面是缩略图时方形裁切 + 细白边；
-    /// 是文件夹图标时不裁不描边（图标本身有形状）。背景片本身抽成 `StackedChipBackdrop`——
-    /// 中转格（ShelfChip）复用同一个背景,保证固定区 chip 家族视觉统一（owner 2026-07-06 反馈）。
+    /// 是文件夹图标时不裁不描边（图标本身有形状）。背景片本身抽成 `StackedChipBackdrop`。
     private func stackedCover(size: CGFloat) -> some View {
         StackedChipBackdrop(size: size) { coverImage(size: size) }
     }
@@ -100,9 +99,8 @@ struct PinnedFolderChip: View {
     }
 }
 
-/// 固定区 chip 家族共用的"堆叠纸片"背景——文件夹 chip 与中转格 chip（ShelfChip）都用它,
-/// 保证视觉统一（owner 2026-07-06 反馈：中转格风格要和固定文件夹 chip 一致）。两片纸依次
-/// 上移、略小,前景内容由调用方叠加（自带阴影，同旧版 stackedCover 数值）。
+/// 固定区 chip 家族（目前为文件夹 chip）的"堆叠纸片"背景。
+/// 两片纸依次上移、略小,前景内容由调用方叠加（自带阴影，同旧版 stackedCover 数值）。
 struct StackedChipBackdrop<Content: View>: View {
     let size: CGFloat
     @ViewBuilder let content: () -> Content
