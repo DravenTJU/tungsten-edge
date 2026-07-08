@@ -82,6 +82,16 @@ struct DockStripView: View {
     /// 外部文件拖入的实时落点目标（悬停高亮用;nil = 没有外部拖拽悬停）。
     @State private var externalDropTarget: StripDropRouting.Target?
 
+    /// 外部拖入高亮的「拖放结束看门狗」+「点亮门控」。SwiftUI 文件 drop 有两种收尾异常:
+    /// ①拖放在最后一次 dropUpdated 后不给任何 performDrop/dropExited 收尾回调 → 高亮遗留在 .pin;
+    /// ②成功 drop 后 ~330ms 会补发一次孤立的 dropUpdated 把高亮重新点亮。
+    /// 门控:高亮只能由 dropEntered 点亮（hoverActive），落定/离开后孤立的 dropUpdated 一律忽略（治②回闪）。
+    /// 看门狗:可取消的 .common Timer,拖放悬停停更超时即清遗留高亮（治①永久白边）;generation 防旧 timer 误清。
+    /// 逻辑见 externalDropHoverBegan/Moved/Ended + setExternalDropTarget。
+    @State private var externalDropWatchdog: Timer?
+    @State private var externalDropGeneration = 0
+    @State private var externalDropHoverActive = false
+
     /// 任务条内容区（"strip" 空间）在屏幕坐标系的 frame（bottom-left）。抽屉拖回任务条·精确落点用它把
     /// 全局鼠标位置映回 "strip" 空间命中卡片，并判进/出任务条区（迟滞）。与 "strip" 命名空间挂同一视图。
     @State private var stripRootScreenRect: CGRect = .zero
@@ -232,7 +242,9 @@ struct DockStripView: View {
             shelfFrame: shelfFrame,
             folderFrames: folderChipFrames,
             orderedPaths: pinnedFolderStore.folderPaths,
-            onTargetChange: { externalDropTarget = $0 },
+            onHoverBegan: { externalDropHoverBegan($0) },
+            onHoverMoved: { externalDropHoverMoved($0) },
+            onHoverEnded: { externalDropHoverEnded() },
             onCommit: { target, urls in handleExternalDrop(target, urls: urls) }
         ))
         // 与 "strip" 命名空间同一视图 → 屏幕 frame 即 "strip" 空间原点，供抽屉拖回任务条做坐标映射 + 进出判定。
@@ -308,6 +320,46 @@ struct DockStripView: View {
         if dragController.isOverUnstashZone { return true }
         if case .pin = externalDropTarget { return true }
         return false
+    }
+
+    /// 外部拖入高亮的三个生命周期入口 + 看门狗。`externalDropTarget` 只在这一组里改。
+    /// dropEntered：一次悬停会话开始 → 允许点亮。
+    private func externalDropHoverBegan(_ target: StripDropRouting.Target) {
+        externalDropHoverActive = true
+        setExternalDropTarget(target)
+    }
+
+    /// dropUpdated：只在会话进行中才更新;落定/离开后系统补发的孤立 dropUpdated（hoverActive=false）忽略 → 无回闪。
+    private func externalDropHoverMoved(_ target: StripDropRouting.Target) {
+        guard externalDropHoverActive else { return }
+        setExternalDropTarget(target)
+    }
+
+    /// performDrop/dropExited：会话结束 → 立即清高亮、作废看门狗、关门控（同步清,落定即灭,不留尾巴）。
+    private func externalDropHoverEnded() {
+        externalDropHoverActive = false
+        externalDropGeneration &+= 1
+        externalDropWatchdog?.invalidate()
+        externalDropWatchdog = nil
+        externalDropTarget = nil
+    }
+
+    /// 设落点目标 + 重置拖放结束看门狗。`dropUpdated` 悬停期每 ~50ms 来一次会不断把 0.35s Timer 推后
+    /// → 移动/静止悬停都不会误清;一旦拖放结束却没给收尾回调（dropUpdated 停），Timer 到点即清遗留高亮。
+    /// generation 仍匹配才清,避免已入队的旧 Timer 误清新拖放。只动 `externalDropTarget`,不碰抽屉 unstash 高亮。
+    private func setExternalDropTarget(_ target: StripDropRouting.Target) {
+        externalDropTarget = target
+        externalDropGeneration &+= 1
+        externalDropWatchdog?.invalidate()
+        let gen = externalDropGeneration
+        let timer = Timer(timeInterval: 0.35, repeats: false) { _ in
+            guard externalDropGeneration == gen else { return }
+            externalDropHoverActive = false
+            externalDropTarget = nil
+            externalDropWatchdog = nil
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        externalDropWatchdog = timer
     }
 
     /// 外部拖放落定（DropDelegate 异步取齐 URL 后回到主线程调）。
@@ -1066,7 +1118,11 @@ struct StripFileDropDelegate: DropDelegate {
     let shelfFrame: CGRect
     let folderFrames: [String: CGRect]
     let orderedPaths: [String]
-    let onTargetChange: (StripDropRouting.Target?) -> Void
+    /// dropEntered = 悬停会话开始;dropUpdated = 会话进行中移动;performDrop/dropExited = 会话结束。
+    /// 视图侧据此做「高亮只能由 dropEntered 点亮 + 拖放结束看门狗」（见 externalDropHover*）。
+    let onHoverBegan: (StripDropRouting.Target) -> Void
+    let onHoverMoved: (StripDropRouting.Target) -> Void
+    let onHoverEnded: () -> Void
     let onCommit: (StripDropRouting.Target, [URL]) -> Void
 
     private func route(_ info: DropInfo) -> StripDropRouting.Target {
@@ -1081,22 +1137,22 @@ struct StripFileDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        onTargetChange(route(info))
+        onHoverBegan(route(info))
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         let target = route(info)
-        onTargetChange(target)
+        onHoverMoved(target)
         return DropProposal(operation: target == .none ? .forbidden : .copy)
     }
 
     func dropExited(info: DropInfo) {
-        onTargetChange(nil)
+        onHoverEnded()
     }
 
     func performDrop(info: DropInfo) -> Bool {
         let target = route(info)
-        onTargetChange(nil)
+        onHoverEnded()   // 落定即灭高亮,同步清（系统在这之后仍可能补发孤立 dropUpdated,已被门控忽略）。
         guard target != .none else { return false }
         let providers = info.itemProviders(for: [UTType.fileURL])
         guard !providers.isEmpty else { return false }
@@ -1112,11 +1168,9 @@ struct StripFileDropDelegate: DropDelegate {
             }
         }
         group.notify(queue: .main) {
-            onTargetChange(nil)
             let urls = box.urls.compactMap { $0 }
             guard !urls.isEmpty else { return }
             onCommit(target, urls)
-            onTargetChange(nil)
         }
         return true
     }

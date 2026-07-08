@@ -1,7 +1,7 @@
 import AppKit
 import QuickLookThumbnailing
 
-/// 固定文件夹 chip 的封面：该文件夹「最新文件」的 Quick Look 缩略图。
+/// 固定文件夹 chip 的封面：该文件夹当前排序第一张文件的 Quick Look 缩略图。
 /// 枚举在后台队列；每个文件夹带 generation 计数，QL 异步回调回来时核对
 /// generation 未变才发布，防旧结果覆盖新封面；@Published 只在 MainActor 写。
 /// chip 封面：isThumbnail 决定渲染方式——真缩略图方形裁切+细白边,图标（文件/文件夹）fit 不裁。
@@ -12,7 +12,7 @@ struct FolderCover: Equatable {
 
 @MainActor
 final class PinnedFolderCoverStore: ObservableObject {
-    /// path → 封面。兜底链：最新文件缩略图 → 最新文件图标 → 文件夹图标（空文件夹）。
+    /// path → 封面。兜底链：当前排序第一张文件的缩略图 → 其图标 → 文件夹图标（空文件夹）。
     @Published private(set) var covers: [String: FolderCover] = [:]
 
     private struct CacheEntry {
@@ -27,7 +27,7 @@ final class PinnedFolderCoverStore: ObservableObject {
     /// coverFilePath|modDate → 缩略图；封面文件没变就不再生成。
     private let thumbnailCache = NSCache<NSString, NSImage>()
     /// 逐文件夹排序方式（AppDelegate 注入,读 PinnedFolderStore）：封面 = 当前排序下第一个文件,
-    /// 与弹窗网格同口径（原生 Stacks 同款：改排序,堆叠封面跟着换）。
+    /// 与弹窗网格同口径（原生 Stacks 同款：改排序,chip 封面跟着换）。
     private let sortOrderProvider: (String) -> FolderSortOrder
 
     init(sortOrderProvider: @escaping (String) -> FolderSortOrder = { _ in .default }) {
@@ -89,7 +89,7 @@ final class PinnedFolderCoverStore: ObservableObject {
             covers[path] = FolderCover(image: cached, isThumbnail: true)
             return
         }
-        // 先用最新文件的图标垫底，QL 缩略图好了再无感升级。
+        // 先用该文件的图标垫底，QL 缩略图好了再无感升级。
         covers[path] = FolderCover(image: Self.icon(forPath: newest.url.path), isThumbnail: false)
 
         let request = QLThumbnailGenerator.Request(
