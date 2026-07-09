@@ -96,6 +96,11 @@
 		A0000000000000000000103C /* IdentityRuleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000050 /* IdentityRuleEngine.swift */; };
 		A00000000000000000001011 /* WorkspaceSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000011 /* WorkspaceSource.swift */; };
 		A0000000000000000000101B /* FinderWindowRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000055 /* FinderWindowRules.swift */; };
+		A00000000000000000001101 /* FinderWindowContentsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F01 /* FinderWindowContentsReader.swift */; };
+		A00000000000000000001102 /* FolderInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F02 /* FolderInteraction.swift */; };
+		A00000000000000000001103 /* FinderAppleEventMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F03 /* FinderAppleEventMatcher.swift */; };
+		A00000000000000000001104 /* FinderAppleEventMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F03 /* FinderAppleEventMatcher.swift */; };
+		A00000000000000000001105 /* FinderAppleEventMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */; };
 		A00000000000000000001012 /* FinderSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* FinderSource.swift */; };
 		A00000000000000000001013 /* PermissionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000013 /* PermissionService.swift */; };
 		A00000000000000000001014 /* StripItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* StripItem.swift */; };
@@ -172,6 +177,7 @@
 		A00000000000000000000065 /* AppFallbackRetentionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFallbackRetentionPolicy.swift; sourceTree = "<group>"; };
 		A00000000000000000000011 /* WorkspaceSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSource.swift; sourceTree = "<group>"; };
 		A00000000000000000000055 /* FinderWindowRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderWindowRules.swift; sourceTree = "<group>"; };
+		A00000000000000000000F01 /* FinderWindowContentsReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderWindowContentsReader.swift; sourceTree = "<group>"; };
 		A00000000000000000000012 /* FinderSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderSource.swift; sourceTree = "<group>"; };
 		A00000000000000000000013 /* PermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionService.swift; sourceTree = "<group>"; };
 		A00000000000000000000014 /* StripItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripItem.swift; sourceTree = "<group>"; };
@@ -186,6 +192,9 @@
 		A00000000000000000009200 /* PinnedFolderStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedFolderStore.swift; sourceTree = "<group>"; };
 		A00000000000000000009210 /* DirectoryWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectoryWatcher.swift; sourceTree = "<group>"; };
 		A00000000000000000009220 /* FolderContentsLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderContentsLoader.swift; sourceTree = "<group>"; };
+		A00000000000000000000F02 /* FolderInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderInteraction.swift; sourceTree = "<group>"; };
+		A00000000000000000000F03 /* FinderAppleEventMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderAppleEventMatcher.swift; sourceTree = "<group>"; };
+		A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderAppleEventMatcherTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009230 /* PinnedFolderCoverStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedFolderCoverStore.swift; sourceTree = "<group>"; };
 		A00000000000000000009260 /* FileItemMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileItemMenuBuilder.swift; sourceTree = "<group>"; };
 		A00000000000000000009290 /* FolderSortTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderSortTests.swift; sourceTree = "<group>"; };
@@ -346,6 +355,8 @@
 				A000000000000000000019C2 /* RecentDocumentsReader.swift */,
 				A00000000000000000009210 /* DirectoryWatcher.swift */,
 				A00000000000000000009220 /* FolderContentsLoader.swift */,
+				A00000000000000000000F02 /* FolderInteraction.swift */,
+				A00000000000000000000F03 /* FinderAppleEventMatcher.swift */,
 				A00000000000000000009300 /* StripDropRouting.swift */,
 				A00000000000000000009400 /* LauncherMenuPlan.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
@@ -479,6 +490,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000055 /* FinderWindowRules.swift */,
+				A00000000000000000000F01 /* FinderWindowContentsReader.swift */,
 				A00000000000000000000012 /* FinderSource.swift */,
 			);
 			path = Finder;
@@ -553,6 +565,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000058 /* FinderP0Tests.swift */,
+				A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
 				A000000000000000000090A0 /* PanelGeometryTests.swift */,
 				A000000000000000000090B0 /* FullscreenClassificationTests.swift */,
@@ -747,6 +760,9 @@
 				A00000000000000000001030 /* DockWindowEligibilityPolicy.swift in Sources */,
 				A00000000000000000001011 /* WorkspaceSource.swift in Sources */,
 				A0000000000000000000101B /* FinderWindowRules.swift in Sources */,
+				A00000000000000000001101 /* FinderWindowContentsReader.swift in Sources */,
+				A00000000000000000001102 /* FolderInteraction.swift in Sources */,
+				A00000000000000000001103 /* FinderAppleEventMatcher.swift in Sources */,
 				A00000000000000000001012 /* FinderSource.swift in Sources */,
 				A00000000000000000001013 /* PermissionService.swift in Sources */,
 				A00000000000000000001014 /* StripItem.swift in Sources */,
@@ -823,6 +839,8 @@
 					A00000000000000000001028 /* IntentPipeline.swift in Sources */,
 					A00000000000000000001025 /* ObservationKindMergeRule.swift in Sources */,
 					A00000000000000000001026 /* FinderWindowRules.swift in Sources */,
+					A00000000000000000001104 /* FinderAppleEventMatcher.swift in Sources */,
+					A00000000000000000001105 /* FinderAppleEventMatcherTests.swift in Sources */,
 					A00000000000000000001031 /* DockWindowEligibilityPolicy.swift in Sources */,
 					A00000000000000000001033 /* ObservationAdmissionGate.swift in Sources */,
 					A0000000000000000000103B /* AppFallbackRetentionPolicy.swift in Sources */,

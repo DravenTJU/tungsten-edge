@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -70,6 +71,8 @@ struct DockStripView: View {
     /// preference — feeds the grab offset at drag start and the full-frame landing hit-test.
     /// `.background` GeometryReader (not overlay) so it never steals chip clicks.
     @State private var chipFrames: [String: CGRect] = [:]
+    /// 手势预览触发的按 chip 脉冲计数（重击/中键活访达窗口时 +1，给 ~200ms 反查一个即时"点到了"）。
+    @State private var chipPulseNonces: [String: Int] = [:]
 
     /// 文件夹 chip 帧（弹窗锚点 + 外部拖入的 pin 落点路由）。**独立字典,绝不混入 chipFrames**——
     /// 那是 live 窗口区拖拽重排与抽屉拖回落点的输入,混入会让窗口拖动命中文件夹区、落点 no-op（评审 P1）。
@@ -251,6 +254,8 @@ struct DockStripView: View {
         .background(ScreenRectReader { rect in
             if rect != stripRootScreenRect { stripRootScreenRect = rect }
         })
+        // 重击(触控板)/中键(鼠标) → 内容预览：本地事件监视器 → 命中反查（handleGesturePreview）。
+        .background(GestureMonitorInstaller(onGesture: { handleGesturePreview(atScreen: $0) }))
         .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
         .padding(PanelCoordinator.shadowPadding)
         // 抽屉图标拖到任务条上：进任务条区即转正成窗口卡、跟光标整块实时让位（镜像 DrawerView 的全局鼠标驱动）。
@@ -601,7 +606,7 @@ struct DockStripView: View {
     private func stripEntryView(_ entry: StripEntry, dragging: Bool = false) -> some View {
         switch entry {
         case let .window(item):
-            ChipView(item: item, forceHover: dragging)
+            ChipView(item: item, forceHover: dragging, pulseNonce: chipPulseNonces[item.id] ?? 0)
         case .divider:
             Rectangle()
                 .fill(.white.opacity(0.18))
@@ -614,7 +619,9 @@ struct DockStripView: View {
                 path: path,
                 cover: folderCoverStore.covers[path],
                 sortOrder: pinnedFolderStore.sortOrder(for: path),
-                onTap: { folderChipTapped(path) },
+                onTap: { folderPrimaryTap(path) },
+                onPreview: { folderShowPreview(path) },
+                onOpenInFinder: { openFolderInFinder(path) },
                 onAddFolder: onAddFolder,
                 onRemove: { pinnedFolderStore.remove(path) },
                 onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) }
@@ -659,9 +666,24 @@ struct DockStripView: View {
         }
     }
 
-    /// 文件夹 chip 点击：把 "strip" 空间帧（top-left,y-down）换算成屏幕坐标（bottom-left）传给弹窗
-    /// toggle。镜像 stripPoint(from:) 的逆映射。帧未就绪（首帧）就不弹,下次点击再说。
-    private func folderChipTapped(_ path: String) {
+    /// 固定文件夹左键唯一入口：按 `FolderInteraction.primaryAction` 分派（现固定 = 内容预览）。
+    /// A/B「左键预览 vs 左键开 Finder」只改策略枚举，不动这里的调用点。
+    private func folderPrimaryTap(_ path: String) {
+        switch FolderInteraction.primaryAction {
+        case .openFinderWindow: openFolderInFinder(path)
+        case .preview: folderShowPreview(path)
+        }
+    }
+
+    /// 打开该路径的访达窗口（best-effort；左键与右键「在访达中打开」共用此入口）。
+    private func openFolderInFinder(_ path: String) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+
+    /// 固定文件夹内容预览唯一入口（左键 A/B 的 preview 分支、右键「预览内容」、以后中键/重击都走它）。
+    /// 把 "strip" 空间帧（top-left,y-down）换算成屏幕坐标（bottom-left）传给弹窗。
+    /// 镜像 stripPoint(from:) 的逆映射。帧未就绪（首帧）就不弹,下次触发再说。
+    private func folderShowPreview(_ path: String) {
         let entryID = StripEntry.pinnedFolder(path: path).id
         guard let frame = folderChipFrames[entryID], stripRootScreenRect != .zero else { return }
         let screenRect = CGRect(
@@ -673,7 +695,79 @@ struct DockStripView: View {
         onFolderPopupToggle(path, screenRect)
     }
 
-    /// 中转格点击：同 folderChipTapped 的坐标换算,锚点用独立的 shelfFrame。
+    /// strip 空间帧 → 屏幕矩形（stripPoint(from:) 的逆；弹窗锚点用）。
+    private func stripFrameToScreen(_ frame: CGRect) -> CGRect {
+        CGRect(x: stripRootScreenRect.minX + frame.minX,
+               y: stripRootScreenRect.maxY - frame.maxY,
+               width: frame.width, height: frame.height)
+    }
+
+    /// 手势（重击/中键）命中回调：全局屏幕坐标 → strip 空间 → 命中固定文件夹 / 具体访达窗口 → 预览。
+    /// 命中不到任何可预览 chip 就静默忽略。
+    private func handleGesturePreview(atScreen global: CGPoint) {
+        guard let p = stripPoint(from: global) else { return }
+        for path in pinnedFolderStore.folderPaths {
+            let entryID = StripEntry.pinnedFolder(path: path).id
+            if let frame = folderChipFrames[entryID], frame.contains(p) {
+                onFolderPopupToggle(path, stripFrameToScreen(frame))
+                return
+            }
+        }
+        for (cid, frame) in chipFrames where frame.contains(p) {
+            guard let item = StripItem.items(from: runtime.snapshot).first(where: { $0.id == cid }),
+                  item.bundleIdentifier == "com.apple.finder", item.isAppLevelFallback == false else { return }
+            chipPulseNonces[cid, default: 0] += 1   // 立刻"点到了"反馈，兜住反查那 ~200ms
+            previewFinderWindow(item, anchor: stripFrameToScreen(frame))
+            return
+        }
+    }
+
+    /// 具体访达窗口 → 反查路径 → 预览。AX 定位 + 权限流在主线程，AppleEvents 枚举放后台，
+    /// 成功回主线程开预览；拒授权 / 无唯一匹配 / 超时 → beep + log，不弹空窗（spike#2 已验证）。
+    private func previewFinderWindow(_ item: StripItem, anchor: CGRect) {
+        let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.caye.macosdockcc.v2", category: "FinderWindowPreview")
+        let ref = FinderWindowReference(pid: item.pid, cgWindowID: item.cgWindowID, title: item.title, bounds: item.bounds)
+        let reader = FinderWindowContentsReader()
+        let onToggle = onFolderPopupToggle
+
+        func resolveViaAppleEvents(_ aeTarget: FinderWindowAppleEventsTarget) {
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let url = try FinderWindowContentsReader.folderURLViaAppleEvents(for: aeTarget)
+                    DispatchQueue.main.async { onToggle(url.path, anchor) }
+                } catch {
+                    logger.error("finder-window-preview AppleEvents failed: \(String(describing: error), privacy: .public)")
+                    DispatchQueue.main.async { NSSound.beep() }
+                }
+            }
+        }
+        // 最小化窗口在 AX 里按 cgWindowID 定位不到（缺失/对不上）→ 用 StripItem 自带的 title+frame
+        // 直接走 AppleEvents 唯一匹配（AppleScript 的 `Finder windows` 含最小化窗口，报还原态 bounds）。
+        func resolveFromItem() {
+            guard let bounds = item.bounds else { NSSound.beep(); return }
+            resolveViaAppleEvents(FinderWindowAppleEventsTarget(title: item.title, cocoaFrame: bounds))
+        }
+
+        do {
+            switch try reader.target(for: ref) {
+            case .folderURL(let url):
+                onToggle(url.path, anchor)
+            case .appleEvents(let aeTarget):
+                resolveViaAppleEvents(aeTarget)
+            }
+        } catch FinderWindowContentsError.windowNotFound {
+            resolveFromItem()
+        } catch FinderWindowContentsError.missingWindowID {
+            resolveFromItem()
+        } catch FinderWindowContentsError.automationPermissionRequired {
+            if FinderWindowContentsReader.requestFinderAutomationPermission() { resolveFromItem() } else { NSSound.beep() }
+        } catch {
+            logger.error("finder-window-preview target failed: \(String(describing: error), privacy: .public)")
+            NSSound.beep()
+        }
+    }
+
+    /// 中转格点击：同 folderShowPreview 的坐标换算,锚点用独立的 shelfFrame。
     private func shelfChipTapped() {
         guard shelfFrame != .zero, stripRootScreenRect != .zero else { return }
         let screenRect = CGRect(
@@ -710,6 +804,9 @@ struct ChipView: View {
     /// Force the hovered visual regardless of pointer (used by the floating drag copy, which
     /// isn't hit-testable so its own `isHovering` would never light up).
     var forceHover: Bool = false
+    /// 外部手势（重击/中键预览）触发的脉冲信号：nonce 变化即触发一次 fireTapPulse，
+    /// 给活访达窗口预览那 ~200ms 反查延迟一个"点到了"的即时确认。默认 0 = 不脉冲。
+    var pulseNonce: Int = 0
 
     @State private var isHovering = false
     /// 点击确认脉冲：与状态无关的按压回弹。激活「已可见」窗口在亮/暗轴上零变化,
@@ -753,6 +850,7 @@ struct ChipView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: item.showsTitle)
+        .onChange(of: pulseNonce) { _ in fireTapPulse() }
     }
 
     // MARK: - Icon-only chip
@@ -1375,5 +1473,58 @@ struct StripEntranceModifier: ViewModifier {
 extension View {
     func stripEntrance(id: String, delay: Double, animatedEntryIDs: Binding<Set<String>>) -> some View {
         self.modifier(StripEntranceModifier(id: id, delay: delay, animatedEntryIDs: animatedEntryIDs))
+    }
+}
+
+// MARK: - 手势监视器（重击 / 中键 → 内容预览）
+//
+// 在任务条视图树里挂一个**本地** NSEvent 监视器：触控板重击（.pressure 压进 stage 2，去抖只在
+// 进入 stage2 那一刻触发一次）+ 鼠标中键（.otherMouseDown button 2）→ 回调全局屏幕坐标，交给
+// handleGesturePreview 做命中反查。监视器只观测不消费（return e），左键点击/文件夹拖拽零干扰；
+// spike（2026-07-09）已验证重击不触发左键动作，无冲突。
+private struct GestureMonitorInstaller: NSViewRepresentable {
+    let onGesture: (CGPoint) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.onGesture = onGesture
+        context.coordinator.start()
+        return NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onGesture = onGesture   // 刷新闭包，捕获最新 chip 帧
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stop()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var onGesture: ((CGPoint) -> Void)?
+        private var pressureMonitor: Any?
+        private var middleMonitor: Any?
+        private var lastStage = 0
+
+        func start() {
+            pressureMonitor = NSEvent.addLocalMonitorForEvents(matching: .pressure) { [weak self] e in
+                guard let self else { return e }
+                if e.stage == 2 && self.lastStage < 2 { self.onGesture?(NSEvent.mouseLocation) }
+                self.lastStage = e.stage
+                return e
+            }
+            middleMonitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] e in
+                if e.buttonNumber == 2 { self?.onGesture?(NSEvent.mouseLocation) }
+                return e
+            }
+        }
+
+        func stop() {
+            if let m = pressureMonitor { NSEvent.removeMonitor(m) }
+            if let m = middleMonitor { NSEvent.removeMonitor(m) }
+            pressureMonitor = nil
+            middleMonitor = nil
+        }
     }
 }

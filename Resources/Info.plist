@@ -24,5 +24,7 @@
   <string>12.0</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>用于读取当前访达窗口所在文件夹，以便显示文件夹内容快捷面板。</string>
 </dict>
 </plist>

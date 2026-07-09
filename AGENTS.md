@@ -34,6 +34,8 @@
 - Process-death reconcile must not remove Finder's app entry. Finder process existence alone does not imply a concrete Finder window.
 - Concrete Finder folder windows remain window-level items when title/frame are available. If a specific Finder target cannot be captured, do not fall back to whole-app activation.
 - Finder minimize feedback accepts either `minimized` or temporary `disappeared`.
+- Finder window content preview must not rely on AX folder-path attributes. Treat AX document/URL as opportunistic only; current reliable path is AppleEvents enumeration matched by Finder window title + frame, and ambiguous/no matches must fail.
+- Finder AppleEvents parsing and title+frame matching live in `FinderAppleEventMatcher` with unit coverage. `FinderWindowContentsReader` should stay the I/O layer for AX lookup, Automation permission, and AppleScript execution.
 - Feishu window-level handling is opportunistic. If samples are weak, titles generic, or frontmost AX unreliable, fall back to one stable app-level item.
 
 ## Window Identity And Actions
@@ -45,6 +47,7 @@
 - Tear-out keeps the old-frame seat for the new active tab; the moved old active cgID becomes a fresh seat.
 - Minimized multi-tab windows may expose all tabs as eligible AX windows. Fold background tabs into the placed minimized seat by exact frame first, then by `min=true` + off-screen + same size.
 - A strip chip id is a stable identity token, not necessarily actionable. All strip show/hide/minimize/toggle calls must use `item.actionWindowID`.
+- `StripItem.pid`, `StripItem.cgWindowID`, and `StripItem.bounds` are current representative live facts for action/preview targeting only. Never use them as chip identity or persistent order keys.
 - Drawer actions are app-centric and must not use strip chip ids for window-level toggle.
 
 ## Focus And Action Planning
@@ -87,6 +90,7 @@
 
 - Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]`; empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
 - Folder chips drag via `DragController` source `.folder`; keep it isolated from strip/drawer stash semantics.
+- Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
 - Per-folder sort persists in `PinnedFolderStore.sortOrders`; covers follow the current sort's first **file**.
 - Fixed folder chips render as a flat single cover with 36/24 sizing. Do not restore stacked-paper layers.
@@ -98,6 +102,7 @@
 - External drop routing stays in pure, unit-tested `StripDropRouting.route`: shelf hit -> stash, folder-zone x-range + 24pt tail slack -> pin, else reject.
 - Only directories can pin; files dropped on the folder zone are a silent no-op. Re-dropping an already-pinned folder repositions it.
 - External drop hover cleanup must not rely only on `performDrop` / `dropExited` or `folderPaths` changes. Keep `dropEntered` gating plus `.common` Timer watchdog for missing terminal callbacks and post-drop hover flicker.
+- Middle-click / Force Click content-preview monitors must observe and return the original `NSEvent`. They must not consume left clicks, break folder drag, or feed planner/frontmost state.
 
 ## Shelf And Folder Popup
 

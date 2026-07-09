@@ -11,6 +11,10 @@ struct PinnedFolderChip: View {
     /// 当前排序方式（菜单打勾用;menu builder 每次右键现建,读到的总是最新值）。
     let sortOrder: FolderSortOrder
     let onTap: () -> Void
+    /// 内容预览（右键「预览内容」；左键在 preview 模式下也走这个）。
+    let onPreview: () -> Void
+    /// 打开该路径访达窗口（右键「在访达中打开」；左键在 openFinderWindow 模式下也走这个）。
+    let onOpenInFinder: () -> Void
     let onAddFolder: () -> Void
     let onRemove: () -> Void
     let onSetSortOrder: (FolderSortOrder) -> Void
@@ -77,10 +81,8 @@ struct PinnedFolderChip: View {
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(ClosureMenuItem("打开") { onTap() })
-        menu.addItem(ClosureMenuItem("在访达中打开") {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-        })
+        menu.addItem(ClosureMenuItem("预览内容") { onPreview() })
+        menu.addItem(ClosureMenuItem("在访达中打开") { onOpenInFinder() })
         menu.addItem(.separator())
         // 排序方式 ▸（原生 Stacks 同款）：弹窗网格与 chip 封面都跟随,逐文件夹记忆。
         let sortItem = NSMenuItem(title: "排序方式", action: nil, keyEquivalent: "")

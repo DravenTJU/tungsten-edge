@@ -370,7 +370,7 @@ struct DragCarrierView: View {
                 PinnedFolderChip(path: p.id,
                                  cover: folderCoverStore.covers[p.id],
                                  sortOrder: .default,
-                                 onTap: {}, onAddFolder: {}, onRemove: {},
+                                 onTap: {}, onPreview: {}, onOpenInFinder: {}, onAddFolder: {}, onRemove: {},
                                  onSetSortOrder: { _ in })
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                     .opacity(aboutToRemove ? 0.35 : 1.0)
