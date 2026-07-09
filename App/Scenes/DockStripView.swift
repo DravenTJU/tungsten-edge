@@ -647,8 +647,8 @@ struct DockStripView: View {
                                  isHidden: isHiddenInSnapshot(bundleID: bid),
                                  scale: 1.0,
                                  dimsWhenInactive: false,
-                                 removeMenuLabel: "取消标记消息应用",
-                                 onRemove: { messagingStore.unmark(bid) },
+                                 membershipItems: [LauncherMembershipItem(label: "取消标记消息应用",
+                                                                          action: { messagingStore.unmark(bid) })],
                                  onTap: { Self.reopenMainWindow(bundleID: bid) })
                 }
                 if let badge = badgeStore.badgesByBundleID[bid] {

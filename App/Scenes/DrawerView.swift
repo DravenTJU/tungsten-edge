@@ -181,13 +181,19 @@ struct DrawerView: View {
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let stashed = drawerStore.contains(id)
+        let favorite = launchFavoriteStore.contains(id)
         let delay = Double(min(index, 6)) * 0.018
+        // 成员项：收纳→「移回任务栏」，固定→「取消固定」；共存图标两项都给（各删各 store）。
+        // 用表达式拼数组，避免 @ViewBuilder 把 if 当成条件视图。
+        let membership: [LauncherMembershipItem] =
+            (stashed ? [LauncherMembershipItem(label: "移回任务栏", action: { drawerStore.remove(id) })] : [])
+            + (favorite ? [LauncherMembershipItem(label: "取消固定", action: { launchFavoriteStore.remove(id) })] : [])
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
                      scale: 0.7,
-                     removeMenuLabel: stashed ? "移回任务栏" : nil,
-                     onRemove: { if stashed { drawerStore.remove(id) } },
+                     membershipItems: membership,
+                     menuMode: stashed ? .full : .removeOnly,   // 纯固定→只留「取消固定」；收纳/共存→完整菜单
                      onLaunch: { runtime.beginLaunch(id) },
                      onPrimaryAction: onPrimaryAction)
             .offset(y: isPresented ? 0 : 20)

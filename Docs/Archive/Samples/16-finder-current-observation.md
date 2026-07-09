@@ -2,7 +2,7 @@
 
 > Recorded: 2026-05-05
 
-> Status: historical pre-P0 observation. The Finder P0 implementation was accepted on 2026-05-05; current implementation details are in [17-finder-p0-implementation.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/17-finder-p0-implementation.md:1), and real samples are in [18-real-sample-finder-findings.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/18-real-sample-finder-findings.md:1).
+> Status: historical pre-P0 observation. The Finder P0 implementation was accepted on 2026-05-05; current implementation details are in [17-finder-p0-implementation.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/17-finder-p0-implementation.md:1), and real samples are in [18-real-sample-finder-findings.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/18-real-sample-finder-findings.md:1).
 
 ## Product Takeaway
 

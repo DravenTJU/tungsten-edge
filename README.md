@@ -133,7 +133,7 @@ This is an early public build (v0.3). Known limitations and what's next:
 
 ## Developers
 
-The authoritative record of engineering hand-off, design decisions, and current status lives in [`AGENTS.md`](AGENTS.md) and the author's Obsidian vault. Files under `Docs/` are dated historical findings and platform-quirk references (not a live status board).
+Engineering guardrails live in [`AGENTS.md`](AGENTS.md); product state, roadmap, and decisions live in the author's Obsidian vault. `Docs/` keeps only active platform/focus references at the root, with historical notes under `Docs/Archive/`.
 
 Build & run:
 

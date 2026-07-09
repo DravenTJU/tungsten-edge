@@ -7,8 +7,16 @@ import SwiftUI
 /// and handles tap-to-launch, tap-to-reopen, and the launch bounce animation.
 ///
 /// Shared by the drawer (collected apps, scale 0.7) and the main strip (pinned
-/// messaging apps, scale 1.0). The only call-site difference is the membership-removal
-/// menu item, injected via `removeMenuLabel` + `onRemove`.
+/// messaging apps, scale 1.0). Call-site differences are injected via
+/// `membershipItems` (移回任务栏 / 取消固定 / 取消标记消息应用) + `menuMode`.
+
+/// 一条成员 / 管理菜单项（标签 + 动作）。LauncherChip 右键菜单末尾按序渲染，
+/// 可多项——共存图标（既收纳又固定）同时给「移回任务栏」+「取消固定」。
+struct LauncherMembershipItem {
+    let label: String
+    let action: () -> Void
+}
+
 struct LauncherChip: View {
     let bundleID: String
     let isRunning: Bool   // derived from runtime.snapshot by the parent view
@@ -17,11 +25,11 @@ struct LauncherChip: View {
     /// Drawer chips dim by run/hidden state; pinned messaging chips on the strip
     /// stay full-opacity (product decision: "always reachable", not degraded).
     var dimsWhenInactive: Bool = true
-    /// Last context-menu item, e.g. "移回任务栏" (drawer) or "取消标记消息应用" (messaging).
-    /// nil for 待启动 launch buttons: membership management lives on the running
-    /// chip's context menu only (沉淀原则 2026-06-11, no menu on launch buttons).
-    var removeMenuLabel: String? = nil
-    var onRemove: () -> Void = {}
+    /// 成员 / 管理菜单项（右键菜单末尾），如「移回任务栏」「取消固定」「取消标记消息应用」。
+    /// 空数组 = 无成员项。共存图标可同时含「移回任务栏」+「取消固定」两项。
+    var membershipItems: [LauncherMembershipItem] = []
+    /// 菜单模式：`.full` 运行 / 收纳图标完整菜单；`.removeOnly` 纯固定启动图标只留成员项。
+    var menuMode: LauncherMenuMode = .full
     /// When set, replaces the default tap behavior (drawer show/hide toggle). Used by
     /// the strip's messaging app chip, whose tap must always reopen the main window.
     var onTap: (() -> Void)? = nil
@@ -99,26 +107,45 @@ struct LauncherChip: View {
 
     private func buildLauncherMenu() -> NSMenu {
         let menu = NSMenu()
+        // 菜单运行态跟随「图标所在区的显示态」(isRunning prop)，不再独立问 NSWorkspace——否则待启动区里
+        // 进程仍活（关窗不退 / 常驻）的图标会误报「隐藏 / 退出」，与其「已退出」的灰显外观矛盾。
+        let kinds = LauncherMenuPlan.itemKinds(mode: menuMode,
+                                               isRunning: isRunning,
+                                               isHidden: isHidden,
+                                               hasMembership: !membershipItems.isEmpty)
+        // 仅在真要执行 显示/隐藏/退出 时才取 app 对象；取不到就跳过该项（快照短暂陈旧的兜底）。
         let runningApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleID })
-        // 守沉淀原则「纯固定启动按钮无右键菜单」：该项菜单本就为空（未运行 + 无「移回」项）时
-        // 不加最近文件；只给运行中或已收纳（removeMenuLabel 非 nil）的项置顶最近文件。
-        if runningApp != nil || removeMenuLabel != nil {
-            AppMenuBuilder.appendRecentDocuments(to: menu, bundleID: bundleID)
-        }
-        if let app = runningApp {
-            if app.isHidden {
-                menu.addItem(ClosureMenuItem("显示") {
-                    _ = app.unhide()
-                    app.activate(options: .activateIgnoringOtherApps)
-                })
-            } else {
-                menu.addItem(ClosureMenuItem("隐藏") { _ = app.hide() })
+        var didAppendAppActions = false
+        for kind in kinds {
+            switch kind {
+            case .recentDocuments:
+                AppMenuBuilder.appendRecentDocuments(to: menu, bundleID: bundleID)
+            case .show:
+                if let app = runningApp {
+                    menu.addItem(ClosureMenuItem("显示") {
+                        _ = app.unhide()
+                        app.activate(options: .activateIgnoringOtherApps)
+                    })
+                    didAppendAppActions = true
+                }
+            case .hide:
+                if let app = runningApp {
+                    menu.addItem(ClosureMenuItem("隐藏") { _ = app.hide() })
+                    didAppendAppActions = true
+                }
+            case .quit:
+                if let app = runningApp {
+                    AppMenuBuilder.appendQuitItems(to: menu, bundleID: bundleID) { _ = app.terminate() }
+                    didAppendAppActions = true
+                }
+            case .membership:
+                // 分隔线按**实际渲染态**判断：真加过 app 动作项且菜单非空才补，避免 isRunning 为真但
+                // NSWorkspace 竞态取不到 app、动作被跳过时多出一条空分隔线。
+                if didAppendAppActions && !menu.items.isEmpty { menu.addItem(.separator()) }
+                for item in membershipItems {
+                    menu.addItem(ClosureMenuItem(item.label) { item.action() })
+                }
             }
-            AppMenuBuilder.appendQuitItems(to: menu, bundleID: bundleID) { _ = app.terminate() }
-            if removeMenuLabel != nil { menu.addItem(.separator()) }
-        }
-        if let removeMenuLabel {
-            menu.addItem(ClosureMenuItem(removeMenuLabel) { onRemove() })
         }
         return menu
     }

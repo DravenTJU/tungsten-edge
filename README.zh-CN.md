@@ -123,7 +123,7 @@ brew install --cask tungsten-edge
 
 ## 开发者
 
-工程交接、设计决策与当前进度的权威记录在 [`AGENTS.md`](AGENTS.md) 与作者的 Obsidian 笔记库；`Docs/` 下是按日期归档的历史调研与平台特性记录（非实时状态板）。
+工程硬约束在 [`AGENTS.md`](AGENTS.md)；产品状态、路线和决策在作者的 Obsidian 笔记库。`Docs/` 根目录只保留仍常用的平台/焦点参考，历史材料放在 `Docs/Archive/`。
 
 构建运行：
 

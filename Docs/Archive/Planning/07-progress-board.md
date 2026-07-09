@@ -69,8 +69,8 @@
 
 参考文档：
 
-- [17-finder-p0-implementation.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/17-finder-p0-implementation.md)
-- [18-real-sample-finder-findings.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/18-real-sample-finder-findings.md)
+- [17-finder-p0-implementation.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/17-finder-p0-implementation.md)
+- [18-real-sample-finder-findings.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/18-real-sample-finder-findings.md)
 
 ### 4. 任务条可信度收口
 
@@ -83,7 +83,7 @@
 
 参考文档：
 
-- [19-taskbar-trust-incident.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/19-taskbar-trust-incident.md)
+- [19-taskbar-trust-incident.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/19-taskbar-trust-incident.md)
 
 ### 5. Inventory-First 主线
 
@@ -103,7 +103,7 @@
 
 参考文档：
 
-- [20-inventory-first-taskbar-trust.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/20-inventory-first-taskbar-trust.md)
+- [20-inventory-first-taskbar-trust.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/20-inventory-first-taskbar-trust.md)
 
 ### 6. 长时间断档重复卡片修复
 
@@ -117,7 +117,7 @@
 
 参考文档：
 
-- [21-long-gap-duplicate-card-fix.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/21-long-gap-duplicate-card-fix.md)
+- [21-long-gap-duplicate-card-fix.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/21-long-gap-duplicate-card-fix.md)
 
 ### 7. UI 与动作执行
 

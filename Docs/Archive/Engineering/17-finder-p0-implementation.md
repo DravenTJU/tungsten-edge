@@ -31,7 +31,7 @@ The intended click behavior is:
 - Finder title/tab replay:
   - `./Scripts/build_and_run.sh --lab-replay finder-title-tab-replay`
 - Real double-Finder-window minimize / restore sample:
-  - [18-real-sample-finder-findings.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/18-real-sample-finder-findings.md:1)
+  - [18-real-sample-finder-findings.md](/Users/caye/Projects/macos-dock-cc-v2/Docs/Archive/Engineering/18-real-sample-finder-findings.md:1)
 - Unit coverage includes signature merge rules, toggle planning, Finder filtering, and minimize feedback accepting temporary disappearance.
 - User acceptance:
   - the project owner tested the Finder P0 app path and accepted this stage on 2026-05-05

@@ -36,6 +36,9 @@
 		A00000000000000000009291 /* FolderSortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009290 /* FolderSortTests.swift */; };
 		A00000000000000000009301 /* StripDropRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009300 /* StripDropRouting.swift */; };
 		A00000000000000000009302 /* StripDropRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009300 /* StripDropRouting.swift */; };
+		A00000000000000000009401 /* LauncherMenuPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009400 /* LauncherMenuPlan.swift */; };
+		A00000000000000000009402 /* LauncherMenuPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009400 /* LauncherMenuPlan.swift */; };
+		A00000000000000000009411 /* LauncherMenuPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009410 /* LauncherMenuPlanTests.swift */; };
 		A00000000000000000009311 /* ShelfStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009310 /* ShelfStore.swift */; };
 		A00000000000000000009312 /* ShelfStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009310 /* ShelfStore.swift */; };
 		A00000000000000000009321 /* ShelfChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009320 /* ShelfChip.swift */; };
@@ -187,6 +190,8 @@
 		A00000000000000000009260 /* FileItemMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileItemMenuBuilder.swift; sourceTree = "<group>"; };
 		A00000000000000000009290 /* FolderSortTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderSortTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009300 /* StripDropRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripDropRouting.swift; sourceTree = "<group>"; };
+		A00000000000000000009400 /* LauncherMenuPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherMenuPlan.swift; sourceTree = "<group>"; };
+		A00000000000000000009410 /* LauncherMenuPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherMenuPlanTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009310 /* ShelfStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfStore.swift; sourceTree = "<group>"; };
 		A00000000000000000009320 /* ShelfChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfChip.swift; sourceTree = "<group>"; };
 		A00000000000000000009330 /* ShelfGridPopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfGridPopupView.swift; sourceTree = "<group>"; };
@@ -342,6 +347,7 @@
 				A00000000000000000009210 /* DirectoryWatcher.swift */,
 				A00000000000000000009220 /* FolderContentsLoader.swift */,
 				A00000000000000000009300 /* StripDropRouting.swift */,
+				A00000000000000000009400 /* LauncherMenuPlan.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
 			);
 			path = Support;
@@ -553,6 +559,7 @@
 				A00000000000000000009280 /* FolderContentsLoaderTests.swift */,
 				A00000000000000000009290 /* FolderSortTests.swift */,
 				A00000000000000000009340 /* StripDropRoutingTests.swift */,
+				A00000000000000000009410 /* LauncherMenuPlanTests.swift */,
 				A00000000000000000009350 /* ShelfLogicTests.swift */,
 				A00000000000000000009370 /* FolderChipDropZoneTests.swift */,
 			);
@@ -707,6 +714,7 @@
 					A00000000000000000009231 /* PinnedFolderCoverStore.swift in Sources */,
 					A00000000000000000009261 /* FileItemMenuBuilder.swift in Sources */,
 					A00000000000000000009301 /* StripDropRouting.swift in Sources */,
+					A00000000000000000009401 /* LauncherMenuPlan.swift in Sources */,
 					A00000000000000000009361 /* FolderChipDropZone.swift in Sources */,
 					A00000000000000000009311 /* ShelfStore.swift in Sources */,
 					A00000000000000000009321 /* ShelfChip.swift in Sources */,
@@ -795,9 +803,11 @@
 				A00000000000000000009281 /* FolderContentsLoaderTests.swift in Sources */,
 				A00000000000000000009291 /* FolderSortTests.swift in Sources */,
 				A00000000000000000009302 /* StripDropRouting.swift in Sources */,
+				A00000000000000000009402 /* LauncherMenuPlan.swift in Sources */,
 				A00000000000000000009362 /* FolderChipDropZone.swift in Sources */,
 				A00000000000000000009312 /* ShelfStore.swift in Sources */,
 				A00000000000000000009341 /* StripDropRoutingTests.swift in Sources */,
+				A00000000000000000009411 /* LauncherMenuPlanTests.swift in Sources */,
 				A00000000000000000009351 /* ShelfLogicTests.swift in Sources */,
 				A00000000000000000009371 /* FolderChipDropZoneTests.swift in Sources */,
 				A000000000000000000090B1 /* FullscreenClassificationTests.swift in Sources */,
