@@ -8,3 +8,8 @@ scratch/
 .build/
 DemoVideo/
 品牌视觉/
+
+# TRAE generated reports and local task artifacts
+.trae/
+.trae-html-share-packages/
+project-analysis/

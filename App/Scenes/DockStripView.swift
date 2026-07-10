@@ -227,7 +227,7 @@ struct DockStripView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        // 抽屉图标拖到任务条上方 = 移回任务栏的投放反馈：整条任务条高亮描边（对称于胶囊的收纳高亮）。
+        // 抽屉图标拖到任务条上方 = 移出抽屉的投放反馈：整条任务条高亮描边（对称于胶囊的收纳高亮）。
         // 外部拖目录悬停文件夹区（pin 落点）复用同一条高亮。
         .overlay {
             RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
@@ -606,7 +606,10 @@ struct DockStripView: View {
     private func stripEntryView(_ entry: StripEntry, dragging: Bool = false) -> some View {
         switch entry {
         case let .window(item):
-            ChipView(item: item, forceHover: dragging, pulseNonce: chipPulseNonces[item.id] ?? 0)
+            ChipView(item: item,
+                     showRunningDot: true,
+                     forceHover: dragging,
+                     pulseNonce: chipPulseNonces[item.id] ?? 0)
         case .divider:
             Rectangle()
                 .fill(.white.opacity(0.18))
@@ -1037,10 +1040,10 @@ struct ChipView: View {
         guard let bid = item.bundleIdentifier else { return }
         menu.addItem(.separator())
         if drawerStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("移回任务栏") { drawerStore.remove(bid) })
+            menu.addItem(ClosureMenuItem("固定到任务栏") { drawerStore.remove(bid) })
         } else {
             // 不清固定标志：收纳与固定可共存（2026-06-16）。旧代码在此 remove 固定，
-            // 导致「固定→收进抽屉→移回任务栏」后固定丢失（2026-06-18 owner 报告）。
+            // 导致「固定→收进抽屉→移出抽屉」后固定丢失（2026-06-18 owner 报告）。
             menu.addItem(ClosureMenuItem("收进抽屉") { drawerStore.add(bid) })
         }
         // 「固定到启动台」只对**不在抽屉**的 app 有意义（给它在任务条留常驻启动位）。

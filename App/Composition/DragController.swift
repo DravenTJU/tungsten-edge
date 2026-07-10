@@ -348,7 +348,7 @@ struct DragCarrierView: View {
         // 抽屉拖回任务条·转正后:载体改画**代表卡**整张(与条内载体同款),让"拖回来"和"条内拖动"观感一致。
         // 代表卡由 DockStripView 在窗口卡实体化后写入;未实体化前 nil → 仍按 visualKind 画(抽屉里就是小图标)。
         if let rep = controller.convertedRepresentative {
-            ChipView(item: rep, forceHover: false)
+            ChipView(item: rep, showRunningDot: true, forceHover: false)
                 .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
         } else {
             switch p.visualKind {
@@ -356,7 +356,7 @@ struct DragCarrierView: View {
                 if let item = p.item {
                     // forceHover: false —— 悬停态会在图标下方带出 app 名,拖动时不想要（owner 2026-06-21）。
                     // 非悬停态 = 干净的大图标(单窗口卡),贴近抽屉拖动的观感。代价是起拖瞬间图标略放大,可接受。
-                    ChipView(item: item, forceHover: false)
+                    ChipView(item: item, showRunningDot: true, forceHover: false)
                         .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                 }
             case .drawerIcon:

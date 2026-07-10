@@ -8,10 +8,10 @@ import SwiftUI
 ///
 /// Shared by the drawer (collected apps, scale 0.7) and the main strip (pinned
 /// messaging apps, scale 1.0). Call-site differences are injected via
-/// `membershipItems` (移回任务栏 / 取消固定 / 取消标记消息应用) + `menuMode`.
+/// `membershipItems` (固定到任务栏 / 取消固定 / 取消标记消息应用) + `menuMode`.
 
 /// 一条成员 / 管理菜单项（标签 + 动作）。LauncherChip 右键菜单末尾按序渲染，
-/// 可多项——共存图标（既收纳又固定）同时给「移回任务栏」+「取消固定」。
+/// 可多项——共存图标（既收纳又固定）同时给「固定到任务栏」+「取消固定」。
 struct LauncherMembershipItem {
     let label: String
     let action: () -> Void
@@ -25,8 +25,8 @@ struct LauncherChip: View {
     /// Drawer chips dim by run/hidden state; pinned messaging chips on the strip
     /// stay full-opacity (product decision: "always reachable", not degraded).
     var dimsWhenInactive: Bool = true
-    /// 成员 / 管理菜单项（右键菜单末尾），如「移回任务栏」「取消固定」「取消标记消息应用」。
-    /// 空数组 = 无成员项。共存图标可同时含「移回任务栏」+「取消固定」两项。
+    /// 成员 / 管理菜单项（右键菜单末尾），如「固定到任务栏」「取消固定」「取消标记消息应用」。
+    /// 空数组 = 无成员项。共存图标可同时含「固定到任务栏」+「取消固定」两项。
     var membershipItems: [LauncherMembershipItem] = []
     /// 菜单模式：`.full` 运行 / 收纳图标完整菜单；`.removeOnly` 纯固定启动图标只留成员项。
     var menuMode: LauncherMenuMode = .full

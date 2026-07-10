@@ -19,7 +19,7 @@ enum LauncherMenuItemKind: Equatable {
     case show
     case hide
     case quit
-    /// 成员 / 管理项区（移回任务栏 / 取消固定 / 取消标记消息应用；1 或多项由调用方决定）。
+    /// 成员 / 管理项区（固定到任务栏 / 取消固定 / 取消标记消息应用；1 或多项由调用方决定）。
     case membership
 }
 

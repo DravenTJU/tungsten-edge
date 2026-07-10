@@ -183,10 +183,10 @@ struct DrawerView: View {
         let stashed = drawerStore.contains(id)
         let favorite = launchFavoriteStore.contains(id)
         let delay = Double(min(index, 6)) * 0.018
-        // 成员项：收纳→「移回任务栏」，固定→「取消固定」；共存图标两项都给（各删各 store）。
+        // 成员项：收纳→「固定到任务栏」，固定→「取消固定」；共存图标两项都给（各删各 store）。
         // 用表达式拼数组，避免 @ViewBuilder 把 if 当成条件视图。
         let membership: [LauncherMembershipItem] =
-            (stashed ? [LauncherMembershipItem(label: "移回任务栏", action: { drawerStore.remove(id) })] : [])
+            (stashed ? [LauncherMembershipItem(label: "固定到任务栏", action: { drawerStore.remove(id) })] : [])
             + (favorite ? [LauncherMembershipItem(label: "取消固定", action: { launchFavoriteStore.remove(id) })] : [])
         LauncherChip(bundleID: id,
                      isRunning: running,
