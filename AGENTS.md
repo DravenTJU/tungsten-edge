@@ -1,6 +1,9 @@
 # AGENTS
 
 > **New agent: read this first.**
+>
+> **What this app is**: Tungsten Edge 钨极 is a window-oriented bottom taskbar for macOS, designed to replace the system Dock. Multi-window apps normally split into separate window chips, with deliberate app-level entries for Finder, messaging apps, user-pinned apps, and compatibility fallbacks. It also includes a drawer for stashed/launch apps and a pinned-folder zone. Minimum deployment target: macOS 12.
+>
 > Product state and decisions live in the owner's Obsidian vault:
 > `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/`, entry note `00 macos-dock-cc-v2 总览.md`.
 >
@@ -72,7 +75,7 @@
 - Carrier position and cross-panel hit testing use `NSEvent.mouseLocation` screen coordinates.
 - Timers used during drag must be added to `.common` run-loop mode.
 - Drawer is app-centric: one bundleID = one `LauncherChip`. Drawer click is app-level frontmost->hide, otherwise unhide/open; not-running->launch.
-- `DrawerOrderStore` is the persistent ordering layer keyed by bundleID and synced over `drawerStore ∪ launchFavoriteStore`.
+- `DrawerOrderStore` is the persistent ordering layer keyed by bundleID and synced over `(drawerStore ∪ launchFavoriteStore) - pinnedAppStore`.
 - Drawer reorder is same-zone only. Cross-divider drops are meaningless.
 - `DragPayload` uses strip id = stable chip token, drawer id = bundleID, folder id = folder path.
 
@@ -86,9 +89,21 @@
 - Drawer-to-strip landing goes through staged placement consumed inside `StripOrderStore.sync(current:appKeyOf:)`.
 - Freeze strip width during converted cross-panel drags and release the clamp only on commit or revert.
 
+## Pinned Apps
+
+- A pinned app is one persistent app-level strip entry that absorbs all same-bundle live windows, native-tab seats, and app-level fallbacks. It appears after messaging apps in the shared leading zone.
+- Finder must never enter pinned-app state. Reject `com.apple.finder` both when loading `PinnedAppStore` and when adding through any menu/action path.
+- Pinned identity wins over drawer, launch favorite, and messaging membership. Route conversions through `AppMembershipController`; pinning a messaging app deliberately calls `unmark` and therefore keeps its auto-registration opt-out after later unpinning.
+- `RunningApplicationStore` is a UI-only NSWorkspace process projection. It must not admit windows, create identities, or alter inventory-first tracking. Pinned-app running dots and hidden state come from it, not from the window snapshot.
+- Same-bundle regular processes are one app-level group: any live process means running, all must be hidden to show hidden state, and app-level show/hide/quit actions apply to the whole group.
+- Clicking a running pinned app with no real non-fallback window must unhide/reopen it. Running pinned apps with real windows use app-level frontmost->hide and background->show behavior.
+- Pinned-app actions do not write window-level optimistic state or predicted frontmost state. Any immediate acknowledgment stays view-local, and app-active decisions read a fresh `NSRunningApplication`.
+- Messaging auto-registration filters pinned apps on every snapshot update. Startup reconciliation and display projection remain defensive layers against conflicting persisted memberships.
+- Pinned app chips stay out of the existing live-window drag/reorder and drawer-conversion paths. Drawer-to-strip drag remains an unstash that restores the live window block; it is not the same action as pinning an app.
+
 ## Pinned Folders And External File Drop
 
-- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]`; empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
+- Strip layout is `[messaging + pinned apps][divider][shelf + pinned folders][divider][live windows]`; empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
 - Folder chips drag via `DragController` source `.folder`; keep it isolated from strip/drawer stash semantics.
 - Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
@@ -125,7 +140,7 @@
 - Strip and drawer chip menus are hand-built AppKit `NSMenu`, not SwiftUI `.contextMenu`.
 - `MenuHostNSView` claims only right-click / Control-click and returns `nil` from `hitTest` otherwise.
 - Force Quit is a native alternate item after Quit, gated out for this app itself.
-- `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Pure launch-favorite chips use `menuMode = .removeOnly`; membership items are injected via `membershipItems` and may be multiple (a stashed+pinned icon shows both 移回任务栏 and 取消固定).
+- `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Pure launch-favorite chips use `menuMode = .removeOnly`; membership items are injected via `membershipItems` and may be multiple (a stashed+favorite icon shows both 移出抽屉 and 取消固定).
 - Finder menu items apply to both persistent Finder chip and concrete Finder windows.
 - SwiftUI shadow margin is `shadowPadding = 20pt`; floating panel shadows must fit within it.
 - Coordinate math on `dockFrame` / `capsuleFrame` subtracts `shadowPadding` to reach visual content, and `fittingSize.width` subtracts `2 * shadowPadding`.

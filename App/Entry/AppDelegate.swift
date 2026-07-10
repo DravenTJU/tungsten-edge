@@ -14,6 +14,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let settingsStore = AppSettingsStore()
     let pinnedFolderStore = PinnedFolderStore()
     let shelfStore = ShelfStore()
+    let pinnedAppStore = PinnedAppStore()
+    let runningApplicationStore = RunningApplicationStore()
+    private(set) lazy var appMembershipController = AppMembershipController(
+        pinnedAppStore: pinnedAppStore,
+        drawerStore: drawerStore,
+        launchFavoriteStore: launchFavoriteStore,
+        messagingStore: messagingStore
+    )
     /// lazy：sortOrderProvider 要引用 pinnedFolderStore（封面跟随该文件夹当前排序的第一个文件）。
     private(set) lazy var folderCoverStore = PinnedFolderCoverStore(
         sortOrderProvider: { [pinnedFolderStore] path in pinnedFolderStore.sortOrder(for: path) }
@@ -68,23 +76,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startApp() {
+        appMembershipController.reconcilePinnedWins()
+        runningApplicationStore.start()
         runtime.start()
 
         // Auto tier of the messaging list: whenever the snapshot updates, register any
         // running app that matches the whitelist / social-networking category.
-        // Launch favorites are excluded: 待启动 is an explicit membership and the four
-        // memberships are mutually exclusive — auto detection must not pull a
-        // just-registered favorite back into the messaging zone.
+        // Launch favorites and pinned apps are explicit memberships. Auto detection
+        // must not pull either one into the messaging zone.
         messagingAutoRegisterSubscription = runtime.$snapshot
             .receive(on: DispatchQueue.main)
             .sink { [weak self] snapshot in
                 guard let self else { return }
                 let running = Set(snapshot.windows.values.compactMap(\.bundleIdentifier))
                     .filter { !self.launchFavoriteStore.contains($0) }
+                    .filter { !self.pinnedAppStore.contains($0) }
                 self.messagingStore.autoRegister(runningBundleIDs: running)
             }
 
-        let coordinator = PanelCoordinator(runtime: runtime, drawerStore: drawerStore, messagingStore: messagingStore, launchFavoriteStore: launchFavoriteStore, badgeStore: badgeStore, stripOrderStore: stripOrderStore, drawerOrderStore: drawerOrderStore, settingsStore: settingsStore, pinnedFolderStore: pinnedFolderStore, folderCoverStore: folderCoverStore, shelfStore: shelfStore)
+        let coordinator = PanelCoordinator(
+            runtime: runtime,
+            drawerStore: drawerStore,
+            messagingStore: messagingStore,
+            launchFavoriteStore: launchFavoriteStore,
+            badgeStore: badgeStore,
+            stripOrderStore: stripOrderStore,
+            drawerOrderStore: drawerOrderStore,
+            settingsStore: settingsStore,
+            pinnedFolderStore: pinnedFolderStore,
+            folderCoverStore: folderCoverStore,
+            shelfStore: shelfStore,
+            pinnedAppStore: pinnedAppStore,
+            runningApplicationStore: runningApplicationStore,
+            appMembershipController: appMembershipController
+        )
         panelCoordinator = coordinator
         runtime.onToggleDrawer = { [weak coordinator] in coordinator?.toggleDrawer() }
         coordinator.onAddFolder = { [weak self] in self?.presentAddPinnedFolderPanel() }

@@ -3,8 +3,8 @@ import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// One slot in the strip: either a concrete window chip, a pinned messaging
-/// app-level entry (Dock-icon-like, 方案 B 2026-06-12), or a zone divider.
+/// One slot in the strip: a concrete window chip, an app-level leading entry,
+/// a pinned folder/shelf entry, or a zone divider.
 enum StripEntry: Identifiable, Hashable {
     case window(StripItem)
     /// Constant app-icon chip for a pinned messaging app. Carries the main window's
@@ -13,6 +13,8 @@ enum StripEntry: Identifiable, Hashable {
     /// equivalent) so the app recreates it — verified to work for WeChat even with
     /// other chat windows visible.
     case messagingApp(bundleID: String, mainWindow: StripItem?)
+    /// 固定应用：一个 app 常驻一个 app-level 图标，并从 live 区吸收其全部窗口与 fallback。
+    case pinnedApp(bundleID: String)
     /// 固定文件夹区的一格（消息区右侧、窗口区左侧）。path 即身份。
     case pinnedFolder(path: String)
     /// 中转格：文件夹区固定头位的暂存格（不可拖拽,常驻——它也是文件夹区永不为空的保证,
@@ -27,6 +29,7 @@ enum StripEntry: Identifiable, Hashable {
         // Stable id regardless of main-window presence, so the chip doesn't churn
         // when the main window opens/closes.
         case let .messagingApp(bid, _): return "msg-app-\(bid)"
+        case let .pinnedApp(bid): return "pinnedapp-\(bid)"
         case let .pinnedFolder(path): return "folder-\(path)"
         case .shelf: return "shelf"
         case let .divider(id): return id
@@ -43,6 +46,9 @@ struct DockStripView: View {
     @EnvironmentObject var pinnedFolderStore: PinnedFolderStore
     @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
     @EnvironmentObject var shelfStore: ShelfStore
+    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var runningApplicationStore: RunningApplicationStore
+    @EnvironmentObject var appMembershipController: AppMembershipController
 
     /// 文件夹 chip 点击 → 弹窗 toggle（path + chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
     var onFolderPopupToggle: (String, CGRect) -> Void = { _, _ in }
@@ -103,8 +109,10 @@ struct DockStripView: View {
     @State private var animatedEntryIDs: Set<String> = []
 
     private var allNonDrawerItems: [StripItem] {
-        StripItem.items(from: runtime.snapshot)
+        let pinnedIDs = Set(pinnedAppStore.bundleIDs)
+        return StripItem.items(from: runtime.snapshot)
             .filter { !drawerStore.contains($0.bundleIdentifier ?? "") }
+            .filter { !pinnedIDs.contains($0.bundleIdentifier ?? "") }
     }
 
     private var snapshotBundleIDs: Set<String> {
@@ -131,7 +139,11 @@ struct DockStripView: View {
     /// A 路线) while the pinned messaging zone keeps its own `MessagingAppStore` order —
     /// the two zones never cross (拖动分区内进行).
     private func partitioned() -> (pinned: [StripEntry], liveNatural: [StripItem]) {
-        let msg = messagingStore.bundleIDs            // ordered → drag-reorder friendly
+        let pinnedIDs = pinnedAppStore.bundleIDs
+        let msg = AppMembershipProjection.messagingIDs(
+            messagingStore.bundleIDs,
+            excludingPinnedIDs: pinnedIDs
+        )                                             // ordered → drag-reorder friendly
             .filter { !drawerStore.contains($0) && snapshotBundleIDs.contains($0) }
         let msgSet = Set(msg)
         let items = allNonDrawerItems
@@ -144,6 +156,7 @@ struct DockStripView: View {
             if let main { absorbedWindowIDs.insert(main.id) }
             pinned.append(.messagingApp(bundleID: bid, mainWindow: main))
         }
+        pinned += pinnedIDs.map { .pinnedApp(bundleID: $0) }
 
         let liveNatural = items.filter { item in
             guard msgSet.contains(item.bundleIdentifier ?? "") else { return true }
@@ -176,7 +189,7 @@ struct DockStripView: View {
         let order = stripOrderStore.reconciled(current: liveNatural.map(\.id), appKeyOf: appKeyOf)
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let orderedLive = order.compactMap { byID[$0] }.map(StripEntry.window)
-        // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
+        // 三区布局：[消息 + 固定应用][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
         // 中转格固定在文件夹区头位 → 文件夹区恒非空,分隔线恒在。
         let folderEntries = [StripEntry.shelf] + pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
         var zones = [pinned, folderEntries, orderedLive].filter { !$0.isEmpty }
@@ -418,7 +431,10 @@ struct DockStripView: View {
     /// **非 app-fallback** 窗口（= 运行中且有真实 live 窗口）。用 snapshot 直接判（移出抽屉前就成立，
     /// 避开"转正当帧 live 区还没放回窗口卡"的误判）。
     private func canConvertToStrip(_ bid: String) -> Bool {
-        guard !bid.isEmpty, bid != "com.apple.finder", !messagingStore.contains(bid) else { return false }
+        guard !bid.isEmpty,
+              bid != "com.apple.finder",
+              !messagingStore.contains(bid),
+              !pinnedAppStore.contains(bid) else { return false }
         return StripItem.items(from: runtime.snapshot).contains {
             $0.bundleIdentifier == bid && !$0.isAppLevelFallback
         }
@@ -551,6 +567,9 @@ struct DockStripView: View {
                 )
         case .messagingApp:
             stripEntryView(entry)
+        case .pinnedApp:
+            // 固定应用本轮不支持拖拽；重排与身份转换都不进入 live 窗口拖动链路。
+            stripEntryView(entry)
         case let .pinnedFolder(path):
             // 文件夹 chip：区内拖拽重排 + 拖出移除 + 拖回窗口区打开（owner 2026-07-06 反馈落地）。
             // 帧上报进**独立**的 FolderChipFramePreferenceKey（弹窗锚点 + 外部 pin 路由 + 本区重排
@@ -657,8 +676,14 @@ struct DockStripView: View {
                                  isHidden: isHiddenInSnapshot(bundleID: bid),
                                  scale: 1.0,
                                  dimsWhenInactive: false,
-                                 membershipItems: [LauncherMembershipItem(label: "取消标记消息应用",
-                                                                          action: { messagingStore.unmark(bid) })],
+                                 membershipItems: [
+                                    LauncherMembershipItem(label: "固定到任务栏") {
+                                        appMembershipController.pinToStrip(bid)
+                                    },
+                                    LauncherMembershipItem(label: "取消标记消息应用") {
+                                        messagingStore.unmark(bid)
+                                    }
+                                 ],
                                  onTap: { Self.reopenMainWindow(bundleID: bid) })
                 }
                 if let badge = badgeStore.badgesByBundleID[bid] {
@@ -666,7 +691,47 @@ struct DockStripView: View {
                         .zIndex(1)
                 }
             }
+        case let .pinnedApp(bid):
+            let isRunning = runningApplicationStore.isRunning(bid)
+            let hasRealWindow = hasRealWindow(bundleID: bid)
+            let reopen: (() -> Void)? = isRunning && !hasRealWindow
+                ? { Self.reopenMainWindow(bundleID: bid) }
+                : nil
+            LauncherChip(
+                bundleID: bid,
+                isRunning: isRunning,
+                isHidden: runningApplicationStore.isHidden(bid),
+                scale: 1.0,
+                membershipItems: pinnedAppMembershipItems(bundleID: bid),
+                menuMode: .full,
+                onTap: reopen,
+                onLaunch: { runtime.beginLaunch(bid) },
+                launchReady: !runtime.launchingBundleIDs.contains(bid)
+            )
         }
+    }
+
+    private func hasRealWindow(bundleID: String) -> Bool {
+        StripItem.items(from: runtime.snapshot).contains {
+            $0.bundleIdentifier == bundleID && !$0.isAppLevelFallback
+        }
+    }
+
+    private func pinnedAppMembershipItems(bundleID: String) -> [LauncherMembershipItem] {
+        [
+            LauncherMembershipItem(label: "取消固定") {
+                appMembershipController.unpinFromStrip(bundleID)
+            },
+            LauncherMembershipItem(label: "收进抽屉") {
+                appMembershipController.moveToDrawer(bundleID)
+            },
+            LauncherMembershipItem(label: "固定到启动台") {
+                appMembershipController.pinToLaunchpad(bundleID)
+            },
+            LauncherMembershipItem(label: "标记为消息应用") {
+                appMembershipController.markMessaging(bundleID)
+            }
+        ]
     }
 
     /// 固定文件夹左键唯一入口：按 `FolderInteraction.primaryAction` 分派（现固定 = 内容预览）。
@@ -785,7 +850,9 @@ struct DockStripView: View {
     /// Dock-icon-click equivalent: unhide + reopen. The app recreates its main window
     /// even when other windows are visible (verified with WeChat, 2026-06-12).
     private static func reopenMainWindow(bundleID: String) {
-        _ = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.unhide()
+        let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { !$0.isTerminated && $0.activationPolicy == .regular }
+        for app in runningApps { _ = app.unhide() }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: nil)
     }
@@ -799,6 +866,8 @@ struct ChipView: View {
     @EnvironmentObject var drawerStore: DrawerStore
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var launchFavoriteStore: LaunchFavoriteStore
+    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var appMembershipController: AppMembershipController
     let item: StripItem
     var scale: CGFloat = 1.0
     var iconOnly: Bool = false
@@ -1030,21 +1099,26 @@ struct ChipView: View {
         return menu
     }
 
-    /// Drawer + launch-favorite toggles are independent since 2026-06-16 (reversed
-    /// from the original 「四者互斥」), except 收进抽屉 below still clears the favorite
-    /// flag — coexistence only survives pin-then-stash order, not stash-then-pin.
-    /// Messaging stays mutually exclusive with both. The messaging flag itself is
-    /// permanent across drawer moves — moving to the drawer only changes where the
-    /// app shows (drawer wins display) and must NOT clear the flag.
+    /// Drawer + launch-favorite membership can coexist. Messaging remains mutually
+    /// exclusive with launch favorites, while drawer membership only changes where a
+    /// messaging app is displayed. Pinned-app conversions go through the controller.
     private func appendMembershipItems(to menu: NSMenu) {
-        guard let bid = item.bundleIdentifier else { return }
+        guard let bid = item.bundleIdentifier,
+              bid != PinnedAppStore.forbiddenBundleID else { return }
         menu.addItem(.separator())
+        if pinnedAppStore.canPin(bid), !pinnedAppStore.contains(bid) {
+            menu.addItem(ClosureMenuItem("固定到任务栏") {
+                appMembershipController.pinToStrip(bid)
+            })
+        }
         if drawerStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("固定到任务栏") { drawerStore.remove(bid) })
+            menu.addItem(ClosureMenuItem("移出抽屉") { drawerStore.remove(bid) })
         } else {
             // 不清固定标志：收纳与固定可共存（2026-06-16）。旧代码在此 remove 固定，
             // 导致「固定→收进抽屉→移出抽屉」后固定丢失（2026-06-18 owner 报告）。
-            menu.addItem(ClosureMenuItem("收进抽屉") { drawerStore.add(bid) })
+            menu.addItem(ClosureMenuItem("收进抽屉") {
+                appMembershipController.moveToDrawer(bid)
+            })
         }
         // 「固定到启动台」只对**不在抽屉**的 app 有意义（给它在任务条留常驻启动位）。
         // 已收进抽屉的 app 本就常驻抽屉，这个开关对它没有可见效果、只会造成「我已经
@@ -1054,8 +1128,7 @@ struct ChipView: View {
                 menu.addItem(ClosureMenuItem("取消固定") { launchFavoriteStore.remove(bid) })
             } else {
                 menu.addItem(ClosureMenuItem("固定到启动台") {
-                    launchFavoriteStore.add(bid)
-                    if messagingStore.contains(bid) { messagingStore.unmark(bid) }
+                    appMembershipController.pinToLaunchpad(bid)
                 })
             }
         }
@@ -1063,7 +1136,7 @@ struct ChipView: View {
             menu.addItem(ClosureMenuItem("取消标记消息应用") { messagingStore.unmark(bid) })
         } else {
             menu.addItem(ClosureMenuItem("标记为消息应用") {
-                messagingStore.mark(bid); drawerStore.remove(bid); launchFavoriteStore.remove(bid)
+                appMembershipController.markMessaging(bid)
             })
         }
     }
@@ -1085,6 +1158,7 @@ struct ChipView: View {
 
 struct DrawerCapsuleButton: View {
     @EnvironmentObject var drawerStore: DrawerStore
+    @EnvironmentObject var pinnedAppStore: PinnedAppStore
     /// 拖卡进抽屉的投放反馈：手指压在投放区时胶囊放大 + 高亮描边。
     @EnvironmentObject var dragController: DragController
     let action: () -> Void
@@ -1092,7 +1166,12 @@ struct DrawerCapsuleButton: View {
     private static let iconSize: CGFloat = 10
     private static let gridSpacing: CGFloat = 5
 
-    private var folderIDs: [String] { Array(drawerStore.bundleIDs.prefix(9)) }
+    private var folderIDs: [String] {
+        AppMembershipProjection.drawerPreview(
+            drawerIDs: drawerStore.bundleIDs,
+            pinnedIDs: pinnedAppStore.bundleIDs
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -1184,6 +1263,8 @@ private struct StripLayoutKey: Equatable {
             else                        { form = .single }
         case .messagingApp:
             form = .launcher    // both states render as a fixed-size icon chip
+        case .pinnedApp:
+            form = .launcher    // fixed-size pinned-app icon chip
         case .pinnedFolder:
             form = .launcher    // fixed-size folder chip
         case .shelf:

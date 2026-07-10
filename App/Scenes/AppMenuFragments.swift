@@ -79,17 +79,26 @@ enum AppMenuBuilder {
     /// Append「退出 App」plus, for non-self apps, the Option-alternate「强制退出」.
     /// The two are an alternate pair: same (empty) key equivalent, the second
     /// `isAlternate` with the Option modifier → live swap while the menu is open.
-    static func appendQuitItems(to menu: NSMenu, bundleID: String?, onQuit: @escaping () -> Void) {
+    static func appendQuitItems(
+        to menu: NSMenu,
+        bundleID: String?,
+        onForceQuit: (() -> Void)? = nil,
+        onQuit: @escaping () -> Void
+    ) {
         let quit = ClosureMenuItem("退出 App", handler: onQuit)
         quit.keyEquivalentModifierMask = []
         menu.addItem(quit)
 
         guard let bid = bundleID, bid != Bundle.main.bundleIdentifier else { return }
         let force = ClosureMenuItem("强制退出") {
-            NSRunningApplication
-                .runningApplications(withBundleIdentifier: bid)
-                .first?
-                .forceTerminate()
+            if let onForceQuit {
+                onForceQuit()
+            } else {
+                NSRunningApplication
+                    .runningApplications(withBundleIdentifier: bid)
+                    .first?
+                    .forceTerminate()
+            }
         }
         force.keyEquivalentModifierMask = [.option]
         force.isAlternate = true

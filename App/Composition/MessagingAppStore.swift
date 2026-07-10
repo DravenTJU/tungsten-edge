@@ -23,6 +23,7 @@ final class MessagingAppStore: ObservableObject {
     private var optOutIDs: Set<String> = []
     private let key = "messagingBundleIDs"
     private let optOutKey = "messagingOptOutBundleIDs"
+    private let defaults: UserDefaults
 
     /// Built-in messaging app whitelist. Wrong/stale IDs are harmless (they never
     /// match a running app); the social-networking category check below catches
@@ -52,9 +53,10 @@ final class MessagingAppStore: ObservableObject {
         "com.viber.osx",                      // Viber
     ]
 
-    init() {
-        bundleIDs = UserDefaults.standard.stringArray(forKey: key) ?? []
-        optOutIDs = Set(UserDefaults.standard.stringArray(forKey: optOutKey) ?? [])
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        bundleIDs = defaults.stringArray(forKey: key) ?? []
+        optOutIDs = Set(defaults.stringArray(forKey: optOutKey) ?? [])
     }
 
     func contains(_ id: String) -> Bool { bundleIDs.contains(id) }
@@ -91,11 +93,11 @@ final class MessagingAppStore: ObservableObject {
     }
 
     private func persist() {
-        UserDefaults.standard.set(bundleIDs, forKey: key)
+        defaults.set(bundleIDs, forKey: key)
     }
 
     private func persistOptOut() {
-        UserDefaults.standard.set(Array(optOutIDs), forKey: optOutKey)
+        defaults.set(Array(optOutIDs), forKey: optOutKey)
     }
 
     // MARK: - Category signal

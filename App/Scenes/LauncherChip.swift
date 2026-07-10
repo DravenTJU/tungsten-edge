@@ -6,12 +6,12 @@ import SwiftUI
 /// Renders the three launcher states (not running / running-no-window / running-hidden)
 /// and handles tap-to-launch, tap-to-reopen, and the launch bounce animation.
 ///
-/// Shared by the drawer (collected apps, scale 0.7) and the main strip (pinned
-/// messaging apps, scale 1.0). Call-site differences are injected via
+/// Shared by the drawer (collected apps, scale 0.7) and the main strip (messaging
+/// and user-pinned apps, scale 1.0). Call-site differences are injected via
 /// `membershipItems` (固定到任务栏 / 取消固定 / 取消标记消息应用) + `menuMode`.
 
 /// 一条成员 / 管理菜单项（标签 + 动作）。LauncherChip 右键菜单末尾按序渲染，
-/// 可多项——共存图标（既收纳又固定）同时给「固定到任务栏」+「取消固定」。
+/// 可多项——收纳 + 启动收藏共存图标可同时给转换、移出与取消收藏入口。
 struct LauncherMembershipItem {
     let label: String
     let action: () -> Void
@@ -19,8 +19,8 @@ struct LauncherMembershipItem {
 
 struct LauncherChip: View {
     let bundleID: String
-    let isRunning: Bool   // derived from runtime.snapshot by the parent view
-    let isHidden: Bool    // derived from runtime.snapshot by the parent view
+    let isRunning: Bool   // supplied by the displayed zone's runtime/process projection
+    let isHidden: Bool    // supplied by the displayed zone's runtime/process projection
     var scale: CGFloat = 0.7
     /// Drawer chips dim by run/hidden state; pinned messaging chips on the strip
     /// stay full-opacity (product decision: "always reachable", not degraded).
@@ -31,12 +31,17 @@ struct LauncherChip: View {
     /// 菜单模式：`.full` 运行 / 收纳图标完整菜单；`.removeOnly` 纯固定启动图标只留成员项。
     var menuMode: LauncherMenuMode = .full
     /// When set, replaces the default tap behavior (drawer show/hide toggle). Used by
-    /// the strip's messaging app chip, whose tap must always reopen the main window.
+    /// app-level strip entries that must reopen a missing main window.
     var onTap: (() -> Void)? = nil
     /// Fired when this chip actually kicks off a launch (tap on a not-running app).
     /// The drawer wires it to `runtime.beginLaunch` for the 窗口出现门控 (keeps the
     /// app bouncing in the launch zone until its window shows, not just its process).
     var onLaunch: () -> Void = {}
+    /// Optional external launch gate. `nil` preserves the legacy behavior: a running
+    /// process or a successful open completion stops the bounce. When non-nil, the
+    /// caller owns readiness and the bounce stops only after this becomes `true`
+    /// (or launch fails / the 8-second backstop fires).
+    var launchReady: Bool? = nil
     /// Fired when the tap dispatches an "open" action: unhide+activate (running but not active) or launch (not running).
     /// Hide taps (app is active → minimize) do NOT fire this — the drawer stays open for those.
     /// Only set by DrawerView; strip messaging chips leave it nil.
@@ -100,7 +105,10 @@ struct LauncherChip: View {
         .help(displayName)
         .onDisappear { stopBounce() }
         .onChange(of: isRunning) { newValue in
-            if newValue { stopBounce() }
+            if launchReady == nil, newValue { stopBounce() }
+        }
+        .onChange(of: launchReady) { newValue in
+            if newValue == true { stopBounce() }
         }
         .animation(.easeInOut(duration: 0.18), value: isHovering)
     }
@@ -114,28 +122,36 @@ struct LauncherChip: View {
                                                isHidden: isHidden,
                                                hasMembership: !membershipItems.isEmpty)
         // 仅在真要执行 显示/隐藏/退出 时才取 app 对象；取不到就跳过该项（快照短暂陈旧的兜底）。
-        let runningApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleID })
+        let runningApps = Self.regularRunningApplications(bundleID: bundleID)
         var didAppendAppActions = false
         for kind in kinds {
             switch kind {
             case .recentDocuments:
                 AppMenuBuilder.appendRecentDocuments(to: menu, bundleID: bundleID)
             case .show:
-                if let app = runningApp {
+                if !runningApps.isEmpty {
                     menu.addItem(ClosureMenuItem("显示") {
-                        _ = app.unhide()
-                        app.activate(options: .activateIgnoringOtherApps)
+                        for app in runningApps { _ = app.unhide() }
+                        runningApps.first?.activate(options: .activateIgnoringOtherApps)
                     })
                     didAppendAppActions = true
                 }
             case .hide:
-                if let app = runningApp {
-                    menu.addItem(ClosureMenuItem("隐藏") { _ = app.hide() })
+                if !runningApps.isEmpty {
+                    menu.addItem(ClosureMenuItem("隐藏") {
+                        for app in runningApps { _ = app.hide() }
+                    })
                     didAppendAppActions = true
                 }
             case .quit:
-                if let app = runningApp {
-                    AppMenuBuilder.appendQuitItems(to: menu, bundleID: bundleID) { _ = app.terminate() }
+                if !runningApps.isEmpty {
+                    AppMenuBuilder.appendQuitItems(
+                        to: menu,
+                        bundleID: bundleID,
+                        onForceQuit: { for app in runningApps { _ = app.forceTerminate() } }
+                    ) {
+                        for app in runningApps { _ = app.terminate() }
+                    }
                     didAppendAppActions = true
                 }
             case .membership:
@@ -152,14 +168,14 @@ struct LauncherChip: View {
 
     private func handleTap() {
         if isRunning {
-            let app = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == bundleID }
-            if let app, app.isActive {
+            let runningApps = Self.regularRunningApplications(bundleID: bundleID)
+            if runningApps.contains(where: \.isActive) {
                 // 在前台 → 收起（最小化）：抽屉保持打开
-                _ = app.hide()
+                for app in runningApps { _ = app.hide() }
             } else {
                 // 未激活 / 隐藏 / 窗口已关 → 唤出：关闭抽屉
                 guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
-                _ = app?.unhide()
+                for app in runningApps { _ = app.unhide() }
                 NSWorkspace.shared.openApplication(at: appURL, configuration: .init(), completionHandler: nil)
                 onPrimaryAction?()
             }
@@ -171,6 +187,12 @@ struct LauncherChip: View {
 
     private var displayName: String {
         AppDisplayNameResolver.displayName(for: bundleID)
+    }
+
+    private static func regularRunningApplications(bundleID: String) -> [NSRunningApplication] {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter {
+            !$0.isTerminated && $0.activationPolicy == .regular
+        }
     }
 
     /// 停跳：只翻 isLaunching。偏移量与动画类型都声明式绑定它，置 false 即换成
@@ -187,6 +209,7 @@ struct LauncherChip: View {
         }
 
         isLaunching = true
+        let usesExternalLaunchGate = launchReady != nil
         onLaunch()
         onPrimaryAction?()
 
@@ -199,10 +222,12 @@ struct LauncherChip: View {
         NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { _, error in
             if let error {
                 Self.logger.error("launch()：openApplication 失败，bundleID=\(bundleID, privacy: .public)，error=\(error.localizedDescription, privacy: .public)")
-            }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                stopBounce()
+                Task { @MainActor in stopBounce() }
+            } else if !usesExternalLaunchGate {
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    stopBounce()
+                }
             }
         }
     }

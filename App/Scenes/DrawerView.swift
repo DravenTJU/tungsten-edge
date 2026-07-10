@@ -7,7 +7,7 @@ import SwiftUI
 /// - 运行区：收纳的、且进程在跑的 app（亮图标 + 圆点）。点击 = app 级唤出/收起（`LauncherChip.handleTap`）。
 /// - 启动区：没在跑的 app —— 收纳但已退出的 + 固定到启动台当前关着的（暗图标，点击启动）。
 ///
-/// 顺序与成员解耦：显示先后只读 `DrawerOrderStore`（按收纳∪固定全集记），"是收纳还是固定"仍归原两份
+/// 顺序与成员解耦：显示先后只读 `DrawerOrderStore`（按收纳∪启动收藏全集记），两种身份仍归原两份
 /// 名单（语义不变、支持共存）。拖动两向：抽屉内同区落点 = 排序；拖到任务条 = 移回（仅收纳项，走
 /// `DragController` 整屏自绘载体）。
 struct DrawerView: View {
@@ -24,6 +24,8 @@ struct DrawerView: View {
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var drawerOrderStore: DrawerOrderStore
     @EnvironmentObject var dragController: DragController
+    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var appMembershipController: AppMembershipController
 
     /// 抽屉图标在 `"drawer"` 坐标空间里的位置，喂给起拖抓取偏移 + 同区落点命中。
     @State private var drawerFrames: [String: CGRect] = [:]
@@ -40,9 +42,14 @@ struct DrawerView: View {
 
     // MARK: - 成员与分区（全 bundleID 级）
 
-    /// 成员全集（收纳 ∪ 固定），喂给顺序层记忆——绝不按"当前可见"裁，否则纯固定项运行离开抽屉后顺序丢。
+    /// 成员全集（收纳 ∪ 启动收藏 − pinned app），喂给顺序层记忆——绝不按"当前可见"裁，
+    /// 否则纯启动收藏运行离开抽屉后顺序丢。
     private var allMembers: [String] {
-        drawerStore.bundleIDs + launchFavoriteStore.bundleIDs.filter { !drawerStore.contains($0) }
+        AppMembershipProjection.drawerMembers(
+            drawerIDs: drawerStore.bundleIDs,
+            launchFavoriteIDs: launchFavoriteStore.bundleIDs,
+            pinnedIDs: pinnedAppStore.bundleIDs
+        )
     }
 
     private var displayOrder: [String] { drawerOrderStore.reconciled(members: allMembers) }
@@ -175,26 +182,30 @@ struct DrawerView: View {
         return p.source == .drawer && p.id == id
     }
 
-    /// `running` 按**区**传(运行区 true / 启动区 false),不传真实运行态——启动区的 app 进程一起来
-    /// `isRunning` 就翻 true 会让 `LauncherChip` 的 `onChange(of:isRunning)` 提前 `stopBounce`,弹跳被掐断
-    /// （owner 2026-06-21 报告"启动弹跳没了"的真因）。窗口出现门控期内它仍在启动区,该一直弹到真窗口出现。
+    /// `running` 按**区**传（运行区 true / 启动区 false），保证外观、点击与菜单都服从当前显示区。
+    /// 启动后的进程在真窗口出现前仍留在启动区；弹跳停止由 `launchReady` 的窗口门控负责，
+    /// 不再由进程刚出现这一瞬间提前放行。
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let stashed = drawerStore.contains(id)
         let favorite = launchFavoriteStore.contains(id)
         let delay = Double(min(index, 6)) * 0.018
-        // 成员项：收纳→「固定到任务栏」，固定→「取消固定」；共存图标两项都给（各删各 store）。
-        // 用表达式拼数组，避免 @ViewBuilder 把 if 当成条件视图。
+        // 「固定到任务栏」统一 promote；移出抽屉和取消启动收藏仍各管各的身份。
+        let pinToStrip: [LauncherMembershipItem] = pinnedAppStore.canPin(id)
+            ? [LauncherMembershipItem(label: "固定到任务栏", action: { appMembershipController.pinToStrip(id) })]
+            : []
         let membership: [LauncherMembershipItem] =
-            (stashed ? [LauncherMembershipItem(label: "固定到任务栏", action: { drawerStore.remove(id) })] : [])
+            pinToStrip
+            + (stashed ? [LauncherMembershipItem(label: "移出抽屉", action: { drawerStore.remove(id) })] : [])
             + (favorite ? [LauncherMembershipItem(label: "取消固定", action: { launchFavoriteStore.remove(id) })] : [])
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
                      scale: 0.7,
                      membershipItems: membership,
-                     menuMode: stashed ? .full : .removeOnly,   // 纯固定→只留「取消固定」；收纳/共存→完整菜单
+                     menuMode: stashed ? .full : .removeOnly,
                      onLaunch: { runtime.beginLaunch(id) },
+                     launchReady: !runtime.launchingBundleIDs.contains(id),
                      onPrimaryAction: onPrimaryAction)
             .offset(y: isPresented ? 0 : 20)
             .opacity(isPresented ? 1 : 0)

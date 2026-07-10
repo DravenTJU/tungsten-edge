@@ -21,9 +21,11 @@ import Foundation
 final class LaunchFavoriteStore: ObservableObject {
     @Published private(set) var bundleIDs: [String] = []
     private let key = "launchFavoriteBundleIDs"
+    private let defaults: UserDefaults
 
-    init() {
-        bundleIDs = UserDefaults.standard.stringArray(forKey: key) ?? []
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        bundleIDs = defaults.stringArray(forKey: key) ?? []
     }
 
     func contains(_ id: String) -> Bool { bundleIDs.contains(id) }
@@ -40,6 +42,6 @@ final class LaunchFavoriteStore: ObservableObject {
     }
 
     private func persist() {
-        UserDefaults.standard.set(bundleIDs, forKey: key)
+        defaults.set(bundleIDs, forKey: key)
     }
 }
