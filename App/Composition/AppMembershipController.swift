@@ -33,9 +33,17 @@ final class AppMembershipController: ObservableObject {
         }
     }
 
-    /// 「从程序坞中移除」：仅清 kept 标志。
+    /// 「从程序坞中移除」——唯一退出动词，通用退出（owner 2026-07-11：抽屉即程序坞的一部分）：
+    /// kept、抽屉、消息身份全部清除。消息 unmark 自带 opt-out，防止下轮 autoRegister 悄悄加回；
+    /// 想回来可重新「标记为消息应用」。运行中的窗口照常显示（任务条天职，与保留无关）。
     func removeFromDock(_ bundleID: String) {
         keptAppStore.remove(bundleID)
+        if drawerStore.contains(bundleID) {
+            drawerStore.remove(bundleID)
+        }
+        if messagingStore.contains(bundleID) {
+            messagingStore.unmark(bundleID)
+        }
     }
 
     /// 「收进抽屉」：kept.remove + drawer.add。

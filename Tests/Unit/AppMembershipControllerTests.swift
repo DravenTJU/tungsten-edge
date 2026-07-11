@@ -55,6 +55,28 @@ final class AppMembershipControllerTests: XCTestCase {
         XCTAssertFalse(kept.contains("com.example.app"))
     }
 
+    // 「从程序坞中移除」= 通用退出（owner 2026-07-11：抽屉即程序坞的一部分）
+
+    func testRemoveFromDockClearsDrawerMembership() {
+        drawer.add("com.example.app")
+        controller.removeFromDock("com.example.app")
+        XCTAssertFalse(drawer.contains("com.example.app"))
+    }
+
+    /// 抽屉里的消息应用移除时同时 unmark（含 opt-out）：不弹回消息区，autoRegister 也不加回。
+    func testRemoveFromDockUnmarksMessagingWithOptOut() {
+        let wechat = "com.tencent.xinWeChat"   // 内置白名单 id，autoRegister 无需查系统分类
+        messaging.mark(wechat)
+        drawer.add(wechat)
+        controller.removeFromDock(wechat)
+        XCTAssertFalse(drawer.contains(wechat))
+        XCTAssertFalse(messaging.contains(wechat))
+        messaging.autoRegister(runningBundleIDs: [wechat])
+        XCTAssertFalse(messaging.contains(wechat), "opt-out 阻止自动重注册")
+        messaging.mark(wechat)
+        XCTAssertTrue(messaging.contains(wechat), "手动标记可回来")
+    }
+
     func testMoveToDrawerRemovesKeptAndAddsDrawer() {
         controller.keepInDock("com.example.app")
         controller.moveToDrawer("com.example.app")

@@ -81,15 +81,21 @@
 - Drawer two zones are partitioned by process state from `RunningApplicationStore`: upper zone = running (bright + white dot), lower zone = not-running (gray, no dot). `isLaunchingWithoutWindow` gating still applies.
 - `DrawerOrderStore` is the persistent ordering layer keyed by bundleID and synced over `drawerStore - keptAppStore`.
 - Drawer reorder is same-zone only. Cross-divider drops are meaningless.
-- `DragPayload` uses strip id = stable chip token, drawer id = bundleID, folder id = folder path.
+- `DragPayload` uses strip id = stable chip token, drawer id = bundleID, folder id = folder path, messaging id = bundleID.
+- Messaging-zone chips are draggable: in-zone reorder persists to `MessagingAppStore.bundleIDs` (`reorder` operates on the full array so hidden members keep relative positions). Frames report into the separate `MessagingChipFramePreferenceKey` — never merge messaging ids into `chipFrames`.
+- Messaging reorder (like drawer reorder) is driven by `onChange(globalLocation)` (`updateMessagingReorder`), never by the chip's own `DragGesture.onChanged` — SwiftUI cancels the gesture after the first reorder moves the chip.
+- `.messaging` drop zones equal `.strip` (capsule + open drawer body). The strip itself is never a `.messaging` drop target; releases on shelf/folder zone/live zone/desktop are no-ops. Spring-load and `isOverStashZone` accept `.messaging` alongside `.strip`.
 
 ## Strip And Drawer Conversion
 
 - `canStash` rejects only missing bundleID and `com.apple.finder`. App-level fallback chips can be stashed.
 - Strip-to-drawer drop zone is visible capsule content plus small tolerance, and drawer content only while open. Do not use full shadow frame as the hit zone.
 - Strip-into-open-drawer converts on enter, reverts on exit, and commits only on release inside. Keep enter/exit hysteresis; do not restore placeholder cells or resize-per-hover insertion.
-- Drag conversions are **symmetric transactions**: strip→drawer does `drawer.add + kept.remove` on convert, `kept.add + drawer.remove` on revert; capsule drop does `drawer.add + kept.remove`. Drawer→strip keepPlacement does `drawer.remove + kept.add` on enter, `kept.remove + drawer.add` on revert. `cancelDrag` must rollback any uncommitted transaction via the same revert paths before teardown.
-- Drawer-to-strip has two branches via `drawerDragOutMode`: Finder/messaging → reject; running with real windows → unstash (existing precise landing); not-running/no-real-window → keepPlacement (lands a kept-app placeholder icon). Reject is the only branch that does nothing.
+- Drawer membership **is** 「在程序坞中保留」 (owner 2026-07-11): the menu vocabulary has exactly two verbs — 在程序坞中保留 (join, only on non-member window chips) and 从程序坞中移除 (the only exit, on drawer icons and kept chips). 收进抽屉/移出抽屉 must not reappear in any menu; placement changes are drag-only.
+- Cross-panel conversion state is the single `DragController.conversion: CrossPanelConversion?` enum (stripToDrawer / drawerToStrip / messagingToDrawer / drawerToMessaging) — original payload + rollback snapshot, no parallel boolean flags. Mutation order in every convert/revert: set `conversion` and flip/restore `draggingPayload` **before** touching stores, so member-vanish watchers exempt by payload source (no cancel race).
+- Drag conversions are **symmetric transactions**: strip→drawer does `drawer.add + kept.remove` on convert, `kept.add + drawer.remove` on revert; capsule drop does `drawer.add + kept.remove`. Drawer→strip keepPlacement does `drawer.remove + kept.add` on enter, `kept.remove + drawer.add` on revert. Messaging→drawer does `drawer.add` on enter (messaging flag untouched), `drawer.remove` on revert; drawer→messaging does `drawer.remove` on release, `drawer.add` on revert. `cancelDrag` must rollback any uncommitted transaction via the same revert paths before teardown.
+- Drawer-to-strip modes come from pure `DragConversionPlan.drawerDragOutMode` (unit-tested; messaging check must precede the real-window check): Finder / not-running messaging → reject; running messaging → releaseToMessaging; running with real windows → unstash (existing precise landing); not-running/no-real-window → keepPlacement. Reject is the only branch that does nothing — a messaging member never takes the fallback unstash on strip drop (`DragConversionPlan.endAction` gates it).
+- releaseToMessaging triggers on entering the **messaging-zone range** (union of messaging chip frames + 8pt enter / 24pt exit hysteresis; 56pt strip-head fallback when the zone is empty), not on leaving the drawer body. Leaving the range or entering a drop zone reverts to the drawer.
 - One drawer icon represents the app's whole window-chip block; land all chips contiguously in current display order. keepPlacement uses a single-element block `["app-\(bundleID)"]` when no window cards exist.
 - Drawer-to-strip landing goes through staged placement consumed inside `StripOrderStore.sync(current:appKeyOf:)`. The sync fallback resolves kept placeholder ids when no window cards match the bundleID.
 - Freeze strip width during converted cross-panel drags and release the clamp only on commit or revert.
@@ -99,6 +105,7 @@
 - A kept app does **not** absorb live windows: while running with real windows it shows ordinary window chips; only when exited (or running with no real window) does it collapse to a single app-level icon that stays in place (gray + click-to-relaunch when exited). The icon lives in the live zone and can be freely dragged/reordered like window chips.
 - Finder must never enter kept state. Reject `com.apple.finder` both when loading `KeptAppStore` and when adding through any menu/action path.
 - Kept identity wins over drawer and messaging membership. Route conversions through `AppMembershipController`; keeping a messaging app deliberately calls `unmark` and therefore keeps its auto-registration opt-out after later removal.
+- `removeFromDock` is the universal exit: `kept.remove + drawer.remove + messaging.unmark` (unmark records the opt-out so autoRegister does not silently re-add; manual 标记为消息应用 brings it back). Drawer icons route their single 从程序坞中移除 item through this controller method — never call `drawerStore.remove` directly from a menu.
 - `.keptApp` projection has two sources, both rendered as `LauncherChip` with `RunningApplicationStore` running dot/gray/hidden state: (a) unrunning kept apps → placeholder injection by `DockStripView` (id `"app-\(bid)"`); (b) running kept apps whose only snapshot entry is `isAppLevelFallback` → that entry is re-typed to `.keptApp` in the strip projection (id unchanged from the snapshot's `app-*` fallback token). The id `"app-\(bid)"` matches `AppTracker.rebuildSnapshot()`'s no-window fallback token — this is the position-retention lifeline.
 - Clicking a running kept app with no real non-fallback window must unhide/reopen it. Running kept apps with real windows use app-level frontmost->hide and background->show behavior.
 - Kept-app actions do not write window-level optimistic state or predicted frontmost state. Any immediate acknowledgment stays view-local, and app-active decisions read a fresh `NSRunningApplication`.
@@ -108,7 +115,7 @@
 
 ## Pinned Folders And External File Drop
 
-- Strip layout is `[messaging + kept apps][divider][shelf + pinned folders][divider][live windows]`; empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
+- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]` (kept-app placeholders live in the live zone, not the messaging zone); empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
 - Folder chips drag via `DragController` source `.folder`; keep it isolated from strip/drawer stash semantics.
 - Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
@@ -143,10 +150,10 @@
 ## Menus, Panels, And Screens
 
 - Strip and drawer chip menus are hand-built AppKit `NSMenu`, not SwiftUI `.contextMenu`.
-- Strip window-chip menus must not expose drawer membership actions (`收进抽屉` / `移出抽屉`); stashing a window chip is drag-only. This does not remove `LauncherChip` membership items such as `移出抽屉` for an icon already displayed in the drawer.
+- No menu anywhere exposes drawer placement actions (`收进抽屉` / `移出抽屉`); stashing and unstashing are drag-only. A drawer icon's only membership item is 从程序坞中移除 (via `AppMembershipController.removeFromDock`).
 - `MenuHostNSView` claims only right-click / Control-click and returns `nil` from `hitTest` otherwise.
 - Force Quit is a native alternate item after Quit, gated out for this app itself.
-- `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Membership items are injected via `membershipItems` and may be multiple (a stashed+kept icon shows both 移出抽屉 and 在程序坞中保留/从程序坞中移除).
+- `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Membership items are injected via `membershipItems` and may be multiple (e.g. a messaging-zone icon shows 在程序坞中保留 and 取消标记消息应用).
 - Finder menu items apply to both persistent Finder chip and concrete Finder windows.
 - SwiftUI shadow margin is `shadowPadding = 20pt`; floating panel shadows must fit within it.
 - Coordinate math on `dockFrame` / `capsuleFrame` subtracts `shadowPadding` to reach visual content, and `fittingSize.width` subtracts `2 * shadowPadding`.

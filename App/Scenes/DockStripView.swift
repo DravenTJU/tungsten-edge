@@ -86,6 +86,10 @@ struct DockStripView: View {
     /// 那是 live 窗口区拖拽重排与抽屉拖回落点的输入,混入会让窗口拖动命中文件夹区、落点 no-op（评审 P1）。
     @State private var folderChipFrames: [String: CGRect] = [:]
 
+    /// 消息区 chip 帧（bundleID → "strip" 空间 frame）。**独立字典,同文件夹 chip 的理由绝不混入
+    /// chipFrames**——喂消息区内重排 hit-test + 抽屉拖出的"消息区范围"释放判定。
+    @State private var messagingChipFrames: [String: CGRect] = [:]
+
     /// 中转格 frame（"strip" 空间）。**独立上报,不塞进 folderChipFrames**（评审：那个字典专属
     /// 文件夹 chip,后续还喂文件夹重排 hit-test,不能混 sentinel）。喂中转弹窗锚点 + drop 路由。
     @State private var shelfFrame: CGRect = .zero
@@ -308,11 +312,22 @@ struct DockStripView: View {
         .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
         .padding(PanelCoordinator.shadowPadding)
         // 抽屉图标拖到任务条上：进任务条区即转正成窗口卡、跟光标整块实时让位（镜像 DrawerView 的全局鼠标驱动）。
+        // 消息区的重排/释放同样由全局鼠标驱动——重排会挪动被拖 chip,SwiftUI 会取消原手势,
+        // 不能依赖 chip 自己的 .onChanged（同抽屉教训,owner 2026-06-22 / Codex 评审 P1-4）。
         .onChange(of: dragController.globalLocation) { _ in
+            updateDrawerToMessagingRelease()
             updateDrawerToStripConvert()
             updateStripBlockReorder()
+            updateMessagingReorder()
             syncConvertedCarrier()
             updateFolderDragZone()
+        }
+        // 拖动中消息 chip 的 app 从消息区消失（退出/外部 unmark/快照丢）→ 取消拖动，免得空位卡死。
+        // 收纳预览（messagingToDrawer）不误判：转换后载荷来源已是 .drawer（Codex 评审 P2-5）。
+        .onChange(of: messagingZoneIDs) { ids in
+            if let p = dragController.draggingPayload, p.source == .messaging, !ids.contains(p.bundleID) {
+                dragController.cancelDrag()
+            }
         }
         // Converge the remembered live order with the current snapshot (drop closed, append
         // new) as a side-effect — never during body eval. The `.onAppear` seed mirrors the old
@@ -321,6 +336,7 @@ struct DockStripView: View {
         .onAppear { reconcileLiveOrder() }
         .onPreferenceChange(ChipFramePreferenceKey.self) { chipFrames = $0 }
         .onPreferenceChange(FolderChipFramePreferenceKey.self) { folderChipFrames = $0 }
+        .onPreferenceChange(MessagingChipFramePreferenceKey.self) { messagingChipFrames = $0 }
         .onPreferenceChange(ShelfFramePreferenceKey.self) { shelfFrame = $0 }
         .onChange(of: pinnedFolderStore.folderPaths) { currentPaths in
             let validIDs = Set(["shelf"] + currentPaths.map { "folder-\($0)" })
@@ -369,9 +385,12 @@ struct DockStripView: View {
         dragController.setFolderDragZone(geometry.classify(screenPoint: dragController.globalLocation))
     }
 
-    /// 任务条整条高亮：抽屉图标拖回（unstash）或外部拖目录悬停文件夹区（pin）。
+    /// 任务条整条高亮：抽屉图标拖回（unstash/keepPlacement）或外部拖目录悬停文件夹区（pin）。
+    /// 消息成员的抽屉图标不点亮——它的落点只有消息区范围（释放时 chip 物化就是反馈），
+    /// 整条高亮会暗示"哪里都能放"（Codex 评审 P1-3 的落点边界）。
     private var stripHighlighted: Bool {
-        if dragController.isOverUnstashZone { return true }
+        if dragController.isOverUnstashZone,
+           let p = dragController.draggingPayload, !messagingStore.contains(p.bundleID) { return true }
         if case .pin = externalDropTarget { return true }
         return false
     }
@@ -463,24 +482,14 @@ struct DockStripView: View {
 
     // MARK: - 抽屉图标拖回任务条·精确落点（运行中应用，全局鼠标驱动，镜像 DrawerView）
 
-    /// 抽屉拖出模式：决定抽屉图标拖到任务条时的行为。
-    enum DrawerDragOutMode {
-        case reject         // Finder/messaging → 不接受
-        case unstash        // 有真窗口 → 现有精确落位路径
-        case keepPlacement  // 未运行/无真窗 → 保留图标落位路径
-    }
-
-    /// 判定抽屉图标拖到任务条的模式：Finder/messaging 拒收；有真窗口走 unstash；否则走 keepPlacement。
-    private func drawerDragOutMode(_ bid: String) -> DrawerDragOutMode {
-        guard !bid.isEmpty,
-              bid != "com.apple.finder",
-              !messagingStore.contains(bid) else { return .reject }
-        if StripItem.items(from: runtime.snapshot).contains(where: {
-            $0.bundleIdentifier == bid && !$0.isAppLevelFallback
-        }) {
-            return .unstash
-        }
-        return .keepPlacement
+    /// 抽屉拖出模式（判定是纯函数 `DragConversionPlan.drawerDragOutMode`，单测覆盖；这里只喂当前事实）。
+    private func currentDrawerDragOutMode(_ bid: String) -> DrawerDragOutMode {
+        DragConversionPlan.drawerDragOutMode(
+            bundleID: bid,
+            isMessagingMember: messagingStore.contains(bid),
+            isInSnapshot: snapshotBundleIDs.contains(bid),
+            hasRealWindow: hasRealWindow(bundleID: bid)
+        )
     }
 
     /// 这个 app 当前在 live 区的窗口卡 id（按显示序，排除 app-fallback）。转正后用于整块连续重排。
@@ -538,8 +547,9 @@ struct DockStripView: View {
         let clearlyOut = g.x < r.minX - 24  || g.x > r.maxX + 24  || g.y < r.minY - 24  || g.y > r.maxY + 40
         if !dc.isConvertedToStrip {
             guard enter else { return }
-            let mode = drawerDragOutMode(bid)
-            guard mode != .reject else { return }
+            let mode = currentDrawerDragOutMode(bid)
+            // reject 留在抽屉；releaseToMessaging 由 updateDrawerToMessagingRelease 按消息区范围处理。
+            guard mode == .unstash || mode == .keepPlacement else { return }
             // 此刻本组窗口卡还没出现在 live 区，命中目标只在**已有**卡里找（exclude 空集即可）。
             let target = stripPoint(from: g).flatMap { blockTarget(at: $0, excluding: []) }
             dc.convertDrawerToStrip()
@@ -549,6 +559,72 @@ struct DockStripView: View {
             stripOrderStore.cancelExternalBlock()
             dc.revertDrawerToStrip()
         }
+    }
+
+    // MARK: - 消息区拖拽（区内重排 + 抽屉消息应用的释放/回滚，全局鼠标驱动）
+
+    /// 正在拖动的消息区 chip 的 bundleID（nil = 没有）。起拖后原位 opacity 隐藏、布局空位保留
+    /// （空位即落点反馈）。收纳预览期载荷来源翻成 .drawer,此值自动归 nil——chip 那时已从区里消失。
+    private var draggingMessagingBundleID: String? {
+        if let p = dragController.draggingPayload, p.source == .messaging { return p.bundleID }
+        return nil
+    }
+
+    /// 当前消息区可见 chip 的 bundleID（区内显示序）。喂重排遍历 + 拖动中消失清理。
+    private var messagingZoneIDs: [String] {
+        partitioned().messaging.compactMap { entry in
+            if case let .messagingApp(bid, _) = entry { return bid }
+            return nil
+        }
+    }
+
+    /// 消息区范围（"strip" 空间）：现有消息 chip 帧的并集；区空时退化为条头一小段
+    /// （释放后消息区在条头物化）。抽屉消息应用的释放判定用它,不认"离开抽屉体"（Codex 评审 P1-3）。
+    private var messagingReleaseZone: CGRect? {
+        let frames = messagingZoneIDs.compactMap { messagingChipFrames[$0] }
+        if let first = frames.first {
+            return frames.dropFirst().reduce(first) { $0.union($1) }
+        }
+        guard stripRootScreenRect != .zero else { return nil }
+        return CGRect(x: 0, y: 0, width: 56, height: stripRootScreenRect.height)
+    }
+
+    /// 消息区内重排：命中其他消息 chip 帧（外扩 6pt 盖住格间空隙）,按左/右半落位。
+    /// 按区内显示序遍历取最左（dict 顺序不定,外扩后相邻帧会重叠——同抽屉）。悬在投放区（胶囊/抽屉）时不重排。
+    private func updateMessagingReorder() {
+        let dc = dragController
+        guard let p = dc.draggingPayload, p.source == .messaging,
+              !dc.isOverDropZone,
+              let pt = stripPoint(from: dc.globalLocation) else { return }
+        for bid in messagingZoneIDs where bid != p.bundleID {
+            guard let f = messagingChipFrames[bid], f.insetBy(dx: -6, dy: -6).contains(pt) else { continue }
+            messagingStore.reorder(draggedID: p.bundleID, relativeTo: bid, after: pt.x > f.midX)
+            return
+        }
+    }
+
+    /// 抽屉里的**运行中消息应用**拖到消息区范围 → 临时释放回消息区；离开范围（或进胶囊/抽屉投放区）→
+    /// 回滚回抽屉。进 8pt / 出 24pt 迟滞防边界抖。释放后载荷来源是 .messaging,区内重排自动接管精确落位;
+    /// 松手即落定（endDrag 决策见 DragConversionPlan.endAction）。桌面/文件夹区/live 区都不触发释放。
+    private func updateDrawerToMessagingRelease() {
+        let dc = dragController
+        if dc.isReleasedToMessaging {
+            guard let pt = stripPoint(from: dc.globalLocation),
+                  let zone = messagingReleaseZone,
+                  zone.insetBy(dx: -24, dy: -24).contains(pt),
+                  !dc.isOverDropZone else {
+                dc.revertDrawerToMessaging()
+                return
+            }
+            return
+        }
+        guard let p = dc.draggingPayload, p.source == .drawer, p.canExternalDrop,
+              !dc.isConvertedToStrip,
+              currentDrawerDragOutMode(p.bundleID) == .releaseToMessaging,
+              let pt = stripPoint(from: dc.globalLocation),
+              let zone = messagingReleaseZone,
+              zone.insetBy(dx: -8, dy: -8).contains(pt) else { return }
+        dc.convertDrawerToMessaging()
     }
 
     /// 转正后整块连续重排：本组窗口卡都进了 live 区（已实体化）才动；初次落点由暂存在 sync 内完成。
@@ -616,8 +692,37 @@ struct DockStripView: View {
                         }
                         .onEnded { _ in dragController.endDrag() }
                 )
-        case .messagingApp:
+        case let .messagingApp(bid, _):
+            // 消息区 chip 可拖：区内重排 + 拖进抽屉收纳（owner 2026-07-11）。帧上报进**独立**的
+            // MessagingChipFramePreferenceKey（绝不混 chipFrames,同文件夹 chip 的隔离理由）。
+            // 手势**只负责起拖一次**：重排会挪动本 chip、SwiftUI 随即取消手势 → 区内重排由
+            // updateMessagingReorder() 按全局鼠标驱动（同抽屉教训,Codex 评审 P1-4）。
             stripEntryView(entry)
+                .opacity(draggingMessagingBundleID == bid ? 0 : 1)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: MessagingChipFramePreferenceKey.self,
+                                               value: [bid: geo.frame(in: .named("strip"))])
+                    }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8, coordinateSpace: .named("strip"))
+                        .onChanged { value in
+                            guard dragController.draggingPayload == nil else { return }
+                            let grab: CGSize = messagingChipFrames[bid].map {
+                                CGSize(width: $0.midX - value.startLocation.x,
+                                       height: $0.midY - value.startLocation.y)
+                            } ?? .zero
+                            let payload = DragPayload(source: .messaging, id: bid,
+                                                      bundleID: bid, item: nil,
+                                                      visualKind: .messagingIcon,
+                                                      canExternalDrop: true)
+                            dragController.beginDrag(payload: payload,
+                                                     startScreenLocation: NSEvent.mouseLocation,
+                                                     grabOffset: grab)
+                        }
+                        .onEnded { _ in dragController.endDrag() }
+                )
         case let .keptApp(bid):
             // 保留应用占位可拖：镜像 .window 卡的拖动重排 + 可拖进抽屉（canExternalDrop=true）。
             let chipID = "app-\(bid)"
@@ -1334,6 +1439,15 @@ private struct StripLayoutKey: Equatable {
 /// 文件夹 chip 帧（弹窗锚点 + 外部拖入 pin 路由）。独立于 ChipFramePreferenceKey——后者是
 /// live 窗口区拖拽重排/落点命中的输入,文件夹 id 混进去会被当成落点目标（评审 P1）。
 struct FolderChipFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// 消息区 chip 帧（bundleID → frame）。独立于 ChipFramePreferenceKey——理由同文件夹 chip：
+/// 混进 live 重排/落点命中的输入会让窗口拖动命中消息区、落点 no-op。
+struct MessagingChipFramePreferenceKey: PreferenceKey {
     static var defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })

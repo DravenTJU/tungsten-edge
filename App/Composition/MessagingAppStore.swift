@@ -78,6 +78,23 @@ final class MessagingAppStore: ObservableObject {
         persistOptOut()
     }
 
+    /// Strip messaging-zone drag reorder: move `draggedID` to the left/right of `targetID`
+    /// (same shape as `DrawerOrderStore.reorder`). Operates on the full persisted array —
+    /// hidden members (stashed in drawer / not running) keep their relative positions.
+    /// Callers guarantee both ids are currently visible zone chips.
+    func reorder(draggedID: String, relativeTo targetID: String, after: Bool) {
+        guard draggedID != targetID,
+              let from = bundleIDs.firstIndex(of: draggedID) else { return }
+        var next = bundleIDs
+        next.remove(at: from)
+        guard let t = next.firstIndex(of: targetID) else { return }
+        next.insert(draggedID, at: after ? t + 1 : t)
+        if next != bundleIDs {
+            bundleIDs = next
+            persist()
+        }
+    }
+
     /// Auto tier: register any running app that looks like a messenger (whitelist or
     /// App Store category) unless the user has opted it out. Called on every snapshot
     /// update; first sight appends to the end of the ordered list.

@@ -68,17 +68,6 @@ private struct UnitBezierEase {
     func progress(at t: Double) -> Double { sampleY(solveX(t)) }
 }
 
-/// 关闭 AppKit 的窗口自动约束。系统默认会把靠近/跨越屏幕边缘的窗口挪回"当前屏"可用区内（避开菜单栏）。
-/// 多屏**共享边**场景下这会致命：把任务条放到上方屏底部时，窗口原点 y 落在下方屏那一侧，系统就拿下方屏
-/// 来约束，把整窗按到下方屏菜单栏正下方 → 任务条/胶囊跑到错误的屏（2026-06-23 三屏 bug 根因；实测 y=970
-/// 被按成 y=857 = 下方屏可用区顶 949 − 窗口高 92）。我们的面板永远手动精确定位、永不盖菜单栏，故直接
-/// 返回原 frame、不让系统二次约束。
-final class NonConstrainingPanel: NSPanel {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-        frameRect
-    }
-}
-
 @MainActor
 final class PanelCoordinator: NSObject {
     private static let layoutMetrics = PanelLayoutMetrics.tungstenEdge
@@ -751,6 +740,7 @@ final class PanelCoordinator: NSObject {
         dragController = DragController(
             drawerStore: drawerStore,
             keptAppStore: keptAppStore,
+            messagingStore: messagingStore,
             dropZonesProvider: { [weak self] source in self?.dragDropZones(for: source) ?? [] },
             screenProvider: { [weak self] in self?.carrierTargetScreen() ?? (NSScreen.main ?? NSScreen.screens[0]) },
             carrierFactory: { [runtime = self.runtime,
@@ -799,15 +789,15 @@ final class PanelCoordinator: NSObject {
     }
 
     /// 投放候选区（屏幕坐标），按拖动来源分：
-    /// - `.strip`（任务条卡找收纳目标）= 胶囊可见内容区 + 8pt 容错（胶囊 frame 含 shadowPadding=20
-    ///   透明边，减 20 得 52×52 可见区，再外扩 8 容错，不能更宽——胶囊紧挨任务条，太宽会"拖到附近就被收走"）；
-    ///   抽屉打开时叠加抽屉可见内容区。
+    /// - `.strip` / `.messaging`（任务条卡/消息 chip 找收纳目标）= 胶囊可见内容区 + 8pt 容错（胶囊 frame 含
+    ///   shadowPadding=20 透明边，减 20 得 52×52 可见区，再外扩 8 容错，不能更宽——胶囊紧挨任务条，太宽会
+    ///   "拖到附近就被收走"）；抽屉打开时叠加抽屉可见内容区。任务条本身不是它们的投放区。
     /// - `.drawer`（抽屉图标找移回目标）= 任务条 dock 面板可见内容区（减 shadowPadding）。
     private func dragDropZones(for source: DragSource) -> [CGRect] {
         // 读**目标** frame：动画中 live frame 是中途值,会和视觉/落点短暂错位（Codex 二审 P2）。目标未初始化时退回 live。
         func target(_ stored: NSRect, _ live: NSRect?) -> NSRect? { stored != .zero ? stored : live }
         switch source {
-        case .strip:
+        case .strip, .messaging:
             var zones: [CGRect] = []
             if let c = target(lastCapsuleTargetFrame, capsulePanel?.frame) {
                 zones.append(c.insetBy(dx: Self.shadowPadding - 8, dy: Self.shadowPadding - 8))
@@ -868,8 +858,11 @@ final class PanelCoordinator: NSObject {
     }
 
     private func updateSpringLoad(location: CGPoint, payload: DragPayload?) {
-        // 整段拖动只要从任务条发起就享受弹簧（转正成 .drawer 后仍认这个标记）。
-        if let p = payload, p.source == .strip { dragOriginatedFromStrip = true; springDragBundleID = p.bundleID }
+        // 整段拖动只要从任务条发起就享受弹簧（转正成 .drawer 后仍认这个标记）。消息区 chip 同享：
+        // 悬胶囊自动弹开抽屉才有精确收纳落点。
+        if let p = payload, p.source == .strip || p.source == .messaging {
+            dragOriginatedFromStrip = true; springDragBundleID = p.bundleID
+        }
 
         // 松手兜底：弹簧开的抽屉若没把卡收进抽屉 → 收回。（实时悬停大多已处理,这里兜底。）
         if payload == nil {
@@ -1041,16 +1034,14 @@ final class PanelCoordinator: NSObject {
             }
     }
 
-    /// 跨面板拖动·"松手才变任务条长度"（owner 2026-06-22，两方向对称）：任一方向转正进行中
-    /// （拖回任务条 `convertedDrawerBundleID` / 拖进抽屉 `isConvertedFromStrip`），把任务条宽度**钳在拖动前的值**
-    /// （`frozenDockContentWidth`，relayout 内部生效）——窗口卡照常出现/移出、实时让位，但只是溢出或留空，
-    /// 面板**全程不变宽**。转正态结束（松手落定 / 拖出还原 → 两标志都 false）才解钳 + relayout，这一刻任务条
-    /// 才动画到最终长度。若全程没真正转正（如拖一半又拖回），结束时宽度=拖动前值，relayout 即无变化。
+    /// 跨面板拖动·"松手才变任务条长度"（owner 2026-06-22，各方向对称）：任一跨面板转换进行中
+    /// （`DragController.conversion != nil`——进抽屉/出抽屉/消息区收纳/释放回消息区四向都算），把任务条
+    /// 宽度**钳在拖动前的值**（`frozenDockContentWidth`，relayout 内部生效）——窗口卡照常出现/移出、
+    /// 实时让位，但只是溢出或留空，面板**全程不变宽**。转换态结束（松手落定 / 拖出还原 → conversion 归 nil）
+    /// 才解钳 + relayout，这一刻任务条才动画到最终长度。若全程没真正转换，结束时宽度=拖动前值，relayout 即无变化。
     private func subscribeConvertRelease() {
-        let toStrip = dragController.$convertedDrawerBundleID.map { $0 != nil }
-        let fromStrip = dragController.$isConvertedFromStrip
-        convertReleaseSubscription = Publishers.CombineLatest(toStrip, fromStrip)
-            .map { $0 || $1 }
+        convertReleaseSubscription = dragController.$conversion
+            .map { $0 != nil }
             .removeDuplicates()
             .sink { [weak self] converted in
                 guard let self else { return }

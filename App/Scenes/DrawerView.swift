@@ -182,13 +182,13 @@ struct DrawerView: View {
     /// 不再由进程刚出现这一瞬间提前放行。
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
-        let stashed = drawerStore.contains(id)
         let delay = Double(min(index, 6)) * 0.018
-        let membership: [LauncherMembershipItem] =
-            (keptAppStore.canKeep(id) && !keptAppStore.contains(id)
-                ? [LauncherMembershipItem(label: "在程序坞中保留") { appMembershipController.keepInDock(id) }]
-                : [])
-            + (stashed ? [LauncherMembershipItem(label: "移出抽屉", action: { drawerStore.remove(id) })] : [])
+        // 抽屉即程序坞的一部分：进了抽屉 = 已「在程序坞中保留」（owner 2026-07-11）。菜单只剩唯一
+        // 退出动词「从程序坞中移除」（通用退出,消息应用同时 unmark）；「移出抽屉/在程序坞中保留」
+        // 不再出现——位置用拖动表达（拖出抽屉 = 搬家）。
+        let membership: [LauncherMembershipItem] = [
+            LauncherMembershipItem(label: "从程序坞中移除") { appMembershipController.removeFromDock(id) }
+        ]
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
@@ -266,10 +266,18 @@ struct DrawerView: View {
         // 进入阈值松（容差大,好进）；撤销阈值更靠外（迟滞带,防边缘反复转正/撤销 → 抽屉一胀一缩抖）。
         let enterBody = g.x >= r.minX - 8  && g.x <= r.maxX + 8  && g.y >= r.minY - 28
         let clearlyOut = g.x < r.minX - 20 || g.x > r.maxX + 20 || g.y < r.minY - 48
-        if let p = dc.draggingPayload, p.source == .strip, p.canExternalDrop, enterBody {
-            dc.convertStripToDrawer()              // 进抽屉体 → 临时转正(挤开别人=预览)
-        } else if dc.isConvertedFromStrip, clearlyOut {
-            dc.revertStripFromDrawer()             // 拖出抽屉体 → 撤销还原(抽屉缩回最初样子)
+        if let p = dc.draggingPayload, p.canExternalDrop, enterBody {
+            switch p.source {
+            case .strip:     dc.convertStripToDrawer()      // 进抽屉体 → 临时转正(挤开别人=预览)
+            case .messaging: dc.convertMessagingToDrawer()  // 消息 chip 同一套收纳预览手感
+            case .drawer, .folder: break
+            }
+        } else if clearlyOut {
+            if dc.isConvertedFromStrip {
+                dc.revertStripFromDrawer()          // 拖出抽屉体 → 撤销还原(抽屉缩回最初样子)
+            } else if dc.isConvertedFromMessaging {
+                dc.revertMessagingFromDrawer()      // 消息 chip 拖出 → 还原回消息区原位
+            }
         }
     }
 }
