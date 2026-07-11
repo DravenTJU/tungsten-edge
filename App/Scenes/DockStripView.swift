@@ -13,8 +13,10 @@ enum StripEntry: Identifiable, Hashable {
     /// equivalent) so the app recreates it — verified to work for WeChat even with
     /// other chat windows visible.
     case messagingApp(bundleID: String, mainWindow: StripItem?)
-    /// 固定应用：一个 app 常驻一个 app-level 图标，并从 live 区吸收其全部窗口与 fallback。
-    case pinnedApp(bundleID: String)
+    /// 「在程序坞中保留」的应用：运行时照常窗口卡片；退出后收敛成一个 app 图标留在原位。
+    /// id 恒为 "app-\(bid)"——与 AppTracker rebuildSnapshot() 的无窗口 fallback token 同串，
+    /// 是退出↔占位切换时 live 序连续的命门。
+    case keptApp(bundleID: String)
     /// 固定文件夹区的一格（消息区右侧、窗口区左侧）。path 即身份。
     case pinnedFolder(path: String)
     /// 中转格：文件夹区固定头位的暂存格（不可拖拽,常驻——它也是文件夹区永不为空的保证,
@@ -29,7 +31,7 @@ enum StripEntry: Identifiable, Hashable {
         // Stable id regardless of main-window presence, so the chip doesn't churn
         // when the main window opens/closes.
         case let .messagingApp(bid, _): return "msg-app-\(bid)"
-        case let .pinnedApp(bid): return "pinnedapp-\(bid)"
+        case let .keptApp(bid): return "app-\(bid)"
         case let .pinnedFolder(path): return "folder-\(path)"
         case .shelf: return "shelf"
         case let .divider(id): return id
@@ -46,7 +48,7 @@ struct DockStripView: View {
     @EnvironmentObject var pinnedFolderStore: PinnedFolderStore
     @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
     @EnvironmentObject var shelfStore: ShelfStore
-    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
 
@@ -109,10 +111,8 @@ struct DockStripView: View {
     @State private var animatedEntryIDs: Set<String> = []
 
     private var allNonDrawerItems: [StripItem] {
-        let pinnedIDs = Set(pinnedAppStore.bundleIDs)
-        return StripItem.items(from: runtime.snapshot)
+        StripItem.items(from: runtime.snapshot)
             .filter { !drawerStore.contains($0.bundleIdentifier ?? "") }
-            .filter { !pinnedIDs.contains($0.bundleIdentifier ?? "") }
     }
 
     private var snapshotBundleIDs: Set<String> {
@@ -138,32 +138,61 @@ struct DockStripView: View {
     /// Split out so the live zone can be reordered by `stripOrderStore` (任务条拖动重排
     /// A 路线) while the pinned messaging zone keeps its own `MessagingAppStore` order —
     /// the two zones never cross (拖动分区内进行).
-    private func partitioned() -> (pinned: [StripEntry], liveNatural: [StripItem]) {
-        let pinnedIDs = pinnedAppStore.bundleIDs
+    private func partitioned() -> (messaging: [StripEntry], liveNatural: [StripEntry]) {
+        let keptIDs = keptAppStore.bundleIDs
         let msg = AppMembershipProjection.messagingIDs(
             messagingStore.bundleIDs,
-            excludingPinnedIDs: pinnedIDs
+            excludingKeptIDs: keptIDs
         )                                             // ordered → drag-reorder friendly
             .filter { !drawerStore.contains($0) && snapshotBundleIDs.contains($0) }
         let msgSet = Set(msg)
         let items = allNonDrawerItems
 
-        var pinned: [StripEntry] = []
+        var messaging: [StripEntry] = []
         var absorbedWindowIDs = Set<String>()
         for bid in msg {
             let appWindows = items.filter { $0.bundleIdentifier == bid && !$0.isAppLevelFallback }
             let main = appWindows.first { AppDisplayNameResolver.titleMatchesAppName($0.title, bundleID: bid) }
             if let main { absorbedWindowIDs.insert(main.id) }
-            pinned.append(.messagingApp(bundleID: bid, mainWindow: main))
+            messaging.append(.messagingApp(bundleID: bid, mainWindow: main))
         }
-        pinned += pinnedIDs.map { .pinnedApp(bundleID: $0) }
 
-        let liveNatural = items.filter { item in
-            guard msgSet.contains(item.bundleIdentifier ?? "") else { return true }
-            if item.isAppLevelFallback { return false }     // app chip replaces the app-* fallback
-            return !absorbedWindowIDs.contains(item.id)     // pop-outs stay as normal chips
+        // Live zone: real windows (including kept app windows) + kept app placeholders
+        var liveNatural: [StripEntry] = []
+        for item in items {
+            guard !msgSet.contains(item.bundleIdentifier ?? "") else {
+                if item.isAppLevelFallback { continue }     // app chip replaces the app-* fallback
+                if absorbedWindowIDs.contains(item.id) { continue }
+                liveNatural.append(.window(item))
+                continue
+            }
+            liveNatural.append(.window(item))
         }
-        return (pinned, liveNatural)
+
+        // Kept app placeholders (D1 two sources):
+        // a. Unrunning: not in snapshot → inject placeholder
+        // b. Running but only isAppLevelFallback → replace the fallback .window with .keptApp
+        let snapshotItems = StripItem.items(from: runtime.snapshot)
+        let snapshotByBundle = Dictionary(grouping: snapshotItems, by: { $0.bundleIdentifier ?? "" })
+        for bid in keptIDs {
+            guard !drawerStore.contains(bid),
+                  !msgSet.contains(bid) else { continue }
+            let appItems = snapshotByBundle[bid] ?? []
+            let hasRealWindow = appItems.contains { !$0.isAppLevelFallback }
+            if hasRealWindow { continue }  // Real windows render normally, no placeholder
+            if !appItems.isEmpty {
+                // Source b: replace fallback .window with .keptApp (same id "app-\(bid)")
+                liveNatural.removeAll { entry in
+                    if case let .window(item) = entry, item.bundleIdentifier == bid, item.isAppLevelFallback {
+                        return true
+                    }
+                    return false
+                }
+            }
+            // Both sources inject .keptApp with id "app-\(bid)"
+            liveNatural.append(.keptApp(bundleID: bid))
+        }
+        return (messaging, liveNatural)
     }
 
     /// Live-zone chip ids in natural snapshot order — input to the order layer and the
@@ -173,26 +202,30 @@ struct DockStripView: View {
     }
 
     /// chip id → 所属 app 键（bundleId 优先，缺则 appID）。喂给顺序层，让新窗口插到同 app 同伴旁
-    /// 而非任务条最右（拖标签出来成独立窗口 / Cmd+N）。
+    /// 而非任务条最右（拖标签出来成独立窗口 / Cmd+N）。keptApp 占位 id "app-\(bid)" 映射到 bid。
     private var liveAppKeys: [String: String] {
-        Dictionary(partitioned().liveNatural.map { ($0.id, $0.bundleIdentifier ?? $0.appID) },
-                   uniquingKeysWith: { first, _ in first })
+        Dictionary(partitioned().liveNatural.map { entry -> (String, String) in
+            switch entry {
+            case let .window(item): return (entry.id, item.bundleIdentifier ?? item.appID)
+            case let .keptApp(bid): return (entry.id, bid)
+            default: return (entry.id, entry.id)
+            }
+        }, uniquingKeysWith: { first, _ in first })
     }
 
     /// 单一显示顺序漏斗：pinned 区按 `MessagingAppStore` 序，live 区由 `stripOrderStore`
     /// 重排（已有保序 / 新窗口进末尾 / 真关闭丢弃，见 `StripOrdering`）。渲染**绝不**直接读
     /// `snapshot.orderedWindowIDs` 出 live 序。slice 2 用当前序播种 → 视觉上无变化。
     private var stripEntries: [StripEntry] {
-        let (pinned, liveNatural) = partitioned()
-        let appKeyOf = Dictionary(liveNatural.map { ($0.id, $0.bundleIdentifier ?? $0.appID) },
-                                  uniquingKeysWith: { first, _ in first })
+        let (messaging, liveNatural) = partitioned()
+        let appKeyOf = liveAppKeys
         let order = stripOrderStore.reconciled(current: liveNatural.map(\.id), appKeyOf: appKeyOf)
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let orderedLive = order.compactMap { byID[$0] }.map(StripEntry.window)
-        // 三区布局：[消息 + 固定应用][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
+        let orderedLive = order.compactMap { byID[$0] }
+        // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
         // 中转格固定在文件夹区头位 → 文件夹区恒非空,分隔线恒在。
         let folderEntries = [StripEntry.shelf] + pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
-        var zones = [pinned, folderEntries, orderedLive].filter { !$0.isEmpty }
+        var zones = [messaging, folderEntries, orderedLive].filter { !$0.isEmpty }
         guard !zones.isEmpty else { return [] }
         var out = zones.removeFirst()
         for (index, zone) in zones.enumerated() {
@@ -427,17 +460,24 @@ struct DockStripView: View {
 
     // MARK: - 抽屉图标拖回任务条·精确落点（运行中应用，全局鼠标驱动，镜像 DrawerView）
 
-    /// 这个 app 能否转正进任务条做精确落点：非空 bundleID、非 Finder、非消息应用，且 snapshot 里有它的
-    /// **非 app-fallback** 窗口（= 运行中且有真实 live 窗口）。用 snapshot 直接判（移出抽屉前就成立，
-    /// 避开"转正当帧 live 区还没放回窗口卡"的误判）。
-    private func canConvertToStrip(_ bid: String) -> Bool {
+    /// 抽屉拖出模式：决定抽屉图标拖到任务条时的行为。
+    enum DrawerDragOutMode {
+        case reject         // Finder/messaging → 不接受
+        case unstash        // 有真窗口 → 现有精确落位路径
+        case keepPlacement  // 未运行/无真窗 → 保留图标落位路径
+    }
+
+    /// 判定抽屉图标拖到任务条的模式：Finder/messaging 拒收；有真窗口走 unstash；否则走 keepPlacement。
+    private func drawerDragOutMode(_ bid: String) -> DrawerDragOutMode {
         guard !bid.isEmpty,
               bid != "com.apple.finder",
-              !messagingStore.contains(bid),
-              !pinnedAppStore.contains(bid) else { return false }
-        return StripItem.items(from: runtime.snapshot).contains {
+              !messagingStore.contains(bid) else { return .reject }
+        if StripItem.items(from: runtime.snapshot).contains(where: {
             $0.bundleIdentifier == bid && !$0.isAppLevelFallback
+        }) {
+            return .unstash
         }
+        return .keepPlacement
     }
 
     /// 这个 app 当前在 live 区的窗口卡 id（按显示序，排除 app-fallback）。转正后用于整块连续重排。
@@ -451,7 +491,9 @@ struct DockStripView: View {
 
     /// 按 chip id 取当前 `StripItem`（live 区）。
     private func stripItem(forID id: String) -> StripItem? {
-        partitioned().liveNatural.first { $0.id == id }
+        guard let entry = partitioned().liveNatural.first(where: { $0.id == id }) else { return nil }
+        if case let .window(item) = entry { return item }
+        return nil
     }
 
     /// 转正后维护载体的"代表卡"：显示序里该 app **第一张已实体化**的窗口卡。实体化前保持 nil（载体仍画
@@ -479,8 +521,9 @@ struct DockStripView: View {
         return nil
     }
 
-    /// 进/出任务条区驱动转正/还原（迟滞防边界抖）。进 → `convertDrawerToStrip` + 暂存落点（下一帧 sync 落子）；
-    /// 出 → 先 `cancelExternalBlock`（清顺序+absentSince）**再** `revertDrawerToStrip`。
+    /// 进/出任务条区驱动转正/还原（迟滞防边界抖）。
+    /// unstash 路径：进 → convertDrawerToStrip + 暂存落点；出 → cancelExternalBlock + revertDrawerToStrip。
+    /// keepPlacement 路径：进 → convertDrawerToStrip + markKeepPlacement + 暂存落点；出 → 同 unstash（revertDrawerToStrip 内含 kept.remove）。
     private func updateDrawerToStripConvert() {
         let dc = dragController
         guard let p = dc.draggingPayload, p.source == .drawer, p.canExternalDrop,
@@ -491,10 +534,13 @@ struct DockStripView: View {
         let enter      = g.x >= r.minX - 8  && g.x <= r.maxX + 8  && g.y >= r.minY - 8  && g.y <= r.maxY + 16
         let clearlyOut = g.x < r.minX - 24  || g.x > r.maxX + 24  || g.y < r.minY - 24  || g.y > r.maxY + 40
         if !dc.isConvertedToStrip {
-            guard enter, canConvertToStrip(bid) else { return }
+            guard enter else { return }
+            let mode = drawerDragOutMode(bid)
+            guard mode != .reject else { return }
             // 此刻本组窗口卡还没出现在 live 区，命中目标只在**已有**卡里找（exclude 空集即可）。
             let target = stripPoint(from: g).flatMap { blockTarget(at: $0, excluding: []) }
             dc.convertDrawerToStrip()
+            if mode == .keepPlacement { dc.markKeepPlacement() }
             stripOrderStore.stageExternalBlock(bundleID: bid, relativeTo: target?.id, after: target?.after ?? false)
         } else if clearlyOut {
             stripOrderStore.cancelExternalBlock()
@@ -503,14 +549,16 @@ struct DockStripView: View {
     }
 
     /// 转正后整块连续重排：本组窗口卡都进了 live 区（已实体化）才动；初次落点由暂存在 sync 内完成。
+    /// keepPlacement 路径无窗口卡，用占位 id "app-\(bid)" 做单元素块重排。
     private func updateStripBlockReorder() {
         let dc = dragController
         guard dc.isConvertedToStrip, let p = dc.draggingPayload, p.source == .drawer else { return }
         let ids = appLiveChipIDs(p.bundleID)
-        guard !ids.isEmpty, ids.allSatisfy(liveOrderIDs.contains),
+        let blockIDs = ids.isEmpty ? ["app-\(p.bundleID)"] : ids
+        guard !blockIDs.isEmpty, blockIDs.allSatisfy(liveOrderIDs.contains),
               let pt = stripPoint(from: dc.globalLocation),
-              let target = blockTarget(at: pt, excluding: Set(ids)) else { return }
-        stripOrderStore.reorderBlock(ids: ids, relativeTo: target.id, after: target.after)
+              let target = blockTarget(at: pt, excluding: Set(blockIDs)) else { return }
+        stripOrderStore.reorderBlock(ids: blockIDs, relativeTo: target.id, after: target.after)
     }
 
     /// Wraps a chip with in-app drag-reorder for the **live zone only** (路线 A 自绘拖动).
@@ -567,9 +615,39 @@ struct DockStripView: View {
                 )
         case .messagingApp:
             stripEntryView(entry)
-        case .pinnedApp:
-            // 固定应用本轮不支持拖拽；重排与身份转换都不进入 live 窗口拖动链路。
+        case let .keptApp(bid):
+            // 保留应用占位可拖：镜像 .window 卡的拖动重排 + 可拖进抽屉（canExternalDrop=true）。
+            let chipID = "app-\(bid)"
             stripEntryView(entry)
+                .opacity(draggingID == chipID ? 0 : 1)
+                .background(
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ChipFramePreferenceKey.self,
+                                               value: [chipID: geo.frame(in: .named("strip"))])
+                    }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8, coordinateSpace: .named("strip"))
+                        .onChanged { value in
+                            if dragController.draggingPayload == nil {
+                                let grab: CGSize = chipFrames[chipID].map {
+                                    CGSize(width: $0.midX - value.startLocation.x,
+                                           height: $0.midY - value.startLocation.y)
+                                } ?? .zero
+                                let payload = DragPayload(source: .strip, id: chipID,
+                                                          bundleID: bid, item: nil,
+                                                          visualKind: .keptAppIcon,
+                                                          canExternalDrop: true)
+                                dragController.beginDrag(payload: payload,
+                                                         startScreenLocation: NSEvent.mouseLocation,
+                                                         grabOffset: grab)
+                            }
+                            if !dragController.isOverDropZone {
+                                reorderTarget(at: value.location, dragging: chipID)
+                            }
+                        }
+                        .onEnded { _ in dragController.endDrag() }
+                )
         case let .pinnedFolder(path):
             // 文件夹 chip：区内拖拽重排 + 拖出移除 + 拖回窗口区打开（owner 2026-07-06 反馈落地）。
             // 帧上报进**独立**的 FolderChipFramePreferenceKey（弹窗锚点 + 外部 pin 路由 + 本区重排
@@ -677,8 +755,8 @@ struct DockStripView: View {
                                  scale: 1.0,
                                  dimsWhenInactive: false,
                                  membershipItems: [
-                                    LauncherMembershipItem(label: "固定到任务栏") {
-                                        appMembershipController.pinToStrip(bid)
+                                    LauncherMembershipItem(label: "在程序坞中保留") {
+                                        appMembershipController.keepInDock(bid)
                                     },
                                     LauncherMembershipItem(label: "取消标记消息应用") {
                                         messagingStore.unmark(bid)
@@ -691,7 +769,7 @@ struct DockStripView: View {
                         .zIndex(1)
                 }
             }
-        case let .pinnedApp(bid):
+        case let .keptApp(bid):
             let isRunning = runningApplicationStore.isRunning(bid)
             let hasRealWindow = hasRealWindow(bundleID: bid)
             let reopen: (() -> Void)? = isRunning && !hasRealWindow
@@ -702,8 +780,7 @@ struct DockStripView: View {
                 isRunning: isRunning,
                 isHidden: runningApplicationStore.isHidden(bid),
                 scale: 1.0,
-                membershipItems: pinnedAppMembershipItems(bundleID: bid),
-                menuMode: .full,
+                membershipItems: keptAppMembershipItems(bundleID: bid),
                 onTap: reopen,
                 onLaunch: { runtime.beginLaunch(bid) },
                 launchReady: !runtime.launchingBundleIDs.contains(bid)
@@ -717,16 +794,10 @@ struct DockStripView: View {
         }
     }
 
-    private func pinnedAppMembershipItems(bundleID: String) -> [LauncherMembershipItem] {
+    private func keptAppMembershipItems(bundleID: String) -> [LauncherMembershipItem] {
         [
-            LauncherMembershipItem(label: "取消固定") {
-                appMembershipController.unpinFromStrip(bundleID)
-            },
-            LauncherMembershipItem(label: "收进抽屉") {
-                appMembershipController.moveToDrawer(bundleID)
-            },
-            LauncherMembershipItem(label: "固定到启动台") {
-                appMembershipController.pinToLaunchpad(bundleID)
+            LauncherMembershipItem(label: "从程序坞中移除") {
+                appMembershipController.removeFromDock(bundleID)
             },
             LauncherMembershipItem(label: "标记为消息应用") {
                 appMembershipController.markMessaging(bundleID)
@@ -865,8 +936,7 @@ struct ChipView: View {
     @EnvironmentObject var runtime: AppRuntime
     @EnvironmentObject var drawerStore: DrawerStore
     @EnvironmentObject var messagingStore: MessagingAppStore
-    @EnvironmentObject var launchFavoriteStore: LaunchFavoriteStore
-    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var appMembershipController: AppMembershipController
     let item: StripItem
     var scale: CGFloat = 1.0
@@ -1099,38 +1169,27 @@ struct ChipView: View {
         return menu
     }
 
-    /// Drawer + launch-favorite membership can coexist. Messaging remains mutually
-    /// exclusive with launch favorites, while drawer membership only changes where a
-    /// messaging app is displayed. Pinned-app conversions go through the controller.
+    /// Drawer + kept membership conversions go through the controller. Messaging
+    /// remains mutually exclusive with kept membership.
     private func appendMembershipItems(to menu: NSMenu) {
         guard let bid = item.bundleIdentifier,
-              bid != PinnedAppStore.forbiddenBundleID else { return }
+              bid != KeptAppStore.forbiddenBundleID else { return }
         menu.addItem(.separator())
-        if pinnedAppStore.canPin(bid), !pinnedAppStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("固定到任务栏") {
-                appMembershipController.pinToStrip(bid)
+        if keptAppStore.canKeep(bid), !keptAppStore.contains(bid) {
+            menu.addItem(ClosureMenuItem("在程序坞中保留") {
+                appMembershipController.keepInDock(bid)
+            })
+        } else if keptAppStore.contains(bid) {
+            menu.addItem(ClosureMenuItem("从程序坞中移除") {
+                appMembershipController.removeFromDock(bid)
             })
         }
         if drawerStore.contains(bid) {
             menu.addItem(ClosureMenuItem("移出抽屉") { drawerStore.remove(bid) })
         } else {
-            // 不清固定标志：收纳与固定可共存（2026-06-16）。旧代码在此 remove 固定，
-            // 导致「固定→收进抽屉→移出抽屉」后固定丢失（2026-06-18 owner 报告）。
             menu.addItem(ClosureMenuItem("收进抽屉") {
                 appMembershipController.moveToDrawer(bid)
             })
-        }
-        // 「固定到启动台」只对**不在抽屉**的 app 有意义（给它在任务条留常驻启动位）。
-        // 已收进抽屉的 app 本就常驻抽屉，这个开关对它没有可见效果、只会造成「我已经
-        // 固定了为啥还让我固定」的困惑（2026-06-18 owner 拍板：抽屉里不再显示）。
-        if !drawerStore.contains(bid) {
-            if launchFavoriteStore.contains(bid) {
-                menu.addItem(ClosureMenuItem("取消固定") { launchFavoriteStore.remove(bid) })
-            } else {
-                menu.addItem(ClosureMenuItem("固定到启动台") {
-                    appMembershipController.pinToLaunchpad(bid)
-                })
-            }
         }
         if messagingStore.contains(bid) {
             menu.addItem(ClosureMenuItem("取消标记消息应用") { messagingStore.unmark(bid) })
@@ -1158,7 +1217,7 @@ struct ChipView: View {
 
 struct DrawerCapsuleButton: View {
     @EnvironmentObject var drawerStore: DrawerStore
-    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var keptAppStore: KeptAppStore
     /// 拖卡进抽屉的投放反馈：手指压在投放区时胶囊放大 + 高亮描边。
     @EnvironmentObject var dragController: DragController
     let action: () -> Void
@@ -1169,7 +1228,7 @@ struct DrawerCapsuleButton: View {
     private var folderIDs: [String] {
         AppMembershipProjection.drawerPreview(
             drawerIDs: drawerStore.bundleIDs,
-            pinnedIDs: pinnedAppStore.bundleIDs
+            keptIDs: keptAppStore.bundleIDs
         )
     }
 
@@ -1263,8 +1322,8 @@ private struct StripLayoutKey: Equatable {
             else                        { form = .single }
         case .messagingApp:
             form = .launcher    // both states render as a fixed-size icon chip
-        case .pinnedApp:
-            form = .launcher    // fixed-size pinned-app icon chip
+        case .keptApp:
+            form = .launcher    // fixed-size kept-app icon chip
         case .pinnedFolder:
             form = .launcher    // fixed-size folder chip
         case .shelf:

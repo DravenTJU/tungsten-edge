@@ -1,43 +1,56 @@
 import XCTest
+@testable import macos_dock_cc_v2
 
 final class AppMembershipProjectionTests: XCTestCase {
-    func testDrawerMembersFormOrderedUnionAndExcludePinnedApps() {
+
+    func testDrawerMembersExcludesKept() {
         let result = AppMembershipProjection.drawerMembers(
-            drawerIDs: ["drawer.one", "shared", "pinned"],
-            launchFavoriteIDs: ["favorite.one", "shared", "favorite.two", "pinned"],
-            pinnedIDs: ["pinned"]
+            drawerIDs: ["a", "b", "c"],
+            keptIDs: ["b"]
         )
-
-        XCTAssertEqual(result, ["drawer.one", "shared", "favorite.one", "favorite.two"])
+        XCTAssertEqual(result, ["a", "c"])
     }
 
-    func testDrawerPreviewUsesEffectiveMembersAndLimit() {
+    func testDrawerMembersDeduplicates() {
+        let result = AppMembershipProjection.drawerMembers(
+            drawerIDs: ["a", "a", "b"],
+            keptIDs: []
+        )
+        XCTAssertEqual(result, ["a", "b"])
+    }
+
+    func testDrawerMembersPreservesOrder() {
+        let result = AppMembershipProjection.drawerMembers(
+            drawerIDs: ["c", "a", "b"],
+            keptIDs: ["a"]
+        )
+        XCTAssertEqual(result, ["c", "b"])
+    }
+
+    func testDrawerPreviewLimitsTo9() {
+        let drawerIDs = (0..<15).map { "app\($0)" }
         let result = AppMembershipProjection.drawerPreview(
-            drawerIDs: ["drawer.one", "pinned"],
-            pinnedIDs: ["pinned"],
-            limit: 2
+            drawerIDs: drawerIDs,
+            keptIDs: []
         )
-
-        XCTAssertEqual(result, ["drawer.one"])
+        XCTAssertEqual(result.count, 9)
+        XCTAssertEqual(result.first, "app0")
     }
 
-    func testDrawerPreviewWithNonPositiveLimitIsEmpty() {
-        XCTAssertEqual(
-            AppMembershipProjection.drawerPreview(
-                drawerIDs: ["drawer.one"],
-                pinnedIDs: [],
-                limit: 0
-            ),
-            []
+    func testDrawerPreviewExcludesKept() {
+        let result = AppMembershipProjection.drawerPreview(
+            drawerIDs: ["a", "b", "c"],
+            keptIDs: ["b"],
+            limit: 9
         )
+        XCTAssertEqual(result, ["a", "c"])
     }
 
-    func testMessagingIDsExcludePinnedAppsWithoutChangingOrder() {
+    func testMessagingIDsExcludesKept() {
         let result = AppMembershipProjection.messagingIDs(
-            ["message.one", "pinned", "message.two", "message.one", ""],
-            excludingPinnedIDs: ["pinned"]
+            ["a", "b", "c"],
+            excludingKeptIDs: ["b"]
         )
-
-        XCTAssertEqual(result, ["message.one", "message.two"])
+        XCTAssertEqual(result, ["a", "c"])
     }
 }

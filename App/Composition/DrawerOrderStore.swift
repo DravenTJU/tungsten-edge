@@ -4,10 +4,9 @@ import Foundation
 /// 顺序按 bundleID 永久记住——bundleID 跨重启稳定，不像任务条 cgWindowID 有开机周期顾虑，所以
 /// 抽屉顺序可无条件落盘、永久保留。
 ///
-/// **命门：按"成员全集"记顺序，不按"当前可见图标"裁。** 纯固定 app 运行时离开抽屉、退出才回启动区
-/// （[[LaunchFavoriteStore]] 规则）；若只同步当前显示的 bundleID，它一运行就被删、退出又当新图标
-/// 追加末尾 → 顺序记忆丢。故 `sync(members:)` 吃的是 `DrawerStore ∪ LaunchFavoriteStore` 全集，
-/// 运行/未运行只在渲染时分区过滤。
+/// **命门：按"成员全集"记顺序，不按"当前可见图标"裁。** 收纳 app 运行时离开抽屉、退出才回启动区；
+/// 若只同步当前显示的 bundleID，它一运行就被删、退出又当新图标追加末尾 → 顺序记忆丢。
+/// 故 `sync(members:)` 吃的是 `DrawerStore − KeptAppStore` 全集，运行/未运行只在渲染时分区过滤。
 ///
 /// 与 `StripOrderStore` 同形但更简单：没有开机周期守卫（bundleID 不复用）、没有缺席 grace
 /// （成员集合稳定、不像窗口会闪断）。

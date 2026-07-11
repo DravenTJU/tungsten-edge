@@ -2,93 +2,74 @@ import Foundation
 
 /// Single mutation boundary for app membership conversions.
 ///
-/// Pinned membership is exclusive with drawer, launch-favorite, and messaging
-/// membership. Existing relationships among the latter three remain unchanged.
+/// Kept (在程序坞中保留) membership is exclusive with drawer and messaging
+/// membership. Conversions go through this controller to maintain exclusivity
+/// and messaging opt-out semantics.
 @MainActor
 final class AppMembershipController: ObservableObject {
-    private let pinnedAppStore: PinnedAppStore
+    private let keptAppStore: KeptAppStore
     private let drawerStore: DrawerStore
-    private let launchFavoriteStore: LaunchFavoriteStore
     private let messagingStore: MessagingAppStore
 
     init(
-        pinnedAppStore: PinnedAppStore,
+        keptAppStore: KeptAppStore,
         drawerStore: DrawerStore,
-        launchFavoriteStore: LaunchFavoriteStore,
         messagingStore: MessagingAppStore
     ) {
-        self.pinnedAppStore = pinnedAppStore
+        self.keptAppStore = keptAppStore
         self.drawerStore = drawerStore
-        self.launchFavoriteStore = launchFavoriteStore
         self.messagingStore = messagingStore
     }
 
-    func pinToStrip(_ bundleID: String) {
-        guard pinnedAppStore.canPin(bundleID) else { return }
-        pinnedAppStore.add(bundleID)
+    /// 「在程序坞中保留」：kept.add + drawer.remove + messaging.unmark（保 opt-out）。
+    func keepInDock(_ bundleID: String) {
+        guard keptAppStore.canKeep(bundleID) else { return }
+        keptAppStore.add(bundleID)
         if drawerStore.contains(bundleID) {
             drawerStore.remove(bundleID)
         }
-        if launchFavoriteStore.contains(bundleID) {
-            launchFavoriteStore.remove(bundleID)
-        }
         if messagingStore.contains(bundleID) {
             messagingStore.unmark(bundleID)
         }
     }
 
+    /// 「从程序坞中移除」：仅清 kept 标志。
+    func removeFromDock(_ bundleID: String) {
+        keptAppStore.remove(bundleID)
+    }
+
+    /// 「收进抽屉」：kept.remove + drawer.add。
     func moveToDrawer(_ bundleID: String) {
         guard canChangeMembership(bundleID) else { return }
-        pinnedAppStore.remove(bundleID)
+        keptAppStore.remove(bundleID)
         drawerStore.add(bundleID)
     }
 
-    func pinToLaunchpad(_ bundleID: String) {
-        guard canChangeMembership(bundleID) else { return }
-        pinnedAppStore.remove(bundleID)
-        launchFavoriteStore.add(bundleID)
-        if messagingStore.contains(bundleID) {
-            messagingStore.unmark(bundleID)
-        }
-    }
-
+    /// 「标记为消息应用」：清 kept + messaging.mark + drawer.remove。
     func markMessaging(_ bundleID: String) {
         guard canChangeMembership(bundleID) else { return }
-        pinnedAppStore.remove(bundleID)
+        keptAppStore.remove(bundleID)
         messagingStore.mark(bundleID)
         if drawerStore.contains(bundleID) {
             drawerStore.remove(bundleID)
         }
-        if launchFavoriteStore.contains(bundleID) {
-            launchFavoriteStore.remove(bundleID)
-        }
-    }
-
-    func unpinFromStrip(_ bundleID: String) {
-        pinnedAppStore.remove(bundleID)
     }
 
     /// Startup repair. Finder is removed from memberships that could replace its
-    /// dedicated slot, then persistent pinned membership wins before messaging
+    /// dedicated slot, then persistent kept membership wins before messaging
     /// auto-register starts. Display projections remain a separate defensive layer.
-    func reconcilePinnedWins() {
-        let finder = PinnedAppStore.forbiddenBundleID
+    func reconcileKeptWins() {
+        let finder = KeptAppStore.forbiddenBundleID
         if drawerStore.contains(finder) {
             drawerStore.remove(finder)
-        }
-        if launchFavoriteStore.contains(finder) {
-            launchFavoriteStore.remove(finder)
         }
         if messagingStore.contains(finder) {
             messagingStore.unmark(finder)
         }
 
-        for bundleID in pinnedAppStore.bundleIDs {
+        for bundleID in keptAppStore.bundleIDs {
             if drawerStore.contains(bundleID) {
                 drawerStore.remove(bundleID)
-            }
-            if launchFavoriteStore.contains(bundleID) {
-                launchFavoriteStore.remove(bundleID)
             }
             if messagingStore.contains(bundleID) {
                 messagingStore.unmark(bundleID)
@@ -97,33 +78,33 @@ final class AppMembershipController: ObservableObject {
     }
 
     private func canChangeMembership(_ bundleID: String) -> Bool {
-        !bundleID.isEmpty && bundleID != PinnedAppStore.forbiddenBundleID
+        !bundleID.isEmpty && bundleID != KeptAppStore.forbiddenBundleID
     }
 }
 
 /// Defensive, side-effect-free projections used by the strip, drawer, and capsule.
 enum AppMembershipProjection {
+    /// 抽屉成员全集 = drawer − kept（顺序层按全集记）。
     static func drawerMembers(
         drawerIDs: [String],
-        launchFavoriteIDs: [String],
-        pinnedIDs: [String]
+        keptIDs: [String]
     ) -> [String] {
-        filteredUnique(drawerIDs + launchFavoriteIDs, excluding: Set(pinnedIDs))
+        filteredUnique(drawerIDs, excluding: Set(keptIDs))
     }
 
     static func drawerPreview(
         drawerIDs: [String],
-        pinnedIDs: [String],
+        keptIDs: [String],
         limit: Int = 9
     ) -> [String] {
-        Array(filteredUnique(drawerIDs, excluding: Set(pinnedIDs)).prefix(max(0, limit)))
+        Array(filteredUnique(drawerIDs, excluding: Set(keptIDs)).prefix(max(0, limit)))
     }
 
     static func messagingIDs(
         _ messagingIDs: [String],
-        excludingPinnedIDs pinnedIDs: [String]
+        excludingKeptIDs keptIDs: [String]
     ) -> [String] {
-        filteredUnique(messagingIDs, excluding: Set(pinnedIDs))
+        filteredUnique(messagingIDs, excluding: Set(keptIDs))
     }
 
     private static func filteredUnique(_ bundleIDs: [String], excluding excluded: Set<String>) -> [String] {

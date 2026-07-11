@@ -1629,10 +1629,16 @@ final class FinderP0Tests: XCTestCase {
         XCTAssertEqual(StripOrdering.reordering(["A", "B"], move: "A", relativeTo: "Z", after: false), ["A", "B"])
     }
 
-    /// 落盘只留真实窗口座位键（tabgrp-*），app-* / cgw-* 临时键不写盘，且保持相对顺序。
+    /// 落盘保留 tabgrp-* + kept 的 app-*；非 kept 的 app-* / cgw-* 临时键不写盘，且保持相对顺序。
     func testPersistableLiveOrderKeepsOnlyWindowChips() {
         let order = ["tabgrp-1-s1", "app-com.x", "cgw-legacy", "tabgrp-2-s1", "app-com.y"]
+        // 无 keptIDs：所有 app-* 不落盘（旧行为）
         XCTAssertEqual(StripOrdering.persistableLiveOrder(order), ["tabgrp-1-s1", "tabgrp-2-s1"])
+        // 有 keptIDs：com.x 是 kept → app-com.x 落盘；com.y 不是 → 不落
+        XCTAssertEqual(
+            StripOrdering.persistableLiveOrder(order, keptIDs: ["com.x"]),
+            ["tabgrp-1-s1", "app-com.x", "tabgrp-2-s1"]
+        )
     }
 
     /// app-* 升级成真窗口：新 id 顶替旧 id，继承原位置（rank）。

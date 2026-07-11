@@ -60,10 +60,18 @@ final class AppTracker: ObservableObject {
 
     func start() {
         guard workspaceObservers.isEmpty else { return }
-        seedRunningApps()
+        // 通知先订阅再 seed：seed 期间的启动/退出事件不再漏（addApp 有 apps[pid] == nil guard，重复准入安全）。
         subscribeWorkspaceNotifications()
+        seedRunningApps()
         startReconcileTimer()
         startFrontmostPollTimer()
+        // seed 后补扫四轮：挂死 app 在 seed 限时读里会被跳过，补扫用 inventoryWindows 限时读逐步收入。
+        for delay in [0.5, 1.0, 2.0, 4.0] {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                self?.scanNonAdmittedApps()
+            }
+        }
     }
 
     func stop() {
@@ -143,10 +151,15 @@ final class AppTracker: ObservableObject {
     /// - 后台标签【不】单独留座位。同 frame 有多个老座位（窗口重叠）时不顶替、宁可新建，避免误并。
     /// 返回 true 表示座位集合或关键属性变了（调用方据此决定是否重建快照）。
     @discardableResult
-    private func reconcileSeats(pid: pid_t, cgIDs: Set<CGWindowID>, now: Date) -> Bool {
+    private func reconcileSeats(pid: pid_t, cgIDs: Set<CGWindowID>, now: Date, preloadedEligible: [AXWindowSnapshot]? = nil) -> Bool {
         guard var app = apps[pid] else { return false }
-        let eligible = reader.windows(forPID: pid).filter {
-            isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
+        let eligible: [AXWindowSnapshot]
+        if let preloaded = preloadedEligible {
+            eligible = preloaded
+        } else {
+            eligible = reader.windows(forPID: pid).filter {
+                isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
+            }
         }
         let onScreenCGIDs = onScreenCGWindowIDSet()
         func fk(_ b: CGRect?) -> String? { frameKey(pid, b) }
@@ -269,22 +282,67 @@ final class AppTracker: ObservableObject {
     // MARK: - Seed
 
     private func seedRunningApps() {
+        let seedStart = Date()
+        // 环境变量 DOCK_SEED_AX_TIMEOUT_MS：0 = 回退旧无超时读；其他值覆盖毫秒数；缺省 100ms。
+        let timeoutMS = ProcessInfo.processInfo.environment["DOCK_SEED_AX_TIMEOUT_MS"]
+        let useTimeout: Bool
+        var messagingTimeout: TimeInterval = 0.1
+        if let ms = timeoutMS, let val = Int(ms) {
+            if val == 0 {
+                useTimeout = false
+            } else {
+                useTimeout = true
+                messagingTimeout = TimeInterval(val) / 1000.0
+            }
+        } else {
+            useTimeout = true
+        }
+
+        var admittedCount = 0
+        var unreadList: [String] = []
+
         for app in NSWorkspace.shared.runningApplications {
             guard isRegularNonSelf(app) else { continue }
-            // Finder always gets a slot so its chip persists even when all windows are closed.
-            if FinderWindowRules.isFinder(bundleIdentifier: app.bundleIdentifier) {
-                addApp(app, enumerateImmediately: true)
+            let pid = app.processIdentifier
+            let bid = app.bundleIdentifier
+            let policy = app.activationPolicy
+
+            // 限时探测：挂死 app 第一条 AX 消息即超时 → .unread → 跳过，交给补扫。
+            let result: AXWindowReadResult
+            if useTimeout {
+                result = reader.inventoryWindows(forPID: pid, messagingTimeout: messagingTimeout)
+            } else {
+                result = .success(reader.windows(forPID: pid))
+            }
+
+            let probedEligible: [AXWindowSnapshot]
+            switch result {
+            case .success(let snaps):
+                probedEligible = snaps.filter { isEligible($0, bundleIdentifier: bid, activationPolicy: policy) }
+            case .unread:
+                probedEligible = []
+                unreadList.append(app.localizedName ?? bid ?? "\(pid)")
+            }
+
+            if FinderWindowRules.isFinder(bundleIdentifier: bid) {
+                // Finder 始终占坑：unread 就先空窗口占位（槽位常驻，通知/reconcile 随后补）。
+                addApp(app, enumerateImmediately: false)
+                reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date(), preloadedEligible: probedEligible)
+                admittedCount += 1
                 continue
             }
-            let windows = reader.windows(forPID: app.processIdentifier)
-            let hasEligible = windows.contains {
-                isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
-            }
-            if hasEligible {
-                addApp(app, enumerateImmediately: true)
+
+            if !probedEligible.isEmpty {
+                addApp(app, enumerateImmediately: false)
+                reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date(), preloadedEligible: probedEligible)
+                admittedCount += 1
             }
         }
+
         rebuildSnapshot()
+
+        let elapsed = Date().timeIntervalSince(seedStart)
+        logger.info("seed done: \(admittedCount) admitted, \(unreadList.count) unread [\(unreadList.joined(separator: ", "))], elapsed=\(String(format: "%.2f", elapsed))s")
     }
 
     // MARK: - Workspace Notifications
@@ -634,6 +692,7 @@ final class AppTracker: ObservableObject {
                           let app = NSRunningApplication(processIdentifier: pid),
                           !app.isTerminated else { continue }
                     self.addApp(app, enumerateImmediately: true)
+                    self.logger.info("scan: admitted pid=\(pid) (\(app.localizedName ?? app.bundleIdentifier ?? "?"))")
                     admitted = true
                 }
                 if admitted { self.rebuildSnapshot() }

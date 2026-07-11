@@ -1,37 +1,46 @@
 import Foundation
+import os
 
-/// Ordered app-level entries pinned to the strip's leading zone.
+/// 「在程序坞中保留」的 app 列表。运行时照常显示窗口卡片；退出后收敛成一个 app 图标留在原位。
 ///
-/// Finder keeps its dedicated persistent entry and must never be represented by this
-/// store. `AppMembershipController` owns cross-store exclusivity; this type owns only
-/// validation, order, and persistence of pinned membership. Reordering is persisted
-/// even though the current UI does not expose pinned-app drag sorting yet.
+/// Finder 永远有独立常驻槽位，不由此 store 管理（`forbiddenBundleID`）。
+/// 顺序由 `StripOrderStore` 统一管，此 store 只负责成员身份与持久化。
 @MainActor
-final class PinnedAppStore: ObservableObject {
+final class KeptAppStore: ObservableObject {
     static let forbiddenBundleID = "com.apple.finder"
-    static let defaultsKey = "pinnedAppBundleIDs"
+    static let defaultsKey = "keptAppBundleIDs"
+    private static let legacyKey = "pinnedAppBundleIDs"
 
     @Published private(set) var bundleIDs: [String]
 
     private let defaults: UserDefaults
+    private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "kept-app-store")
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
-        bundleIDs = Self.cleaned(stored)
-        if bundleIDs != stored {
+        // 迁移：采纳旧 pinnedAppBundleIDs 后删旧 key
+        if let legacy = defaults.stringArray(forKey: Self.legacyKey), !legacy.isEmpty {
+            bundleIDs = Self.cleaned(legacy)
             persist()
+            defaults.removeObject(forKey: Self.legacyKey)
+            logger.info("migrated \(self.bundleIDs.count) entries from pinnedAppBundleIDs → keptAppBundleIDs: \(self.bundleIDs.joined(separator: ", "))")
+        } else {
+            let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
+            bundleIDs = Self.cleaned(stored)
+            if bundleIDs != stored {
+                persist()
+            }
         }
     }
 
-    static func canPin(_ bundleID: String) -> Bool {
+    static func canKeep(_ bundleID: String) -> Bool {
         guard let normalized = normalized(bundleID) else { return false }
         return normalized != forbiddenBundleID
     }
 
-    func canPin(_ bundleID: String) -> Bool {
-        Self.canPin(bundleID)
+    func canKeep(_ bundleID: String) -> Bool {
+        Self.canKeep(bundleID)
     }
 
     func contains(_ bundleID: String) -> Bool {
@@ -40,7 +49,7 @@ final class PinnedAppStore: ObservableObject {
     }
 
     func add(_ bundleID: String) {
-        guard Self.canPin(bundleID),
+        guard Self.canKeep(bundleID),
               let normalized = Self.normalized(bundleID),
               !bundleIDs.contains(normalized) else { return }
         bundleIDs.append(normalized)
@@ -56,25 +65,11 @@ final class PinnedAppStore: ObservableObject {
         }
     }
 
-    func reorder(draggedBundleID: String, relativeTo targetBundleID: String, after: Bool) {
-        guard let dragged = Self.normalized(draggedBundleID),
-              let target = Self.normalized(targetBundleID) else { return }
-        let next = StripOrdering.reordering(
-            bundleIDs,
-            move: dragged,
-            relativeTo: target,
-            after: after
-        )
-        guard next != bundleIDs else { return }
-        bundleIDs = next
-        persist()
-    }
-
     private static func cleaned(_ bundleIDs: [String]) -> [String] {
         var seen = Set<String>()
         var result: [String] = []
         for bundleID in bundleIDs {
-            guard canPin(bundleID),
+            guard canKeep(bundleID),
                   let normalized = normalized(bundleID),
                   seen.insert(normalized).inserted else { continue }
             result.append(normalized)

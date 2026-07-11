@@ -181,10 +181,16 @@ enum StripOrdering {
         return order.map { $0 == oldID ? newID : $0 }
     }
 
-    /// 落盘子集：只保留代表真实窗口/标签组的 chip id（`tabgrp-*` token，内嵌开机周期内稳定的
-    /// 种子 cgWindowID）。app-\* 占位是临时键，只活在内存，不写盘——防它沉淀成应用级永久布局
-    /// （见 03 设计决策）。跨重启由 `StripOrderStore` 的 `kern.boottime` 守卫整份丢弃。
-    static func persistableLiveOrder(_ order: [String]) -> [String] {
-        order.filter { $0.hasPrefix("tabgrp-") }
+    /// 落盘子集：保留 `tabgrp-*`（真实窗口座位键）+ `app-*` 中属于 kept 应用的（保留图标位置抗本 app 重启）。
+    /// 普通 app-* 兼容 fallback 与 Finder 的 app-* 仍不落盘。跨重启由 `StripOrderStore` 的 `kern.boottime` 守卫整份丢弃。
+    static func persistableLiveOrder(_ order: [String], keptIDs: Set<String> = []) -> [String] {
+        order.filter { id in
+            if id.hasPrefix("tabgrp-") { return true }
+            if id.hasPrefix("app-") {
+                let bid = String(id.dropFirst(4))
+                return keptIDs.contains(bid)
+            }
+            return false
+        }
     }
 }

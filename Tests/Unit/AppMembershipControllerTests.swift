@@ -1,129 +1,106 @@
 import XCTest
+@testable import macos_dock_cc_v2
 
 @MainActor
 final class AppMembershipControllerTests: XCTestCase {
-    private var suiteName = ""
-    private var defaults: UserDefaults!
-    private var pinned: PinnedAppStore!
+
+    private var kept: KeptAppStore!
     private var drawer: DrawerStore!
-    private var favorite: LaunchFavoriteStore!
     private var messaging: MessagingAppStore!
     private var controller: AppMembershipController!
 
+    private func makeDefaults() -> UserDefaults {
+        let suite = "test-membership-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return defaults
+    }
+
     override func setUp() {
         super.setUp()
-        suiteName = "com.tungsten.edge.membership-tests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        pinned = PinnedAppStore(defaults: defaults)
+        let defaults = makeDefaults()
+        kept = KeptAppStore(defaults: defaults)
         drawer = DrawerStore(defaults: defaults)
-        favorite = LaunchFavoriteStore(defaults: defaults)
         messaging = MessagingAppStore(defaults: defaults)
         controller = AppMembershipController(
-            pinnedAppStore: pinned,
+            keptAppStore: kept,
             drawerStore: drawer,
-            launchFavoriteStore: favorite,
             messagingStore: messaging
         )
     }
 
-    override func tearDown() {
-        defaults.removePersistentDomain(forName: suiteName)
-        controller = nil
-        messaging = nil
-        favorite = nil
-        drawer = nil
-        pinned = nil
-        defaults = nil
-        super.tearDown()
+    func testKeepInDockAddsAndRemovesFromDrawer() {
+        drawer.add("com.example.app")
+        controller.keepInDock("com.example.app")
+        XCTAssertTrue(kept.contains("com.example.app"))
+        XCTAssertFalse(drawer.contains("com.example.app"))
     }
 
-    func testPinToStripRemovesOtherMembershipsAndOptsOutOfMessaging() {
-        let id = "com.example.app"
-        drawer.add(id)
-        favorite.add(id)
-        messaging.mark(id)
-
-        controller.pinToStrip(id)
-
-        XCTAssertTrue(pinned.contains(id))
-        XCTAssertFalse(drawer.contains(id))
-        XCTAssertFalse(favorite.contains(id))
-        XCTAssertFalse(messaging.contains(id))
-        messaging.autoRegister(runningBundleIDs: [id])
-        XCTAssertFalse(messaging.contains(id))
+    func testKeepInDockUnmarksMessaging() {
+        messaging.mark("com.example.app")
+        controller.keepInDock("com.example.app")
+        XCTAssertTrue(kept.contains("com.example.app"))
+        XCTAssertFalse(messaging.contains("com.example.app"))
     }
 
-    func testPinToStripRejectsFinderWithoutChangingOtherMemberships() {
-        let finder = PinnedAppStore.forbiddenBundleID
+    func testKeepInDockRejectsFinder() {
+        let finder = KeptAppStore.forbiddenBundleID
+        controller.keepInDock(finder)
+        XCTAssertFalse(kept.contains(finder))
+    }
+
+    func testRemoveFromDock() {
+        controller.keepInDock("com.example.app")
+        controller.removeFromDock("com.example.app")
+        XCTAssertFalse(kept.contains("com.example.app"))
+    }
+
+    func testMoveToDrawerRemovesKeptAndAddsDrawer() {
+        controller.keepInDock("com.example.app")
+        controller.moveToDrawer("com.example.app")
+        XCTAssertFalse(kept.contains("com.example.app"))
+        XCTAssertTrue(drawer.contains("com.example.app"))
+    }
+
+    func testMarkMessagingClearsKept() {
+        controller.keepInDock("com.example.app")
+        controller.markMessaging("com.example.app")
+        XCTAssertFalse(kept.contains("com.example.app"))
+        XCTAssertTrue(messaging.contains("com.example.app"))
+        XCTAssertFalse(drawer.contains("com.example.app"))
+    }
+
+    func testReconcileKeptWinsRemovesKeptFromDrawerAndMessaging() {
+        controller.keepInDock("com.example.app")
+        // Manually add to drawer and messaging to simulate conflicting persisted state
+        drawer.add("com.example.app")
+        messaging.mark("com.example.app")
+        controller.reconcileKeptWins()
+        XCTAssertTrue(kept.contains("com.example.app"))
+        XCTAssertFalse(drawer.contains("com.example.app"))
+        XCTAssertFalse(messaging.contains("com.example.app"))
+    }
+
+    func testReconcileKeptWinsRemovesFinderFromDrawerAndMessaging() {
+        let finder = KeptAppStore.forbiddenBundleID
         drawer.add(finder)
-        favorite.add(finder)
         messaging.mark(finder)
-
-        controller.pinToStrip(finder)
-
-        XCTAssertFalse(pinned.contains(finder))
-        XCTAssertTrue(drawer.contains(finder))
-        XCTAssertTrue(favorite.contains(finder))
-        XCTAssertTrue(messaging.contains(finder))
-    }
-
-    func testFinderCannotEnterAnyManagedMembership() {
-        let finder = PinnedAppStore.forbiddenBundleID
-
-        controller.moveToDrawer(finder)
-        controller.pinToLaunchpad(finder)
-        controller.markMessaging(finder)
-
-        XCTAssertFalse(pinned.contains(finder))
+        controller.reconcileKeptWins()
         XCTAssertFalse(drawer.contains(finder))
-        XCTAssertFalse(favorite.contains(finder))
         XCTAssertFalse(messaging.contains(finder))
     }
 
-    func testStartupReconciliationRemovesLegacyFinderMemberships() {
-        let finder = PinnedAppStore.forbiddenBundleID
-        drawer.add(finder)
-        favorite.add(finder)
-        messaging.mark(finder)
+    // MARK: - DrawerStore migration
 
-        controller.reconcilePinnedWins()
-
-        XCTAssertFalse(drawer.contains(finder))
-        XCTAssertFalse(favorite.contains(finder))
-        XCTAssertFalse(messaging.contains(finder))
-    }
-
-    func testPinnedAppCanMoveToEachTargetIdentity() {
-        let drawerID = "com.example.drawer"
-        let favoriteID = "com.example.favorite"
-        let messagingID = "com.example.messaging"
-        [drawerID, favoriteID, messagingID].forEach(controller.pinToStrip)
-
-        controller.moveToDrawer(drawerID)
-        controller.pinToLaunchpad(favoriteID)
-        controller.markMessaging(messagingID)
-
-        XCTAssertFalse(pinned.contains(drawerID))
-        XCTAssertTrue(drawer.contains(drawerID))
-        XCTAssertFalse(pinned.contains(favoriteID))
-        XCTAssertTrue(favorite.contains(favoriteID))
-        XCTAssertFalse(pinned.contains(messagingID))
-        XCTAssertTrue(messaging.contains(messagingID))
-    }
-
-    func testStartupReconciliationKeepsOnlyPinnedMembership() {
-        let id = "com.example.conflict"
-        pinned.add(id)
-        drawer.add(id)
-        favorite.add(id)
-        messaging.mark(id)
-
-        controller.reconcilePinnedWins()
-
-        XCTAssertTrue(pinned.contains(id))
-        XCTAssertFalse(drawer.contains(id))
-        XCTAssertFalse(favorite.contains(id))
-        XCTAssertFalse(messaging.contains(id))
+    func testDrawerStoreMigratesLaunchFavoriteKey() {
+        let defaults = makeDefaults()
+        defaults.set(["com.example.fav1", "com.example.fav2"], forKey: "launchFavoriteBundleIDs")
+        defaults.set(["com.example.existing"], forKey: "drawerBundleIDs")
+        let migrated = DrawerStore(defaults: defaults)
+        // Favorites should be merged into drawer, old key deleted.
+        XCTAssertTrue(migrated.contains("com.example.fav1"))
+        XCTAssertTrue(migrated.contains("com.example.fav2"))
+        XCTAssertTrue(migrated.contains("com.example.existing"))
+        XCTAssertNil(defaults.stringArray(forKey: "launchFavoriteBundleIDs"))
     }
 }

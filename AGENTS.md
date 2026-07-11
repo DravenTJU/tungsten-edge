@@ -2,7 +2,7 @@
 
 > **New agent: read this first.**
 >
-> **What this app is**: Tungsten Edge 钨极 is a window-oriented bottom taskbar for macOS, designed to replace the system Dock. Multi-window apps normally split into separate window chips, with deliberate app-level entries for Finder, messaging apps, user-pinned apps, and compatibility fallbacks. It also includes a drawer for stashed/launch apps and a pinned-folder zone. Minimum deployment target: macOS 12.
+> **What this app is**: Tungsten Edge 钨极 is a window-oriented bottom taskbar for macOS, designed to replace the system Dock. Multi-window apps normally split into separate window chips, with deliberate app-level entries for Finder, messaging apps, kept apps (user-chosen「在程序坞中保留」), and compatibility fallbacks. It also includes a drawer for stashed apps and a pinned-folder zone. Minimum deployment target: macOS 12.
 >
 > Product state and decisions live in the owner's Obsidian vault:
 > `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/`, entry note `00 macos-dock-cc-v2 总览.md`.
@@ -26,6 +26,8 @@
 - Filter system internals, widgets, app extensions, transparent/fake surfaces before any keep-slot or disappeared retention.
 - `WorkspaceSource` starts from `NSWorkspace` regular apps, reads `AXWindows`, and emits `.appWindowInventory`.
 - Inventory reads keep the existing 100ms per-app timeout, 12 concurrent app reads, and 30-round unread degradation before CG can decide whether windows still exist.
+- `seedRunningApps` subscribes workspace notifications **before** seeding so launch/exit events during seed are not lost. Seed probes use `inventoryWindows(forPID:messagingTimeout:)` with env `DOCK_SEED_AX_TIMEOUT_MS` (0 = legacy no-timeout, other = ms override). Probed windows are admitted directly via `reconcileSeats(preloadedEligible:)` without a second untimed AX read. Keep kill switch `DOCK_SEED_AX_TIMEOUT_MS=0`.
+- `start()` schedules four rounds of `scanNonAdmittedApps()` at 0.5/1/2/4s post-launch to catch apps that were slow to respond during seed.
 - While inventory-first is enabled, CG and generic `.accessibility` observations may prove/enrich inventory entries but must not create ordinary strip entries. Reduced-permission mode may create CG fallback entries.
 - Keep rollback flags working: `DOCK_INVENTORY_FIRST_ENABLED=0`, `DOCK_AX_ADMISSION_MODE=legacy`.
 - Long-gap duplicate prevention: before creating a new identity, conservatively match same process/app against current seats by title + nearby frame; ambiguous candidates do not merge. Details: `Docs/Archive/Engineering/21-long-gap-duplicate-card-fix.md`.
@@ -75,7 +77,8 @@
 - Carrier position and cross-panel hit testing use `NSEvent.mouseLocation` screen coordinates.
 - Timers used during drag must be added to `.common` run-loop mode.
 - Drawer is app-centric: one bundleID = one `LauncherChip`. Drawer click is app-level frontmost->hide, otherwise unhide/open; not-running->launch.
-- `DrawerOrderStore` is the persistent ordering layer keyed by bundleID and synced over `(drawerStore ∪ launchFavoriteStore) - pinnedAppStore`.
+- Drawer two zones are partitioned by process state from `RunningApplicationStore`: upper zone = running (bright + white dot), lower zone = not-running (gray, no dot). `isLaunchingWithoutWindow` gating still applies.
+- `DrawerOrderStore` is the persistent ordering layer keyed by bundleID and synced over `drawerStore - keptAppStore`.
 - Drawer reorder is same-zone only. Cross-divider drops are meaningless.
 - `DragPayload` uses strip id = stable chip token, drawer id = bundleID, folder id = folder path.
 
@@ -84,26 +87,27 @@
 - `canStash` rejects only missing bundleID and `com.apple.finder`. App-level fallback chips can be stashed.
 - Strip-to-drawer drop zone is visible capsule content plus small tolerance, and drawer content only while open. Do not use full shadow frame as the hit zone.
 - Strip-into-open-drawer converts on enter, reverts on exit, and commits only on release inside. Keep enter/exit hysteresis; do not restore placeholder cells or resize-per-hover insertion.
-- Drawer-to-strip precise landing applies only to running apps with at least one real live non-fallback window. Reject Finder, messaging special cases, app-level-fallback-only, and not-running stashes.
-- One drawer icon represents the app's whole window-chip block; land all chips contiguously in current display order.
-- Drawer-to-strip landing goes through staged placement consumed inside `StripOrderStore.sync(current:appKeyOf:)`.
+- Drag conversions are **symmetric transactions**: strip→drawer does `drawer.add + kept.remove` on convert, `kept.add + drawer.remove` on revert; capsule drop does `drawer.add + kept.remove`. Drawer→strip keepPlacement does `drawer.remove + kept.add` on enter, `kept.remove + drawer.add` on revert. `cancelDrag` must rollback any uncommitted transaction via the same revert paths before teardown.
+- Drawer-to-strip has two branches via `drawerDragOutMode`: Finder/messaging → reject; running with real windows → unstash (existing precise landing); not-running/no-real-window → keepPlacement (lands a kept-app placeholder icon). Reject is the only branch that does nothing.
+- One drawer icon represents the app's whole window-chip block; land all chips contiguously in current display order. keepPlacement uses a single-element block `["app-\(bundleID)"]` when no window cards exist.
+- Drawer-to-strip landing goes through staged placement consumed inside `StripOrderStore.sync(current:appKeyOf:)`. The sync fallback resolves kept placeholder ids when no window cards match the bundleID.
 - Freeze strip width during converted cross-panel drags and release the clamp only on commit or revert.
 
-## Pinned Apps
+## Kept Apps
 
-- A pinned app is one persistent app-level strip entry that absorbs all same-bundle live windows, native-tab seats, and app-level fallbacks. It appears after messaging apps in the shared leading zone.
-- Finder must never enter pinned-app state. Reject `com.apple.finder` both when loading `PinnedAppStore` and when adding through any menu/action path.
-- Pinned identity wins over drawer, launch favorite, and messaging membership. Route conversions through `AppMembershipController`; pinning a messaging app deliberately calls `unmark` and therefore keeps its auto-registration opt-out after later unpinning.
-- `RunningApplicationStore` is a UI-only NSWorkspace process projection. It must not admit windows, create identities, or alter inventory-first tracking. Pinned-app running dots and hidden state come from it, not from the window snapshot.
-- Same-bundle regular processes are one app-level group: any live process means running, all must be hidden to show hidden state, and app-level show/hide/quit actions apply to the whole group.
-- Clicking a running pinned app with no real non-fallback window must unhide/reopen it. Running pinned apps with real windows use app-level frontmost->hide and background->show behavior.
-- Pinned-app actions do not write window-level optimistic state or predicted frontmost state. Any immediate acknowledgment stays view-local, and app-active decisions read a fresh `NSRunningApplication`.
-- Messaging auto-registration filters pinned apps on every snapshot update. Startup reconciliation and display projection remain defensive layers against conflicting persisted memberships.
-- Pinned app chips stay out of the existing live-window drag/reorder and drawer-conversion paths. Drawer-to-strip drag remains an unstash that restores the live window block; it is not the same action as pinning an app.
+- A kept app is one persistent app-level strip entry that absorbs all same-bundle live windows, native-tab seats, and app-level fallbacks. When running it shows window cards normally; when exited it collapses to a single gray icon that stays in place (click to relaunch). It appears in the live zone and can be freely dragged/reordered like window chips.
+- Finder must never enter kept state. Reject `com.apple.finder` both when loading `KeptAppStore` and when adding through any menu/action path.
+- Kept identity wins over drawer and messaging membership. Route conversions through `AppMembershipController`; keeping a messaging app deliberately calls `unmark` and therefore keeps its auto-registration opt-out after later removal.
+- `.keptApp` projection has two sources, both rendered as `LauncherChip` with `RunningApplicationStore` running dot/gray/hidden state: (a) unrunning kept apps → placeholder injection by `DockStripView` (id `"app-\(bid)"`); (b) running kept apps whose only snapshot entry is `isAppLevelFallback` → that entry is re-typed to `.keptApp` in the strip projection (id unchanged from the snapshot's `app-*` fallback token). The id `"app-\(bid)"` matches `AppTracker.rebuildSnapshot()`'s no-window fallback token — this is the position-retention lifeline.
+- Clicking a running kept app with no real non-fallback window must unhide/reopen it. Running kept apps with real windows use app-level frontmost->hide and background->show behavior.
+- Kept-app actions do not write window-level optimistic state or predicted frontmost state. Any immediate acknowledgment stays view-local, and app-active decisions read a fresh `NSRunningApplication`.
+- Messaging auto-registration filters kept apps on every snapshot update. Startup reconciliation and display projection remain defensive layers against conflicting persisted memberships.
+- Position retention: on app exit, window-card ids enter the 5s grace period in `StripOrderStore`; the `app-*` placeholder appears the same frame. `StripOrdering.reconcile` inserts the placeholder after the app's rightmost window card using sticky appKey memory. Sticky appKey is pruned to `current ∪ liveOrder` keys after each sync. `persistableLiveOrder` saves `tabgrp-*` + kept `app-*` only; `kern.boottime` guard discards the entire order on machine restart. Cold-start placeholders land at the live zone head.
+- Kept app chips participate in the live-window drag/reorder and drawer-conversion paths. Drag conversions are symmetric transactions (see Strip And Drawer Conversion above).
 
 ## Pinned Folders And External File Drop
 
-- Strip layout is `[messaging + pinned apps][divider][shelf + pinned folders][divider][live windows]`; empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
+- Strip layout is `[messaging + kept apps][divider][shelf + pinned folders][divider][live windows]`; empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
 - Folder chips drag via `DragController` source `.folder`; keep it isolated from strip/drawer stash semantics.
 - Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
@@ -140,7 +144,7 @@
 - Strip and drawer chip menus are hand-built AppKit `NSMenu`, not SwiftUI `.contextMenu`.
 - `MenuHostNSView` claims only right-click / Control-click and returns `nil` from `hitTest` otherwise.
 - Force Quit is a native alternate item after Quit, gated out for this app itself.
-- `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Pure launch-favorite chips use `menuMode = .removeOnly`; membership items are injected via `membershipItems` and may be multiple (a stashed+favorite icon shows both 移出抽屉 and 取消固定).
+- `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Membership items are injected via `membershipItems` and may be multiple (a stashed+kept icon shows both 移出抽屉 and 在程序坞中保留/从程序坞中移除).
 - Finder menu items apply to both persistent Finder chip and concrete Finder windows.
 - SwiftUI shadow margin is `shadowPadding = 20pt`; floating panel shadows must fit within it.
 - Coordinate math on `dockFrame` / `capsuleFrame` subtracts `shadowPadding` to reach visual content, and `fittingSize.width` subtracts `2 * shadowPadding`.

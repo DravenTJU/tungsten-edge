@@ -7,8 +7,8 @@ import SwiftUI
 /// and handles tap-to-launch, tap-to-reopen, and the launch bounce animation.
 ///
 /// Shared by the drawer (collected apps, scale 0.7) and the main strip (messaging
-/// and user-pinned apps, scale 1.0). Call-site differences are injected via
-/// `membershipItems` (固定到任务栏 / 取消固定 / 取消标记消息应用) + `menuMode`.
+/// and kept apps, scale 1.0). Call-site differences are injected via
+/// `membershipItems` (在程序坞中保留 / 从程序坞中移除 / 取消标记消息应用).
 
 /// 一条成员 / 管理菜单项（标签 + 动作）。LauncherChip 右键菜单末尾按序渲染，
 /// 可多项——收纳 + 启动收藏共存图标可同时给转换、移出与取消收藏入口。
@@ -25,11 +25,9 @@ struct LauncherChip: View {
     /// Drawer chips dim by run/hidden state; pinned messaging chips on the strip
     /// stay full-opacity (product decision: "always reachable", not degraded).
     var dimsWhenInactive: Bool = true
-    /// 成员 / 管理菜单项（右键菜单末尾），如「固定到任务栏」「取消固定」「取消标记消息应用」。
-    /// 空数组 = 无成员项。共存图标可同时含「固定到任务栏」+「取消固定」两项。
+    /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「从程序坞中移除」「取消标记消息应用」。
+    /// 空数组 = 无成员项。
     var membershipItems: [LauncherMembershipItem] = []
-    /// 菜单模式：`.full` 运行 / 收纳图标完整菜单；`.removeOnly` 纯固定启动图标只留成员项。
-    var menuMode: LauncherMenuMode = .full
     /// When set, replaces the default tap behavior (drawer show/hide toggle). Used by
     /// app-level strip entries that must reopen a missing main window.
     var onTap: (() -> Void)? = nil
@@ -117,8 +115,7 @@ struct LauncherChip: View {
         let menu = NSMenu()
         // 菜单运行态跟随「图标所在区的显示态」(isRunning prop)，不再独立问 NSWorkspace——否则待启动区里
         // 进程仍活（关窗不退 / 常驻）的图标会误报「隐藏 / 退出」，与其「已退出」的灰显外观矛盾。
-        let kinds = LauncherMenuPlan.itemKinds(mode: menuMode,
-                                               isRunning: isRunning,
+        let kinds = LauncherMenuPlan.itemKinds(isRunning: isRunning,
                                                isHidden: isHidden,
                                                hasMembership: !membershipItems.isEmpty)
         // 仅在真要执行 显示/隐藏/退出 时才取 app 对象；取不到就跳过该项（快照短暂陈旧的兜底）。

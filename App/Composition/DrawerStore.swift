@@ -1,14 +1,33 @@
 import Foundation
+import os
 
 @MainActor
 final class DrawerStore: ObservableObject {
     @Published private(set) var bundleIDs: [String] = []
     private let key = "drawerBundleIDs"
+    private static let legacyFavoriteKey = "launchFavoriteBundleIDs"
     private let defaults: UserDefaults
+    private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "drawer-store")
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        bundleIDs = defaults.stringArray(forKey: key) ?? []
+        var ids = defaults.stringArray(forKey: key) ?? []
+
+        // 迁移：并入旧 launchFavoriteBundleIDs 后删旧 key
+        if let favorites = defaults.stringArray(forKey: Self.legacyFavoriteKey), !favorites.isEmpty {
+            for fav in favorites where !fav.isEmpty && !ids.contains(fav) {
+                ids.append(fav)
+            }
+            defaults.removeObject(forKey: Self.legacyFavoriteKey)
+            logger.info("merged \(favorites.count) entries from launchFavoriteBundleIDs into drawerBundleIDs")
+        }
+
+        bundleIDs = ids
+        if let stored = defaults.stringArray(forKey: key), stored != ids {
+            persist()
+        } else if defaults.stringArray(forKey: key) == nil && !ids.isEmpty {
+            persist()
+        }
     }
 
     func contains(_ id: String) -> Bool { bundleIDs.contains(id) }

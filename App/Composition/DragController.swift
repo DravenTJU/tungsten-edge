@@ -8,7 +8,7 @@ import SwiftUI
 enum DragSource { case strip, drawer, folder }
 
 /// 载体（飘浮副本）画成什么样。
-enum DragVisualKind { case stripChip, drawerIcon, folderChip }
+enum DragVisualKind { case stripChip, drawerIcon, folderChip, keptAppIcon }
 
 /// 通用拖动载荷。任务条卡片有 `StripItem`；抽屉很多图标（无窗口运行项 / 未运行收纳项 / 纯固定项）
 /// 只有 bundleID、没有 `StripItem`，故 `item` 可空，主键统一用 `bundleID`。`id` 给来源面板自己
@@ -49,6 +49,14 @@ final class DragController: ObservableObject {
     /// `@Published`：载体视图（`DragCarrierView`）靠它从抽屉小图标切到任务条卡，必须能驱动刷新（Codex 三审 P1）。
     @Published private(set) var convertedDrawerBundleID: String?
     var isConvertedToStrip: Bool { convertedDrawerBundleID != nil }
+    /// keepPlacement 转正标记：drawer→strip 走 keepPlacement 路径时置 true，revert 时据此做 kept.remove。
+    private var keepPlacementConverted = false
+    /// DockStripView 在 keepPlacement 转正后调此方法：记标记 + kept.add（convertDrawerToStrip 已做 drawer.remove）。
+    func markKeepPlacement() {
+        guard let bid = convertedDrawerBundleID else { return }
+        keepPlacementConverted = true
+        keptAppStore.add(bid)
+    }
     /// 转正后载体改画的**唯一代表卡**：载体（画哪张卡）与任务条空位（隐藏哪张卡）都认它，避免"手里拎 A、
     /// 条里空出 B"（Codex 三审 P1）。由 DockStripView 在窗口卡实体化后写入（显示序里该 app 第一张已实体化的
     /// 卡），未实体化前为 nil（载体仍画抽屉小图标）。`revert`/`teardown` 清空。
@@ -59,6 +67,9 @@ final class DragController: ObservableObject {
     /// 成功松手落定（converted 态）时回调，组合层接到后 `stripOrderStore.commitExternalBlock()`。
     /// 唯一收到 mouseUp 的是 `endDrag`，commit 必须由它触发，不靠 DockStripView 推断 payload 变 nil。
     var onDrawerToStripCommitted: ((String) -> Void)?
+    /// 抽屉拖回任务条·异常取消（cancelDrag）时回调，组合层接到后 `stripOrderStore.cancelExternalBlock()`。
+    /// 与 onDrawerToStripCommitted 对称：commit = 落定清暂存；cancel = 撤销清暂存+boundIDs。
+    var onDrawerToStripCancelled: (() -> Void)?
     /// 抽屉图标松手落进任务条时回调（精确落点路径 + 降级路径都会触发）。
     /// PanelCoordinator 用它关闭抽屉；与 onDrawerToStripCommitted 独立，互不替代。
     var onDrawerToStripCompleted: ((String) -> Void)?
@@ -77,6 +88,7 @@ final class DragController: ObservableObject {
     var onFolderDragEnded: ((String, FolderChipDropZone) -> Void)?
 
     private let drawerStore: DrawerStore
+    private let keptAppStore: KeptAppStore
     /// 按来源给投放候选区（屏幕坐标，已 inset+容错）：strip→胶囊(+抽屉)；drawer→任务条 dock 面板。
     private let dropZonesProvider: (DragSource) -> [CGRect]
     private let screenProvider: () -> NSScreen
@@ -88,10 +100,12 @@ final class DragController: ObservableObject {
     private var pollTimer: Timer?
 
     init(drawerStore: DrawerStore,
+         keptAppStore: KeptAppStore,
          dropZonesProvider: @escaping (DragSource) -> [CGRect],
          screenProvider: @escaping () -> NSScreen,
          carrierFactory: @escaping (DragController) -> NSView) {
         self.drawerStore = drawerStore
+        self.keptAppStore = keptAppStore
         self.dropZonesProvider = dropZonesProvider
         self.screenProvider = screenProvider
         self.carrierFactory = carrierFactory
@@ -114,6 +128,8 @@ final class DragController: ObservableObject {
 
     /// 转正前的原始任务条载荷：非 nil 表示"当前这张卡是任务条卡、已临时转正进抽屉"。撤销时据此还原。
     private var stripPayloadBeforeConvert: DragPayload?
+    /// 转正前该 bundleID 是否是 kept（保留应用）。撤销时据此决定是否恢复 kept 标志。
+    private var wasKeptBeforeConvert: Bool = false
     /// 当前是不是"任务条卡临时转正进抽屉"的状态（供 DrawerView 决定何时撤销还原）。
     /// `@Published`：PanelCoordinator 据此冻结/解冻任务条宽度（"拖卡进抽屉松手才变窄"，与拖回任务条对称）。
     @Published private(set) var isConvertedFromStrip: Bool = false
@@ -129,8 +145,10 @@ final class DragController: ObservableObject {
     func convertStripToDrawer() {
         guard let p = draggingPayload, p.source == .strip, p.canExternalDrop else { return }
         stripPayloadBeforeConvert = p
-        isConvertedFromStrip = true   // 先置（同步触发宽度冻结、capture 拖动前宽度），再动 drawerStore
+        wasKeptBeforeConvert = keptAppStore.contains(p.bundleID)
+        isConvertedFromStrip = true   // 先置（同步触发宽度冻结、capture 拖动前宽度），再动 store
         drawerStore.add(p.bundleID)
+        if wasKeptBeforeConvert { keptAppStore.remove(p.bundleID) }
         draggingPayload = DragPayload(source: .drawer, id: p.bundleID, bundleID: p.bundleID,
                                       item: p.item, visualKind: p.visualKind, canExternalDrop: true)
         refreshDropZone()   // 投放区集合随来源变,重算
@@ -141,8 +159,10 @@ final class DragController: ObservableObject {
     func revertStripFromDrawer() {
         guard let original = stripPayloadBeforeConvert, draggingPayload?.source == .drawer else { return }
         drawerStore.remove(original.bundleID)
+        if wasKeptBeforeConvert { keptAppStore.add(original.bundleID) }
         draggingPayload = original
         stripPayloadBeforeConvert = nil
+        wasKeptBeforeConvert = false
         isConvertedFromStrip = false   // 解冻 + 触发 relayout（拖出抽屉还原 → 任务条恢复原宽）
         refreshDropZone()
     }
@@ -162,9 +182,11 @@ final class DragController: ObservableObject {
     /// 顺序层的撤销（删 boundIDs + 清 absentSince）由 DockStripView 在调本方法**之前** `cancelExternalBlock`。
     func revertDrawerToStrip() {
         guard let bid = convertedDrawerBundleID else { return }
+        if keepPlacementConverted { keptAppStore.remove(bid) }
         drawerStore.add(bid)
         convertedDrawerBundleID = nil
         convertedRepresentative = nil   // 载体恢复抽屉小图标
+        keepPlacementConverted = false
     }
 
     // MARK: - 跟手 / 落点
@@ -195,8 +217,11 @@ final class DragController: ObservableObject {
             onFolderDragEnded?(p.id, folderZone)
         case .strip:
             // 进过抽屉体的卡已被 convertStripToDrawer 转成 .drawer（落在里面 = 已是成员、不走这里）。
-            // 走到这支 = 没进抽屉体的卡：在投放区(胶囊)松手 → 追加末尾收纳；否则什么都不做。
-            if external { drawerStore.add(p.bundleID) }
+            // 走到这支 = 没进抽屉体的卡：在投放区(胶囊)松手 → 收纳 + 移出保留；否则什么都不做。
+            if external {
+                drawerStore.add(p.bundleID)
+                keptAppStore.remove(p.bundleID)
+            }
         case .drawer:
             if converted {
                 // 已转正进任务条（成员已 remove、窗口卡已落子）→ 视为落定，不再据 external 动成员。
@@ -213,16 +238,25 @@ final class DragController: ObservableObject {
         }
     }
 
-    /// 取消：拖动中目标消失、切屏等异常路径，纯收尾不动作。
+    /// 取消：拖动中目标消失、切屏等异常路径。先回滚已发生的 store 变更（与"拖出还原"同路径），再收尾。
     func cancelDrag() {
         guard draggingPayload != nil else { return }
+        if isConvertedFromStrip {
+            revertStripFromDrawer()
+        }
+        if convertedDrawerBundleID != nil {
+            onDrawerToStripCancelled?()
+            revertDrawerToStrip()
+        }
         teardown()
     }
 
     private func teardown() {
         stripPayloadBeforeConvert = nil   // 落定/取消都清掉（落在抽屉里 = 已 add，不撤销）
+        wasKeptBeforeConvert = false
         isConvertedFromStrip = false      // 解冻任务条宽度（拖卡进抽屉落定/取消）
         convertedDrawerBundleID = nil     // 抽屉拖回任务条：落定/取消都清转正态
+        keepPlacementConverted = false
         convertedRepresentative = nil
         folderDragZone = nil
         folderDropGeometry = nil
@@ -312,13 +346,14 @@ final class DragController: ObservableObject {
 
     private func startPoll() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.draggingPayload != nil else { return }
                 if NSEvent.pressedMouseButtons == 0 { self.endDrag() }
             }
         }
-        pollTimer?.tolerance = 0.02
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 }
 
@@ -360,6 +395,9 @@ struct DragCarrierView: View {
                         .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                 }
             case .drawerIcon:
+                DrawerDragIconView(bundleID: p.bundleID)
+                    .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+            case .keptAppIcon:
                 DrawerDragIconView(bundleID: p.bundleID)
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
             case .folderChip:

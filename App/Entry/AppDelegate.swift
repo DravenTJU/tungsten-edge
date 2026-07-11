@@ -7,19 +7,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var runtime = AppRuntime()
     let drawerStore = DrawerStore()
     let messagingStore = MessagingAppStore()
-    let launchFavoriteStore = LaunchFavoriteStore()
     let badgeStore = BadgeStore()
-    let stripOrderStore = StripOrderStore()
+    let keptAppStore = KeptAppStore()
+    lazy var stripOrderStore = StripOrderStore(keptIDsProvider: { [keptAppStore] in Set(keptAppStore.bundleIDs) })
     let drawerOrderStore = DrawerOrderStore()
     let settingsStore = AppSettingsStore()
     let pinnedFolderStore = PinnedFolderStore()
     let shelfStore = ShelfStore()
-    let pinnedAppStore = PinnedAppStore()
     let runningApplicationStore = RunningApplicationStore()
     private(set) lazy var appMembershipController = AppMembershipController(
-        pinnedAppStore: pinnedAppStore,
+        keptAppStore: keptAppStore,
         drawerStore: drawerStore,
-        launchFavoriteStore: launchFavoriteStore,
         messagingStore: messagingStore
     )
     /// lazy：sortOrderProvider 要引用 pinnedFolderStore（封面跟随该文件夹当前排序的第一个文件）。
@@ -76,21 +74,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startApp() {
-        appMembershipController.reconcilePinnedWins()
+        appMembershipController.reconcileKeptWins()
         runningApplicationStore.start()
         runtime.start()
 
         // Auto tier of the messaging list: whenever the snapshot updates, register any
         // running app that matches the whitelist / social-networking category.
-        // Launch favorites and pinned apps are explicit memberships. Auto detection
-        // must not pull either one into the messaging zone.
+        // Kept apps are explicit memberships. Auto detection must not pull them
+        // into the messaging zone.
         messagingAutoRegisterSubscription = runtime.$snapshot
             .receive(on: DispatchQueue.main)
             .sink { [weak self] snapshot in
                 guard let self else { return }
                 let running = Set(snapshot.windows.values.compactMap(\.bundleIdentifier))
-                    .filter { !self.launchFavoriteStore.contains($0) }
-                    .filter { !self.pinnedAppStore.contains($0) }
+                    .filter { !self.keptAppStore.contains($0) }
                 self.messagingStore.autoRegister(runningBundleIDs: running)
             }
 
@@ -98,7 +95,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runtime: runtime,
             drawerStore: drawerStore,
             messagingStore: messagingStore,
-            launchFavoriteStore: launchFavoriteStore,
             badgeStore: badgeStore,
             stripOrderStore: stripOrderStore,
             drawerOrderStore: drawerOrderStore,
@@ -106,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pinnedFolderStore: pinnedFolderStore,
             folderCoverStore: folderCoverStore,
             shelfStore: shelfStore,
-            pinnedAppStore: pinnedAppStore,
+            keptAppStore: keptAppStore,
             runningApplicationStore: runningApplicationStore,
             appMembershipController: appMembershipController
         )

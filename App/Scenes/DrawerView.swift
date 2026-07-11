@@ -20,11 +20,11 @@ struct DrawerView: View {
 
     @EnvironmentObject var runtime: AppRuntime
     @EnvironmentObject var drawerStore: DrawerStore
-    @EnvironmentObject var launchFavoriteStore: LaunchFavoriteStore
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var drawerOrderStore: DrawerOrderStore
     @EnvironmentObject var dragController: DragController
-    @EnvironmentObject var pinnedAppStore: PinnedAppStore
+    @EnvironmentObject var keptAppStore: KeptAppStore
+    @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
 
     /// 抽屉图标在 `"drawer"` 坐标空间里的位置，喂给起拖抓取偏移 + 同区落点命中。
@@ -42,21 +42,16 @@ struct DrawerView: View {
 
     // MARK: - 成员与分区（全 bundleID 级）
 
-    /// 成员全集（收纳 ∪ 启动收藏 − pinned app），喂给顺序层记忆——绝不按"当前可见"裁，
-    /// 否则纯启动收藏运行离开抽屉后顺序丢。
+    /// 成员全集（收纳 − kept app），喂给顺序层记忆——绝不按"当前可见"裁，
+    /// 否则收纳项运行离开抽屉后顺序丢。
     private var allMembers: [String] {
         AppMembershipProjection.drawerMembers(
             drawerIDs: drawerStore.bundleIDs,
-            launchFavoriteIDs: launchFavoriteStore.bundleIDs,
-            pinnedIDs: pinnedAppStore.bundleIDs
+            keptIDs: keptAppStore.bundleIDs
         )
     }
 
     private var displayOrder: [String] { drawerOrderStore.reconciled(members: allMembers) }
-
-    private var snapshotBundleIDs: Set<String> {
-        Set(StripItem.items(from: runtime.snapshot).compactMap(\.bundleIdentifier))
-    }
 
     /// 有真窗口的 app（用于启动门控判定）。
     private var windowBackedIDs: Set<String> {
@@ -68,22 +63,22 @@ struct DrawerView: View {
         runtime.launchingBundleIDs.contains(id) && !windowBackedIDs.contains(id)
     }
 
-    private func isRunning(_ id: String) -> Bool { snapshotBundleIDs.contains(id) }
+    /// 运行判定走 RunningApplicationStore（NSWorkspace 进程投影），与任务条 pinned dot 同口径。
+    private func isRunning(_ id: String) -> Bool { runningApplicationStore.isRunning(id) }
 
-    private func isHiddenInSnapshot(_ id: String) -> Bool {
-        StripItem.items(from: runtime.snapshot).first { $0.bundleIdentifier == id }?.status == "hidden"
-    }
+    /// 隐藏判定同口径：同 bundle 所有进程都 hidden 才算 hidden。
+    private func isHiddenInSnapshot(_ id: String) -> Bool { runningApplicationStore.isHidden(id) }
 
     /// 运行区 = 收纳 + 在跑 + 不在启动门控期。
     private var runningZoneIDs: [String] {
         displayOrder.filter { drawerStore.contains($0) && isRunning($0) && !isLaunchingWithoutWindow($0) }
     }
 
-    /// 启动区 = 没在跑（或仍在启动门控期）的成员：收纳已退出 + 固定当前关着（共存项已在 displayOrder 去重）。
+    /// 启动区 = 没在跑（或仍在启动门控期）的收纳项。
     private var launchZoneIDs: [String] {
         displayOrder.filter { id in
             let notReady = !isRunning(id) || isLaunchingWithoutWindow(id)
-            return notReady && (drawerStore.contains(id) || launchFavoriteStore.contains(id))
+            return notReady && drawerStore.contains(id)
         }
     }
 
@@ -188,22 +183,17 @@ struct DrawerView: View {
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let stashed = drawerStore.contains(id)
-        let favorite = launchFavoriteStore.contains(id)
         let delay = Double(min(index, 6)) * 0.018
-        // 「固定到任务栏」统一 promote；移出抽屉和取消启动收藏仍各管各的身份。
-        let pinToStrip: [LauncherMembershipItem] = pinnedAppStore.canPin(id)
-            ? [LauncherMembershipItem(label: "固定到任务栏", action: { appMembershipController.pinToStrip(id) })]
-            : []
         let membership: [LauncherMembershipItem] =
-            pinToStrip
+            (keptAppStore.canKeep(id) && !keptAppStore.contains(id)
+                ? [LauncherMembershipItem(label: "在程序坞中保留") { appMembershipController.keepInDock(id) }]
+                : [])
             + (stashed ? [LauncherMembershipItem(label: "移出抽屉", action: { drawerStore.remove(id) })] : [])
-            + (favorite ? [LauncherMembershipItem(label: "取消固定", action: { launchFavoriteStore.remove(id) })] : [])
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
                      scale: 0.7,
                      membershipItems: membership,
-                     menuMode: stashed ? .full : .removeOnly,
                      onLaunch: { runtime.beginLaunch(id) },
                      launchReady: !runtime.launchingBundleIDs.contains(id),
                      onPrimaryAction: onPrimaryAction)
@@ -231,7 +221,7 @@ struct DrawerView: View {
                                    height: $0.midY - value.startLocation.y)
                         } ?? .zero
                         let payload = DragPayload(source: .drawer, id: id, bundleID: id, item: nil,
-                                                  visualKind: .drawerIcon, canExternalDrop: stashed)
+                                                  visualKind: .drawerIcon, canExternalDrop: true)
                         dragController.beginDrag(payload: payload,
                                                  startScreenLocation: NSEvent.mouseLocation,
                                                  grabOffset: grab)

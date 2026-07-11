@@ -89,7 +89,6 @@ final class PanelCoordinator: NSObject {
     private let runtime: AppRuntime
     private let drawerStore: DrawerStore
     private let messagingStore: MessagingAppStore
-    private let launchFavoriteStore: LaunchFavoriteStore
     private let badgeStore: BadgeStore
     private let stripOrderStore: StripOrderStore
     private let drawerOrderStore: DrawerOrderStore
@@ -97,7 +96,7 @@ final class PanelCoordinator: NSObject {
     private let pinnedFolderStore: PinnedFolderStore
     private let folderCoverStore: PinnedFolderCoverStore
     private let shelfStore: ShelfStore
-    private let pinnedAppStore: PinnedAppStore
+    private let keptAppStore: KeptAppStore
     private let runningApplicationStore: RunningApplicationStore
     private let appMembershipController: AppMembershipController
     /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
@@ -155,8 +154,7 @@ final class PanelCoordinator: NSObject {
     private var snapshotWidthSubscription: AnyCancellable?
     private var drawerStoreWidthSubscription: AnyCancellable?
     private var messagingStoreWidthSubscription: AnyCancellable?
-    private var launchFavoriteStoreSubscription: AnyCancellable?
-    private var pinnedAppStoreSubscription: AnyCancellable?
+    private var keptAppStoreSubscription: AnyCancellable?
     private var dragSpringSubscription: AnyCancellable?
     private var dragInhibitorSubscription: AnyCancellable?
     private var edgeDelaySubscription: AnyCancellable?
@@ -200,11 +198,22 @@ final class PanelCoordinator: NSObject {
     private var edgeWakeRequiresHotZone = true
     private var edgeHiddenMouseMonitor: Any?
 
-    init(runtime: AppRuntime, drawerStore: DrawerStore, messagingStore: MessagingAppStore, launchFavoriteStore: LaunchFavoriteStore, badgeStore: BadgeStore, stripOrderStore: StripOrderStore, drawerOrderStore: DrawerOrderStore, settingsStore: AppSettingsStore, pinnedFolderStore: PinnedFolderStore, folderCoverStore: PinnedFolderCoverStore, shelfStore: ShelfStore, pinnedAppStore: PinnedAppStore, runningApplicationStore: RunningApplicationStore, appMembershipController: AppMembershipController) {
+    init(runtime: AppRuntime,
+         drawerStore: DrawerStore,
+         messagingStore: MessagingAppStore,
+         badgeStore: BadgeStore,
+         stripOrderStore: StripOrderStore,
+         drawerOrderStore: DrawerOrderStore,
+         settingsStore: AppSettingsStore,
+         pinnedFolderStore: PinnedFolderStore,
+         folderCoverStore: PinnedFolderCoverStore,
+         shelfStore: ShelfStore,
+         keptAppStore: KeptAppStore,
+         runningApplicationStore: RunningApplicationStore,
+         appMembershipController: AppMembershipController) {
         self.runtime = runtime
         self.drawerStore = drawerStore
         self.messagingStore = messagingStore
-        self.launchFavoriteStore = launchFavoriteStore
         self.badgeStore = badgeStore
         self.stripOrderStore = stripOrderStore
         self.drawerOrderStore = drawerOrderStore
@@ -212,7 +221,7 @@ final class PanelCoordinator: NSObject {
         self.pinnedFolderStore = pinnedFolderStore
         self.folderCoverStore = folderCoverStore
         self.shelfStore = shelfStore
-        self.pinnedAppStore = pinnedAppStore
+        self.keptAppStore = keptAppStore
         self.runningApplicationStore = runningApplicationStore
         self.appMembershipController = appMembershipController
         super.init()
@@ -225,8 +234,7 @@ final class PanelCoordinator: NSObject {
         subscribeSnapshotWidth()
         subscribeDrawerStoreWidth()
         subscribeMessagingStoreWidth()
-        subscribeLaunchFavoriteStore()
-        subscribePinnedAppStore()
+        subscribeKeptAppStore()
         subscribeDragSpringLoad()
         subscribeDragInhibitor()
         subscribeConvertRelease()
@@ -301,8 +309,8 @@ final class PanelCoordinator: NSObject {
         let hosting = NSHostingView(rootView: DrawerView(maxContentHeight: maxContentHeight,
                                                          onPrimaryAction: { [weak self] in self?.closeDrawerAfterAction() })
             .environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore)
-            .environmentObject(launchFavoriteStore).environmentObject(drawerOrderStore).environmentObject(dragController)
-            .environmentObject(pinnedAppStore).environmentObject(runningApplicationStore)
+            .environmentObject(drawerOrderStore).environmentObject(dragController)
+            .environmentObject(keptAppStore).environmentObject(runningApplicationStore)
             .environmentObject(appMembershipController))
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
@@ -742,23 +750,22 @@ final class PanelCoordinator: NSObject {
     private func setupDragController() {
         dragController = DragController(
             drawerStore: drawerStore,
+            keptAppStore: keptAppStore,
             dropZonesProvider: { [weak self] source in self?.dragDropZones(for: source) ?? [] },
             screenProvider: { [weak self] in self?.carrierTargetScreen() ?? (NSScreen.main ?? NSScreen.screens[0]) },
             carrierFactory: { [runtime = self.runtime,
                                drawerStore = self.drawerStore,
                                messagingStore = self.messagingStore,
-                               launchFavoriteStore = self.launchFavoriteStore,
                                folderCoverStore = self.folderCoverStore,
-                               pinnedAppStore = self.pinnedAppStore,
+                               keptAppStore = self.keptAppStore,
                                runningApplicationStore = self.runningApplicationStore,
                                appMembershipController = self.appMembershipController] controller in
                 NSHostingView(rootView: DragCarrierView(controller: controller)
                     .environmentObject(runtime)
                     .environmentObject(drawerStore)
                     .environmentObject(messagingStore)
-                    .environmentObject(launchFavoriteStore)
                     .environmentObject(folderCoverStore)
-                    .environmentObject(pinnedAppStore)
+                    .environmentObject(keptAppStore)
                     .environmentObject(runningApplicationStore)
                     .environmentObject(appMembershipController))
             }
@@ -780,6 +787,10 @@ final class PanelCoordinator: NSObject {
         // 抽屉拖回任务条·精确落点：成功松手落定时清顺序层的外部块暂存追踪（boundIDs 已是正常成员、留任务条）。
         dragController.onDrawerToStripCommitted = { [stripOrderStore] _ in
             stripOrderStore.commitExternalBlock()
+        }
+        // 抽屉拖回任务条·异常取消（cancelDrag）：回滚顺序层的外部块暂存（删 boundIDs + 清 absentSince + 清暂存）。
+        dragController.onDrawerToStripCancelled = { [stripOrderStore] in
+            stripOrderStore.cancelExternalBlock()
         }
         // 抽屉图标落进任务条（精确落点 + 降级路径都触发）→ 关闭抽屉。
         dragController.onDrawerToStripCompleted = { [weak self] _ in
@@ -967,7 +978,7 @@ final class PanelCoordinator: NSObject {
                 self?.toggleShelfPopup(anchorVisibleRect: anchorRect)
             },
             onAddFolder: { [weak self] in self?.onAddFolder() }
-        ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(launchFavoriteStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(pinnedAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController))
+        ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(keptAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController))
         hosting.autoresizingMask = [.width, .height]
         // Prevent NSHostingView from adding its own opaque background over the blur
         hosting.wantsLayer = true
@@ -996,7 +1007,7 @@ final class PanelCoordinator: NSObject {
             DrawerCapsuleButton { [weak self] in self?.toggleDrawer() }
                 .environmentObject(runtime)
                 .environmentObject(drawerStore)
-                .environmentObject(pinnedAppStore)
+                .environmentObject(keptAppStore)
                 .environmentObject(dragController)
         )
         hosting.wantsLayer = true
@@ -1058,8 +1069,7 @@ final class PanelCoordinator: NSObject {
     private func syncDrawerOrder() {
         let members = AppMembershipProjection.drawerMembers(
             drawerIDs: drawerStore.bundleIDs,
-            launchFavoriteIDs: launchFavoriteStore.bundleIDs,
-            pinnedIDs: pinnedAppStore.bundleIDs
+            keptIDs: keptAppStore.bundleIDs
         )
         drawerOrderStore.sync(members: members)
     }
@@ -1074,21 +1084,8 @@ final class PanelCoordinator: NSObject {
             }
     }
 
-    /// Launch favorites never change the strip's content (a favorite stays on the
-    /// strip while running) — relayout 的任务条宽度会算成同值（dock/胶囊动画 no-op），只有打开的抽屉尺寸会变。
-    private func subscribeLaunchFavoriteStore() {
-        launchFavoriteStoreSubscription = launchFavoriteStore.$bundleIDs
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in
-                    self?.syncDrawerOrder()
-                    self?.relayout(animated: true)
-                }
-            }
-    }
-
-    private func subscribePinnedAppStore() {
-        pinnedAppStoreSubscription = pinnedAppStore.$bundleIDs
+    private func subscribeKeptAppStore() {
+        keptAppStoreSubscription = keptAppStore.$bundleIDs
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 DispatchQueue.main.async { [weak self] in
