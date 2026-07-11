@@ -95,7 +95,7 @@
 
 ## Kept Apps
 
-- A kept app is one persistent app-level strip entry that absorbs all same-bundle live windows, native-tab seats, and app-level fallbacks. When running it shows window cards normally; when exited it collapses to a single gray icon that stays in place (click to relaunch). It appears in the live zone and can be freely dragged/reordered like window chips.
+- A kept app does **not** absorb live windows: while running with real windows it shows ordinary window chips; only when exited (or running with no real window) does it collapse to a single app-level icon that stays in place (gray + click-to-relaunch when exited). The icon lives in the live zone and can be freely dragged/reordered like window chips.
 - Finder must never enter kept state. Reject `com.apple.finder` both when loading `KeptAppStore` and when adding through any menu/action path.
 - Kept identity wins over drawer and messaging membership. Route conversions through `AppMembershipController`; keeping a messaging app deliberately calls `unmark` and therefore keeps its auto-registration opt-out after later removal.
 - `.keptApp` projection has two sources, both rendered as `LauncherChip` with `RunningApplicationStore` running dot/gray/hidden state: (a) unrunning kept apps → placeholder injection by `DockStripView` (id `"app-\(bid)"`); (b) running kept apps whose only snapshot entry is `isAppLevelFallback` → that entry is re-typed to `.keptApp` in the strip projection (id unchanged from the snapshot's `app-*` fallback token). The id `"app-\(bid)"` matches `AppTracker.rebuildSnapshot()`'s no-window fallback token — this is the position-retention lifeline.
@@ -172,4 +172,4 @@ The owner directs product, does not read code, and does not read English comfort
 - Frame choices as product behavior and trade-offs, not implementation trivia.
 - For coding tasks, read code first and follow existing repo patterns.
 - For "打检查点", create a local git commit unless told otherwise; do not push or create PRs unless asked.
-- For neat-freak / 洁癖 / 收尾 / 整理文档, do not expand this file by default. Update `AGENTS.md` only for new hard engineering guardrails that would prevent code regressions. Product state, roadmap, release progress, decision history, and long handoff text belong in Obsidian; historical notes belong in `Docs/Archive/`.
+- For 收尾 / 整理文档, do not expand this file by default. Update `AGENTS.md` only for new hard engineering guardrails that would prevent code regressions. Product state, roadmap, release progress, decision history, and long handoff text belong in Obsidian; historical notes belong in `Docs/Archive/`.

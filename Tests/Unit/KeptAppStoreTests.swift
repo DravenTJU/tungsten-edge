@@ -96,4 +96,14 @@ final class KeptAppStoreTests: XCTestCase {
         let store = KeptAppStore(defaults: defaults)
         XCTAssertEqual(store.bundleIDs, ["com.example.existing"])
     }
+
+    func testEmptyLegacyKeyIsRemovedWithoutOverwritingNewKey() {
+        let defaults = makeDefaults()
+        defaults.set([String](), forKey: "pinnedAppBundleIDs")
+        defaults.set(["com.example.existing"], forKey: KeptAppStore.defaultsKey)
+        let store = KeptAppStore(defaults: defaults)
+        // 空的旧 key 也要删掉（不留残 key），且不得覆盖新 key 已有数据。
+        XCTAssertNil(defaults.stringArray(forKey: "pinnedAppBundleIDs"))
+        XCTAssertEqual(store.bundleIDs, ["com.example.existing"])
+    }
 }

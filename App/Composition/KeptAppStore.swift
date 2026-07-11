@@ -19,18 +19,20 @@ final class KeptAppStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        // 迁移：采纳旧 pinnedAppBundleIDs 后删旧 key
-        if let legacy = defaults.stringArray(forKey: Self.legacyKey), !legacy.isEmpty {
-            bundleIDs = Self.cleaned(legacy)
-            persist()
+        // 迁移：采纳旧 pinnedAppBundleIDs 后删旧 key（空数组也删，不留残 key）
+        if let legacy = defaults.stringArray(forKey: Self.legacyKey) {
             defaults.removeObject(forKey: Self.legacyKey)
-            logger.info("migrated \(self.bundleIDs.count) entries from pinnedAppBundleIDs → keptAppBundleIDs: \(self.bundleIDs.joined(separator: ", "))")
-        } else {
-            let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
-            bundleIDs = Self.cleaned(stored)
-            if bundleIDs != stored {
+            if !legacy.isEmpty {
+                bundleIDs = Self.cleaned(legacy)
                 persist()
+                logger.info("migrated \(self.bundleIDs.count) entries from pinnedAppBundleIDs → keptAppBundleIDs: \(self.bundleIDs.joined(separator: ", "))")
+                return
             }
+        }
+        let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
+        bundleIDs = Self.cleaned(stored)
+        if bundleIDs != stored {
+            persist()
         }
     }
 

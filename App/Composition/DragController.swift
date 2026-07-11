@@ -352,6 +352,7 @@ final class DragController: ObservableObject {
                 if NSEvent.pressedMouseButtons == 0 { self.endDrag() }
             }
         }
+        timer.tolerance = 0.02
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
     }

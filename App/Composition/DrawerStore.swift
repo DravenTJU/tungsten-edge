@@ -13,13 +13,15 @@ final class DrawerStore: ObservableObject {
         self.defaults = defaults
         var ids = defaults.stringArray(forKey: key) ?? []
 
-        // 迁移：并入旧 launchFavoriteBundleIDs 后删旧 key
-        if let favorites = defaults.stringArray(forKey: Self.legacyFavoriteKey), !favorites.isEmpty {
+        // 迁移：并入旧 launchFavoriteBundleIDs 后删旧 key（空数组也删，不留残 key）
+        if let favorites = defaults.stringArray(forKey: Self.legacyFavoriteKey) {
+            defaults.removeObject(forKey: Self.legacyFavoriteKey)
             for fav in favorites where !fav.isEmpty && !ids.contains(fav) {
                 ids.append(fav)
             }
-            defaults.removeObject(forKey: Self.legacyFavoriteKey)
-            logger.info("merged \(favorites.count) entries from launchFavoriteBundleIDs into drawerBundleIDs")
+            if !favorites.isEmpty {
+                logger.info("merged \(favorites.count) entries from launchFavoriteBundleIDs into drawerBundleIDs")
+            }
         }
 
         bundleIDs = ids

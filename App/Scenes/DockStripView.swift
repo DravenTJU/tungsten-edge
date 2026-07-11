@@ -172,8 +172,11 @@ struct DockStripView: View {
         // Kept app placeholders (D1 two sources):
         // a. Unrunning: not in snapshot → inject placeholder
         // b. Running but only isAppLevelFallback → replace the fallback .window with .keptApp
+        // 占位插在 liveNatural **头部**（按 kept store 顺序）：正常运行时顺序由记忆层决定，
+        // 数组位置只影响"无记忆的新 id"落点——即跨机器重启（boottime 丢档）后占位落 live 区头部。
         let snapshotItems = StripItem.items(from: runtime.snapshot)
         let snapshotByBundle = Dictionary(grouping: snapshotItems, by: { $0.bundleIdentifier ?? "" })
+        var keptPlaceholders: [StripEntry] = []
         for bid in keptIDs {
             guard !drawerStore.contains(bid),
                   !msgSet.contains(bid) else { continue }
@@ -190,9 +193,9 @@ struct DockStripView: View {
                 }
             }
             // Both sources inject .keptApp with id "app-\(bid)"
-            liveNatural.append(.keptApp(bundleID: bid))
+            keptPlaceholders.append(.keptApp(bundleID: bid))
         }
-        return (messaging, liveNatural)
+        return (messaging, keptPlaceholders + liveNatural)
     }
 
     /// Live-zone chip ids in natural snapshot order — input to the order layer and the
@@ -1169,8 +1172,9 @@ struct ChipView: View {
         return menu
     }
 
-    /// Drawer + kept membership conversions go through the controller. Messaging
-    /// remains mutually exclusive with kept membership.
+    /// Kept membership conversions go through the controller. Messaging remains
+    /// mutually exclusive with kept membership. 收纳（进抽屉）不给菜单入口——
+    /// 唯一路径是拖拽到胶囊/抽屉（owner 2026-07-10：右键只留「在程序坞中保留」与消息标记）。
     private func appendMembershipItems(to menu: NSMenu) {
         guard let bid = item.bundleIdentifier,
               bid != KeptAppStore.forbiddenBundleID else { return }
@@ -1182,13 +1186,6 @@ struct ChipView: View {
         } else if keptAppStore.contains(bid) {
             menu.addItem(ClosureMenuItem("从程序坞中移除") {
                 appMembershipController.removeFromDock(bid)
-            })
-        }
-        if drawerStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("移出抽屉") { drawerStore.remove(bid) })
-        } else {
-            menu.addItem(ClosureMenuItem("收进抽屉") {
-                appMembershipController.moveToDrawer(bid)
             })
         }
         if messagingStore.contains(bid) {

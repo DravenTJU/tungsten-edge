@@ -45,18 +45,25 @@ final class KeptAppPositionTests: XCTestCase {
     func testGraceExpiresPlaceholderStaysInPlace() {
         let timeBox = TimeBox(Date())
         let store = makeStore(timeBox: timeBox)
-        store.sync(current: ["tabgrp-100-s1", "tabgrp-100-s2"],
-                   appKeyOf: ["tabgrp-100-s1": "com.app", "tabgrp-100-s2": "com.app"])
-        store.sync(current: ["app-com.app"],
-                   appKeyOf: ["app-com.app": "com.app"])
+        // com.app 两窗在左、com.other 一窗在右——占位"保持原位"= 停在 com.other 左边
+        store.sync(current: ["tabgrp-100-s1", "tabgrp-100-s2", "tabgrp-300-s1"],
+                   appKeyOf: ["tabgrp-100-s1": "com.app", "tabgrp-100-s2": "com.app",
+                              "tabgrp-300-s1": "com.other"])
+        store.sync(current: ["app-com.app", "tabgrp-300-s1"],
+                   appKeyOf: ["app-com.app": "com.app", "tabgrp-300-s1": "com.other"])
+        // 宽限内：占位插到本 app 最右窗口卡之后，仍在 com.other 左边
+        XCTAssertEqual(store.liveOrder,
+                       ["tabgrp-100-s1", "tabgrp-100-s2", "app-com.app", "tabgrp-300-s1"])
         // Advance past grace (5s)
         timeBox.time = Date().addingTimeInterval(6)
-        store.sync(current: ["app-com.app"],
-                   appKeyOf: ["app-com.app": "com.app"])
-        // Now tabgrp-* should be gone from liveOrder, placeholder is alone
-        let reconciled = store.reconciled(current: ["app-com.app"],
-                                          appKeyOf: ["app-com.app": "com.app"])
-        XCTAssertEqual(reconciled, ["app-com.app"])
+        store.sync(current: ["app-com.app", "tabgrp-300-s1"],
+                   appKeyOf: ["app-com.app": "com.app", "tabgrp-300-s1": "com.other"])
+        // 宽限过期：tabgrp-100-* 真正离开 liveOrder，占位留在原位（com.other 左边）
+        XCTAssertEqual(store.liveOrder, ["app-com.app", "tabgrp-300-s1"])
+        XCTAssertEqual(store.reconciled(current: ["app-com.app", "tabgrp-300-s1"],
+                                        appKeyOf: ["app-com.app": "com.app",
+                                                   "tabgrp-300-s1": "com.other"]),
+                       ["app-com.app", "tabgrp-300-s1"])
     }
 
     // MARK: - c. click placeholder → new tabgrp-* inserts next to placeholder → placeholder stops → window block returns
@@ -130,21 +137,20 @@ final class KeptAppPositionTests: XCTestCase {
     func testStickyAppKeyPruning() {
         let timeBox = TimeBox(Date())
         let store = makeStore(timeBox: timeBox)
-        store.sync(current: ["tabgrp-100-s1"],
-                   appKeyOf: ["tabgrp-100-s1": "com.app"])
-        // App exits and grace expires
-        store.sync(current: [],
-                   appKeyOf: [:])
+        // com.app 在左、com.other 在右——若粘性键/旧 id 未被清，重开的窗口会错误接回左边原位
+        store.sync(current: ["tabgrp-100-s1", "tabgrp-300-s1"],
+                   appKeyOf: ["tabgrp-100-s1": "com.app", "tabgrp-300-s1": "com.other"])
+        // com.app 关闭（非 kept，无占位注入），宽限过期后 id 与粘性键都应清掉
+        store.sync(current: ["tabgrp-300-s1"],
+                   appKeyOf: ["tabgrp-300-s1": "com.other"])
         timeBox.time = Date().addingTimeInterval(6)
-        store.sync(current: [],
-                   appKeyOf: [:])
-        // tabgrp-100-s1 should be gone from liveOrder; its sticky appKey should be pruned
-        // Verify by launching a new window — it should go to the end (no sticky key to match)
-        store.sync(current: ["tabgrp-100-s2"],
-                   appKeyOf: ["tabgrp-100-s2": "com.app"])
-        let reconciled = store.reconciled(current: ["tabgrp-100-s2"],
-                                          appKeyOf: ["tabgrp-100-s2": "com.app"])
-        XCTAssertEqual(reconciled, ["tabgrp-100-s2"])
+        store.sync(current: ["tabgrp-300-s1"],
+                   appKeyOf: ["tabgrp-300-s1": "com.other"])
+        XCTAssertEqual(store.liveOrder, ["tabgrp-300-s1"])
+        // 新窗口重开：无残留记忆可匹配 → 追加末尾（com.other 右边），不复活旧位置
+        store.sync(current: ["tabgrp-300-s1", "tabgrp-100-s2"],
+                   appKeyOf: ["tabgrp-300-s1": "com.other", "tabgrp-100-s2": "com.app"])
+        XCTAssertEqual(store.liveOrder, ["tabgrp-300-s1", "tabgrp-100-s2"])
     }
 
     // MARK: - f. persistableLiveOrder with keptIDs

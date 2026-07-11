@@ -143,9 +143,7 @@ final class StripOrderStore: ObservableObject {
     /// 拖动落位：把 `draggedID` 落到 `targetID` 的左/右边。先 reconcile 定下当前显示序，再插位；
     /// 顺序没变就不发布（拖动中 `dropUpdated` 高频调用，挡掉无谓 churn）。
     func reorder(draggedID: String, relativeTo targetID: String, after: Bool, current: [String]) {
-        var merged = stickyAppKeys
-        merged.merge([:]) { _, new in new } // no-op, just to use merged
-        let base = StripOrdering.reconcile(remembered: liveOrder, current: current, appKeyOf: merged)
+        let base = StripOrdering.reconcile(remembered: liveOrder, current: current, appKeyOf: stickyAppKeys)
         let next = StripOrdering.reordering(base, move: draggedID, relativeTo: targetID, after: after)
         if next != liveOrder { liveOrder = next; persist() }
     }
