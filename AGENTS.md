@@ -50,7 +50,8 @@
 - `WindowRecord.id` may be `cgw-<activeCgID>`, but chip identity is `groupID = seat.token`; action target is the current active cgID.
 - Tab switch may adopt a new active cgID into the same seat only when exactly one seat claims the same frame.
 - Tear-out keeps the old-frame seat for the new active tab; the moved old active cgID becomes a fresh seat.
-- Minimized multi-tab windows may expose all tabs as eligible AX windows. Fold background tabs into the placed minimized seat by exact frame first, then by `min=true` + off-screen + same size.
+- Minimized multi-tab windows may expose all tabs as eligible AX windows. Fold decision lives in pure `TabFoldDecision` (unit-tested), three levels: seat membership history first (`formerCgIDs` — every tab was once the seat's active cgID; geometry-free, survives stale AX coords after move/resize and the min-flag lag race), then exact frame, then `min=true` + off-screen + same size. Do not make geometry or the placed seat's min flag a hard precondition again.
+- `formerCgIDs` hygiene is load-bearing against cgID reuse: record on tab-switch adoption only (tear-out expulsion must NOT record), purge on window destroy (`purgeFromSeatHistories`) and by intersection with the CG full list on every reconcile.
 - A strip chip id is a stable identity token, not necessarily actionable. All strip show/hide/minimize/toggle calls must use `item.actionWindowID`.
 - `StripItem.pid`, `StripItem.cgWindowID`, and `StripItem.bounds` are current representative live facts for action/preview targeting only. Never use them as chip identity or persistent order keys.
 - Drawer actions are app-centric and must not use strip chip ids for window-level toggle.
@@ -142,6 +143,7 @@
 ## Menus, Panels, And Screens
 
 - Strip and drawer chip menus are hand-built AppKit `NSMenu`, not SwiftUI `.contextMenu`.
+- Strip window-chip menus must not expose drawer membership actions (`收进抽屉` / `移出抽屉`); stashing a window chip is drag-only. This does not remove `LauncherChip` membership items such as `移出抽屉` for an icon already displayed in the drawer.
 - `MenuHostNSView` claims only right-click / Control-click and returns `nil` from `hitTest` otherwise.
 - Force Quit is a native alternate item after Quit, gated out for this app itself.
 - `LauncherChip` menu running-state follows the passed-in `isRunning` (the displayed zone), never an independent `NSWorkspace` process query. A launch-zone icon whose process is still alive (window-closed / background) must not surface 显示/隐藏/退出. The pure decision is `LauncherMenuPlan.itemKinds` (unit-tested); `buildLauncherMenu` only renders it and queries `NSWorkspace` solely to obtain the app object for an action it already decided to show. Membership items are injected via `membershipItems` and may be multiple (a stashed+kept icon shows both 移出抽屉 and 在程序坞中保留/从程序坞中移除).

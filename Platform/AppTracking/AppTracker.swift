@@ -28,6 +28,12 @@ struct WindowEntry {
     /// 仅作「曾经 AX 缺席」的标记，用来在 AX 重新看到它时清零；【不据此回收座位】——实测
     /// Safari 等正常窗口一最小化就整个离开 AX，按缺席回收会误删。座位回收只看 CG 全列表是否消失。
     var absentSince: Date? = nil
+    /// 曾经当过这个座位 activeCgID 的标签（切标签被顶替时记入；折叠成功且归属唯一时也学习记入）。
+    /// 标签创建即成为活跃标签 ⇒ 每个后台标签都在所属座位历史里。Pass B 折叠优先按此成员关系
+    /// 判定，与几何、min 标志无关——豁免「窗口移动/缩放后后台标签 AX 几何过时」与「min 滞后
+    /// 竞态」两类折叠失效（分裂 bug 根治）。防 cgID 复用误折叠：真销毁(tombstone)时全局清除、
+    /// 每轮对账与 CG 全列表求交集；拽出(tear-out)被赶走的标签【不】记入（它是独立窗口了）。
+    var formerCgIDs: Set<CGWindowID> = []
 }
 
 @MainActor
@@ -105,6 +111,20 @@ final class AppTracker: ObservableObject {
         }
     }
 
+    /// cgID 会被系统复用：窗口真销毁时立刻从所有座位历史(formerCgIDs)里清除该 cgID，
+    /// 防止它复用到新窗口后被成员折叠误吸进旧座位。跨 pid 清（cgID 全局唯一、复用不认进程）。
+    private func purgeFromSeatHistories(_ cgID: CGWindowID) {
+        for pid in appOrder {
+            guard var app = apps[pid] else { continue }
+            var touched = false
+            for wid in app.windowOrder where app.windowsByID[wid]?.formerCgIDs.contains(cgID) == true {
+                app.windowsByID[wid]?.formerCgIDs.remove(cgID)
+                touched = true
+            }
+            if touched { apps[pid] = app }
+        }
+    }
+
     // MARK: - CG Window Set
 
     private func cgWindowIDSet() -> Set<CGWindowID> {
@@ -172,9 +192,12 @@ final class AppTracker: ObservableObject {
         var newOrder: [CGWindowID] = []
         var newByID: [CGWindowID: WindowEntry] = [:]
         func place(_ e: WindowEntry) { newOrder.append(e.cgWindowID); newByID[e.cgWindowID] = e }
-        func make(token: String, _ s: AXWindowSnapshot) -> WindowEntry {
+        // history = 座位延续时继承的「曾任活跃标签」集合。与 CG 全列表求交集：真关掉的标签
+        // 随之出列，防 cgID 复用后被误折叠进旧座位。
+        func make(token: String, _ s: AXWindowSnapshot, history: Set<CGWindowID> = []) -> WindowEntry {
             WindowEntry(cgWindowID: s.cgWindowID!, token: token, title: s.title ?? "",
-                        bounds: s.bounds, isMinimized: s.isMinimized, isFocused: s.isFocusedWindow)
+                        bounds: s.bounds, isMinimized: s.isMinimized, isFocused: s.isFocusedWindow,
+                        formerCgIDs: history.subtracting([s.cgWindowID!]).intersection(cgIDs))
         }
         // 某 frame 当前有几个老座位认领（>1 = 窗口重叠歧义，切标签顶替时跳过，保守不误并）
         func seatsAtFrame(_ key: String) -> Int {
@@ -193,11 +216,12 @@ final class AppTracker: ObservableObject {
                        guard let c = s.cgWindowID, c != X, !usedEligible.contains(c) else { return false }
                        return fk(s.bounds) == seatKey
                    }), let yc = Y.cgWindowID {
-                    place(make(token: seat.token, Y))    // 座位留旧 frame、顶替成 Y，token 不变
+                    // 座位留旧 frame、顶替成 Y，token 不变。X 被赶出成独立窗口 → 【不】记入历史
+                    place(make(token: seat.token, Y, history: seat.formerCgIDs))
                     usedEligible.insert(yc)
                     // X 不标 used → 落到 Pass B 成新座位（被赶出去的当前标签）
                 } else {
-                    place(make(token: seat.token, snapX))  // 普通：跟着 X（frame 可移动）
+                    place(make(token: seat.token, snapX, history: seat.formerCgIDs))  // 普通：跟着 X（frame 可移动）
                     usedEligible.insert(X)
                 }
             } else {
@@ -207,11 +231,16 @@ final class AppTracker: ObservableObject {
                        guard let c = s.cgWindowID, !usedEligible.contains(c), app.windowsByID[c] == nil else { return false }
                        return fk(s.bounds) == seatKey
                    }), let yc = Y.cgWindowID {
-                    place(make(token: seat.token, Y))    // 顶替，token 不变 → 卡不跳
+                    // 顶替，token 不变 → 卡不跳。X 是切走的后台标签 → 记入历史（关标签有
+                    // tombstone / 已离开 CG，make 的交集会把真关掉的挡在门外）
+                    var history = seat.formerCgIDs
+                    if !isTombstoned(X) { history.insert(X) }
+                    place(make(token: seat.token, Y, history: history))
                     usedEligible.insert(yc)
                 } else if cgIDs.contains(X) && !isTombstoned(X) {
                     // X 离开 AX 但仍在 CG。区分「最小化/隐藏(保座位)」vs「关窗后窗口赖在 CG(该删)」:
                     // 信号 = 离开 AX 前最后一次是不是 min(最小化会先经 Miniaturized 通知标 min；关窗不会)。
+                    seat.formerCgIDs.formIntersection(cgIDs)   // 历史防复用：出 CG 即出列
                     if seat.isMinimized || app.isHidden {
                         seat.isFocused = false
                         seat.absentSince = nil
@@ -234,35 +263,48 @@ final class AppTracker: ObservableObject {
         // **最小化折叠**：最小化一个多标签窗口时,Ghostty 会把该窗口的【所有标签】一下子都暴露成
         // AX 窗口(平时只暴露当前标签)。它们都 min=true——是同一个(已最小化)窗口的后台标签,折叠进
         // 已落座的座位,不另建座位（否则有几个标签就裂几张卡）。
-        // 正常情况下 frame 精确匹配。特例：窗口被拖动后后台标签的 AX 坐标不会更新（order-out
-        // 窗口不收 kAXWindowMovedNotification），导致后台标签 frame 与已移动的活跃标签 frame
-        // 不一致 → 精确匹配失败。回退：同尺寸（宽高）+ 屏幕外 → 判定为同窗口后台标签，折叠。
+        // 判定三级(TabFoldDecision)：成员关系(曾任该座位活跃标签,与几何无关) → frame 精确匹配
+        // → 尺寸兜底(同宽高+屏幕外,救"窗口移动后后台标签 AX 坐标过时")。折叠且归属唯一时把
+        // 候选记入座位历史(成员学习),下次折叠不再依赖几何。
         // 非 min 的同 frame 窗口是"两个独立窗口重叠"的合法场景,照常各自建座位。
-        var placedFrames = Set(newOrder.compactMap { fk(newByID[$0]?.bounds) })
+        var placedForFold: [TabFoldDecision.PlacedSeat] = newOrder.compactMap { id in
+            guard let e = newByID[id] else { return nil }
+            return TabFoldDecision.PlacedSeat(activeCgID: e.cgWindowID, bounds: e.bounds,
+                                              isMinimized: e.isMinimized, formerCgIDs: e.formerCgIDs)
+        }
         for s in eligible {
             guard let c = s.cgWindowID, !usedEligible.contains(c), newByID[c] == nil else { continue }
-            if s.isMinimized {
-                let exactMatch = fk(s.bounds).map { placedFrames.contains($0) } ?? false
-                // 窗口被移动后后台标签 AX 坐标过时：精确匹配失败时回退到尺寸匹配
-                // 条件：屏幕外（非活跃标签）+ 与某个已放置的最小化座位宽高相同
-                let sizeMatch: Bool = !exactMatch && !onScreenCGIDs.contains(c) && {
-                    guard let sb = s.bounds else { return false }
-                    return newOrder.contains { id in
-                        guard let pb = newByID[id]?.bounds,
-                              newByID[id]?.isMinimized == true else { return false }
-                        return abs(pb.size.width  - sb.size.width)  < 3 &&
-                               abs(pb.size.height - sb.size.height) < 3
-                    }
-                }()
-                if exactMatch || sizeMatch {
-                    usedEligible.insert(c)   // 后台标签 → 折叠进已有座位,不另建
-                    continue
+            let verdict = TabFoldDecision.verdict(
+                candidateCgID: c,
+                candidateBounds: s.bounds,
+                candidateIsMinimized: s.isMinimized,
+                candidateIsOnScreen: onScreenCGIDs.contains(c),
+                placedSeats: placedForFold,
+                frameKey: fk
+            )
+            switch verdict {
+            case .fold(let owner, _):
+                usedEligible.insert(c)   // 后台标签 → 折叠进已有座位,不另建
+                if let owner { newByID[owner]?.formerCgIDs.insert(c) }   // 成员学习
+            case .newSeat:
+                if s.isMinimized, !placedForFold.isEmpty {
+                    // 诊断：min=true 候选在【已有落座座位】时三级判定全失败走到新建座位 =
+                    // 潜在分裂点，dump 全部判定输入抓现场。placed 为空(seed 时本就最小化的
+                    // 独立窗口)是正确新建,不打。确认稳定后可清理。
+                    let cand = s.bounds.map { "\(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
+                    let placedDesc = placedForFold.map { p in
+                        let b = p.bounds.map { "\(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
+                        return "(cg=\(p.activeCgID) min=\(p.isMinimized) b=[\(b)] hist=\(p.formerCgIDs.sorted()))"
+                    }.joined(separator: " ")
+                    print("[tabfold] 分裂点 pid=\(pid) 为 min 窗口新建座位 cg=\(c) b=[\(cand)] onScreen=\(onScreenCGIDs.contains(c)) placed=\(placedDesc)")
                 }
+                nextSeatSerial += 1
+                let entry = make(token: "tabgrp-\(pid)-s\(nextSeatSerial)", s)
+                place(entry)
+                observers[pid]?.registerWindow(s.element, cgWindowID: c)
+                placedForFold.append(TabFoldDecision.PlacedSeat(activeCgID: entry.cgWindowID, bounds: entry.bounds,
+                                                                isMinimized: entry.isMinimized, formerCgIDs: entry.formerCgIDs))
             }
-            nextSeatSerial += 1
-            place(make(token: "tabgrp-\(pid)-s\(nextSeatSerial)", s))
-            observers[pid]?.registerWindow(s.element, cgWindowID: c)
-            if let key = fk(s.bounds) { placedFrames.insert(key) }
         }
 
         app.windowOrder = newOrder
@@ -565,6 +607,7 @@ final class AppTracker: ObservableObject {
     private func handleWindowDestroyed(pid: pid_t, cgWindowID: CGWindowID) {
         guard apps[pid] != nil else { return }
         destroyedCGIDs[cgWindowID] = Date()
+        purgeFromSeatHistories(cgWindowID)
         // 不直接删座位：若这是某标签窗口的当前标签被关、而同一物理窗口还有别的标签顶上，
         // reconcileSeats 会让座位原地换 activeCgID、保住 token（卡不闪不换身份）。整窗关掉则真删。
         if reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date()) { rebuildSnapshot() }
