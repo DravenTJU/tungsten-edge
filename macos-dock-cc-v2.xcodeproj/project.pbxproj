@@ -105,7 +105,6 @@
 		A0000000000000000000103A /* AppFallbackRetentionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000065 /* AppFallbackRetentionPolicy.swift */; };
 		A0000000000000000000103B /* AppFallbackRetentionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000065 /* AppFallbackRetentionPolicy.swift */; };
 		A0000000000000000000103C /* IdentityRuleEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000050 /* IdentityRuleEngine.swift */; };
-		A00000000000000000001011 /* WorkspaceSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000011 /* WorkspaceSource.swift */; };
 		A0000000000000000000101B /* FinderWindowRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000055 /* FinderWindowRules.swift */; };
 		A00000000000000000001101 /* FinderWindowContentsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F01 /* FinderWindowContentsReader.swift */; };
 		A00000000000000000001102 /* FolderInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F02 /* FolderInteraction.swift */; };
@@ -220,7 +219,6 @@
 		A00000000000000000000063 /* WindowFrameMatchPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowFrameMatchPolicy.swift; sourceTree = "<group>"; };
 		A00000000000000000000064 /* AXWindowMatchPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXWindowMatchPolicy.swift; sourceTree = "<group>"; };
 		A00000000000000000000065 /* AppFallbackRetentionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFallbackRetentionPolicy.swift; sourceTree = "<group>"; };
-		A00000000000000000000011 /* WorkspaceSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSource.swift; sourceTree = "<group>"; };
 		A00000000000000000000055 /* FinderWindowRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderWindowRules.swift; sourceTree = "<group>"; };
 		A00000000000000000000F01 /* FinderWindowContentsReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderWindowContentsReader.swift; sourceTree = "<group>"; };
 		A00000000000000000000012 /* FinderSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderSource.swift; sourceTree = "<group>"; };
@@ -498,7 +496,6 @@
 			children = (
 				A00000000000000000000030 /* Accessibility */,
 				A00000000000000000000031 /* CoreGraphics */,
-				A00000000000000000000032 /* Workspace */,
 				A00000000000000000000033 /* Finder */,
 				A00000000000000000000034 /* Permissions */,
 				A00000000000000000000070 /* AppTracking */,
@@ -535,14 +532,6 @@
 				A00000000000000000000061 /* DockWindowEligibilityPolicy.swift */,
 			);
 			path = CoreGraphics;
-			sourceTree = "<group>";
-		};
-		A00000000000000000000032 /* Workspace */ = {
-			isa = PBXGroup;
-			children = (
-				A00000000000000000000011 /* WorkspaceSource.swift */,
-			);
-			path = Workspace;
 			sourceTree = "<group>";
 		};
 		A00000000000000000000033 /* Finder */ = {
@@ -832,7 +821,6 @@
 					A0000000000000000000100F /* AccessibilitySource.swift in Sources */,
 				A00000000000000000001010 /* CoreGraphicsSource.swift in Sources */,
 				A00000000000000000001030 /* DockWindowEligibilityPolicy.swift in Sources */,
-				A00000000000000000001011 /* WorkspaceSource.swift in Sources */,
 				A0000000000000000000101B /* FinderWindowRules.swift in Sources */,
 				A00000000000000000001101 /* FinderWindowContentsReader.swift in Sources */,
 				A00000000000000000001102 /* FolderInteraction.swift in Sources */,
@@ -870,7 +858,6 @@
 					A0000000000000000000100F /* AccessibilitySource.swift in Sources */,
 				A00000000000000000001010 /* CoreGraphicsSource.swift in Sources */,
 				A00000000000000000001030 /* DockWindowEligibilityPolicy.swift in Sources */,
-				A00000000000000000001011 /* WorkspaceSource.swift in Sources */,
 				A0000000000000000000101E /* FinderWindowRules.swift in Sources */,
 				A00000000000000000001012 /* FinderSource.swift in Sources */,
 				A00000000000000000001013 /* PermissionService.swift in Sources */,

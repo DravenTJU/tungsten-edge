@@ -24,12 +24,12 @@
 - Minimize, hide, and temporary CG disappearance do not release a strip slot. Only true close releases it.
 - Do not reintroduce held-slot TTL or "expire then return to tail" as the default placement rule.
 - Filter system internals, widgets, app extensions, transparent/fake surfaces before any keep-slot or disappeared retention.
-- `WorkspaceSource` starts from `NSWorkspace` regular apps, reads `AXWindows`, and emits `.appWindowInventory`.
-- Inventory reads keep the existing 100ms per-app timeout, 12 concurrent app reads, and 30-round unread degradation before CG can decide whether windows still exist.
+- `AppTracker` is the sole window-inventory authority: it seeds from `NSWorkspace` regular apps, reads `AXWindows` per app, and owns seat state. The old `WorkspaceSource` / observation-pipeline inventory path was replaced by `AppTracker + AppWindowObserver` (ef50008, 2026-05-31); `WorkspaceSource` is deleted. The remaining old pipeline types (`ObservationPipeline`, `WindowIdentityEngine`, `LifecycleTransitionEngine`, `ObservationAdmissionGate`) are not instantiated by the app — only WindowLab and legacy tests use them (removal is 方案 A step 2, pending).
+- Inventory reads keep the 100ms per-app AX messaging timeout (seed probes and `scanNonAdmittedApps`). Slow/hung apps are skipped at seed and picked up by the post-launch scan rounds; CG full-list presence — not AX absence — decides whether a window still exists.
 - `seedRunningApps` subscribes workspace notifications **before** seeding so launch/exit events during seed are not lost. Seed probes use `inventoryWindows(forPID:messagingTimeout:)` with env `DOCK_SEED_AX_TIMEOUT_MS` (0 = legacy no-timeout, other = ms override). Probed windows are admitted directly via `reconcileSeats(preloadedEligible:)` without a second untimed AX read. Keep kill switch `DOCK_SEED_AX_TIMEOUT_MS=0`.
 - `start()` schedules four rounds of `scanNonAdmittedApps()` at 0.5/1/2/4s post-launch to catch apps that were slow to respond during seed.
-- While inventory-first is enabled, CG and generic `.accessibility` observations may prove/enrich inventory entries but must not create ordinary strip entries. Reduced-permission mode may create CG fallback entries.
-- Keep rollback flags working: `DOCK_INVENTORY_FIRST_ENABLED=0`, `DOCK_AX_ADMISSION_MODE=legacy`.
+- CG signals (full window list, on-screen set) may prove, retain, or veto seats but must never create them; seats are created only from eligible AX windows.
+- The old rollback flags `DOCK_INVENTORY_FIRST_ENABLED` / `DOCK_AX_ADMISSION_MODE` are defunct: their only reader is the un-instantiated legacy gate. Do not promise or rely on them. Working kill switches: `DOCK_SEED_AX_TIMEOUT_MS=0`, `DOCK_SKYLIGHT_FOCUS=0`.
 - Long-gap duplicate prevention: before creating a new identity, conservatively match same process/app against current seats by title + nearby frame; ambiguous candidates do not merge. Details: `Docs/Archive/Engineering/21-long-gap-duplicate-card-fix.md`.
 
 ## App Rules
