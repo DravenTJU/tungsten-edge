@@ -84,8 +84,8 @@ final class PinnedFolderCoverStore: ObservableObject {
             covers[path] = FolderCover(image: Self.icon(forPath: path), isThumbnail: false)
             return
         }
-        let cacheKey = "\(newest.url.path)|\(newest.dateModified?.timeIntervalSince1970 ?? 0)" as NSString
-        if let cached = thumbnailCache.object(forKey: cacheKey) {
+        let cacheKey = "\(newest.url.path)|\(newest.dateModified?.timeIntervalSince1970 ?? 0)"
+        if let cached = thumbnailCache.object(forKey: cacheKey as NSString) {
             covers[path] = FolderCover(image: cached, isThumbnail: true)
             return
         }
@@ -103,7 +103,7 @@ final class PinnedFolderCoverStore: ObservableObject {
             let image = NSImage(cgImage: cgImage, size: .zero)
             Task { @MainActor [weak self] in
                 guard let self, self.generations[path] == generation else { return }
-                self.thumbnailCache.setObject(image, forKey: cacheKey)
+                self.thumbnailCache.setObject(image, forKey: cacheKey as NSString)
                 self.covers[path] = FolderCover(image: image, isThumbnail: true)
             }
         }

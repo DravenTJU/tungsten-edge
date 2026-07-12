@@ -263,17 +263,6 @@ final class AppTracker: ObservableObject {
                 usedEligible.insert(c)   // 后台标签 → 折叠进已有座位,不另建
                 if let owner { newByID[owner]?.formerCgIDs.insert(c) }   // 成员学习
             case .newSeat:
-                if s.isMinimized, !placedForFold.isEmpty {
-                    // 诊断：min=true 候选在【已有落座座位】时三级判定全失败走到新建座位 =
-                    // 潜在分裂点，dump 全部判定输入抓现场。placed 为空(seed 时本就最小化的
-                    // 独立窗口)是正确新建,不打。确认稳定后可清理。
-                    let cand = s.bounds.map { "\(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
-                    let placedDesc = placedForFold.map { p in
-                        let b = p.bounds.map { "\(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
-                        return "(cg=\(p.activeCgID) min=\(p.isMinimized) b=[\(b)] hist=\(p.formerCgIDs.sorted()))"
-                    }.joined(separator: " ")
-                    print("[tabfold] 分裂点 pid=\(pid) 为 min 窗口新建座位 cg=\(c) b=[\(cand)] onScreen=\(onScreenCGIDs.contains(c)) placed=\(placedDesc)")
-                }
                 nextSeatSerial += 1
                 let entry = make(token: "tabgrp-\(pid)-s\(nextSeatSerial)", s)
                 place(entry)

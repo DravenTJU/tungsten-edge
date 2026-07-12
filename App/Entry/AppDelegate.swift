@@ -47,9 +47,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         _ = statusMenuController
 
-        // 调试旗：本地签名的开发版无法用 tccutil 可靠撤销辅助功能权限，
-        // 设 DOCK_FORCE_ONBOARDING=1 可强制展示权限引导窗口（演示/截图用），
-        // 窗口停在真实新用户看到的「待开启」状态。
         if AXIsProcessTrusted() {
             startApp()
         } else {
