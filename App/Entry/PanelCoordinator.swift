@@ -88,6 +88,8 @@ final class PanelCoordinator: NSObject {
     private let keptAppStore: KeptAppStore
     private let runningApplicationStore: RunningApplicationStore
     private let appMembershipController: AppMembershipController
+    /// 外部文件移入固定文件夹的唯一执行队列：资格判断与磁盘操作都按投放批次串行。
+    private let fileDropQueue = DispatchQueue(label: "com.caye.macosdockcc.v2.folder-drop", qos: .userInitiated)
     /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
@@ -967,7 +969,10 @@ final class PanelCoordinator: NSObject {
             onShelfPopupToggle: { [weak self] anchorRect in
                 self?.toggleShelfPopup(anchorVisibleRect: anchorRect)
             },
-            onAddFolder: { [weak self] in self?.onAddFolder() }
+            onAddFolder: { [weak self] in self?.onAddFolder() },
+            onMoveExternalFiles: { [weak self] urls, path in
+                self?.moveExternalFiles(urls, into: path)
+            }
         ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(keptAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController))
         hosting.autoresizingMask = [.width, .height]
         // Prevent NSHostingView from adding its own opaque background over the blur
@@ -976,6 +981,17 @@ final class PanelCoordinator: NSObject {
         panel.contentView = hosting
         panel.orderFrontRegardless()
         dockPanel = panel
+    }
+
+    private func moveExternalFiles(_ urls: [URL], into path: String) {
+        let destination = URL(fileURLWithPath: path, isDirectory: true)
+        fileDropQueue.async {
+            let eligible = FolderDropPlan.eligibleSources(urls, destination: destination)
+            guard !eligible.isEmpty else { return }
+            let result = FileMover().move(eligible, into: destination)
+            guard result.hasIssues else { return }
+            DispatchQueue.main.async { NSSound.beep() }
+        }
     }
 
     private func setupCapsulePanel() {

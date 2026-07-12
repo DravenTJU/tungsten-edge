@@ -11,6 +11,8 @@ enum StripDropRouting {
     enum Target: Equatable {
         /// 落在中转格 → 暂存（任何文件/文件夹，引用不搬家）。
         case stash
+        /// 落在某个固定文件夹 chip → 把来源移入该文件夹。
+        case moveInto(path: String)
         /// 落在文件夹区 → 固定目录到显示序 index 位（仅目录有效，由调用方过滤）。
         case pin(insertIndex: Int)
         /// 其他位置 → 拒绝。
@@ -32,6 +34,15 @@ enum StripDropRouting {
         guard shelfFrame != .zero else { return .none }   // 帧未就绪（首帧）不接
         if location.x < shelfFrame.minX { return .none }
         if location.x <= shelfFrame.maxX { return .stash }
+
+        // onDrop 覆盖整条任务条的有效高度，路由保持既有的纯水平语义；不能用 contains，
+        // 否则 chip 上下留白会意外退回 pin。
+        if let path = orderedPaths.first(where: { path in
+            guard let frame = folderFrames["folder-" + path] else { return false }
+            return location.x >= frame.minX && location.x <= frame.maxX
+        }) {
+            return .moveInto(path: path)
+        }
 
         let frames = orderedPaths.compactMap { folderFrames["folder-" + $0] }
         let zoneMaxX = (frames.map(\.maxX).max() ?? shelfFrame.maxX) + tailSlack

@@ -122,14 +122,15 @@
 - Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
 - Per-folder sort persists in `PinnedFolderStore.sortOrders`; covers follow the current sort's first **file**.
-- Fixed folder chips render as a flat single cover with 36/24 sizing. Do not restore stacked-paper layers.
+- Fixed folder chips render as a flat single small cover with the folder name always visible below it. Do not restore hover-only names, 36/24 hover resizing, or stacked-paper layers.
 - Finder windows do not expose folder paths reliably through AX. Do not retry Finder-window-chip-to-pinned-folder via AX without an owner decision.
 - `PinnedFolderCoverStore` must keep background enumeration and generation checks so stale async thumbnails cannot overwrite fresh covers.
 - `FolderCover.isThumbnail` decides rendering: thumbnails get square-crop + border; icons render fit.
 - `DirectoryWatcher.stop()` is idempotent; the fd closes only in the dispatch source cancel handler.
 - The strip `.onDrop` for external files must stay on the same view level that declares the `"strip"` coordinate space, before shadow padding.
-- External drop routing stays in pure, unit-tested `StripDropRouting.route`: shelf hit -> stash, folder-zone x-range + 24pt tail slack -> pin, else reject.
-- Only directories can pin; files dropped on the folder zone are a silent no-op. Re-dropping an already-pinned folder repositions it.
+- External drop routing stays in unit-tested `StripDropRouting.route`: shelf hit -> stash, pinned-folder chip horizontal-band hit -> move into that folder, chip gaps / folder-zone tail slack -> pin, else reject.
+- Only directories can pin; files dropped in chip gaps / folder-zone tail slack are a silent no-op. Re-dropping an already-pinned folder in a gap repositions it; dropping it on a folder chip moves it into that folder.
+- Moving external files into a pinned folder never overwrites an existing destination. Move only when both volume identifiers are known and equal; otherwise copy through a hidden temporary item, preserve the source, and remove the temporary item on failure.
 - External drop hover cleanup must not rely only on `performDrop` / `dropExited` or `folderPaths` changes. Keep `dropEntered` gating plus `.common` Timer watchdog for missing terminal callbacks and post-drop hover flicker.
 - Middle-click / Force Click content-preview monitors must observe and return the original `NSEvent`. They must not consume left clicks, break folder drag, or feed planner/frontmost state.
 

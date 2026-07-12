@@ -58,6 +58,8 @@ struct DockStripView: View {
     var onShelfPopupToggle: (CGRect) -> Void = { _ in }
     /// 「添加文件夹…」统一入口（NSOpenPanel 归 AppDelegate 管）。
     var onAddFolder: () -> Void = {}
+    /// 外部文件命中固定文件夹 chip 后，上抛给 composition 层在后台执行搬运。
+    var onMoveExternalFiles: ([URL], String) -> Void = { _, _ in }
     /// 跨面板拖动权威（拖卡进抽屉 路线 C）：起拖 → beginDrag；读 draggingItem 隐藏原位卡片、
     /// 读 isOverDropZone 在进投放区时停掉条内重排。载体面板/监视器/收尾都在它里面，本视图不碰。
     @EnvironmentObject var dragController: DragController
@@ -439,11 +441,13 @@ struct DockStripView: View {
     }
 
     /// 外部拖放落定（DropDelegate 异步取齐 URL 后回到主线程调）。
-    /// 中转收一切;固定只收目录（文件落文件夹区 = 无操作,微边缘接受）。
+    /// 中转收一切；命中 chip 移入；间隙/尾部固定只收目录。
     private func handleExternalDrop(_ target: StripDropRouting.Target, urls: [URL]) {
         switch target {
         case .stash:
             shelfStore.stash(paths: urls.map(\.path))
+        case .moveInto(let path):
+            onMoveExternalFiles(urls, path)
         case .pin(let insertIndex):
             var index = insertIndex
             for url in urls where isDirectoryURL(url) {
@@ -836,7 +840,8 @@ struct DockStripView: View {
                 onOpenInFinder: { openFolderInFinder(path) },
                 onAddFolder: onAddFolder,
                 onRemove: { pinnedFolderStore.remove(path) },
-                onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) }
+                onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) },
+                isDropTarget: externalDropTarget == .moveInto(path: path)
             )
             .stripEntrance(id: entry.id, delay: delay, animatedEntryIDs: $animatedEntryIDs)
         case .shelf:

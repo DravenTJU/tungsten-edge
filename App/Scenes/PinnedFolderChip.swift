@@ -3,7 +3,7 @@ import SwiftUI
 
 /// 固定文件夹 chip：扁平单封面（无堆叠纸片），尺寸与其他 chip 一致。
 /// 封面是该文件夹当前排序第一张文件的缩略图（PinnedFolderCoverStore 供图；空文件夹/无缩略图时是图标）。
-/// 不显示文字；悬停浮出名字气泡（同 bareIconChip 样式）+ .help 原生气泡。
+/// 名称常驻在封面下方，长名截断并用 .help 提供全名。
 /// 点击一律 onTapGesture（nonactivatingPanel 上勿用 Button）；右键 = 手搓 NSMenu。
 struct PinnedFolderChip: View {
     let path: String
@@ -18,41 +18,42 @@ struct PinnedFolderChip: View {
     let onAddFolder: () -> Void
     let onRemove: () -> Void
     let onSetSortOrder: (FolderSortOrder) -> Void
-
-    @State private var isHovering = false
+    var isDropTarget = false
 
     private var folderName: String {
         FileManager.default.displayName(atPath: path)
     }
 
     var body: some View {
-        let coverSize: CGFloat = isHovering ? 24 : 36
+        let coverSize: CGFloat = 26
         VStack(spacing: 2) {
             Spacer(minLength: 0)
             coverImage(size: coverSize)
                 .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
-            if isHovering {
-                Text(folderName)
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(1)
-                    .frame(maxWidth: 64)
-                    .transition(.opacity)
-            }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(.white.opacity(isDropTarget ? 0.9 : 0), lineWidth: 1.5)
+                }
+                .scaleEffect(isDropTarget ? 1.08 : 1)
+            Text(folderName)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 48)
             Spacer(minLength: 0)
         }
-        .frame(width: 44, height: 52)
+        .frame(width: 52, height: 52)
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
         .nativeContextMenu { buildMenu() }
         .help(folderName)
-        .animation(.easeInOut(duration: 0.18), value: isHovering)
+        .animation(.easeOut(duration: 0.12), value: isDropTarget)
     }
 
     /// 封面：真缩略图方形裁切 + 细白边；文件图标 / 空文件夹图标 fit 渲染不裁不描边。
-    /// 缩略图**满铺无留白**,视觉比 app 图标(.fit 自带约 20% 留白)大,故按 5/6 缩到其可见方块尺寸
-    /// (36→30 / 24→20)对齐;图标支带留白、本就与 app 图标同口径,维持 size 不缩。
+    /// 缩略图**满铺无留白**,视觉比 app 图标(.fit 自带约 20% 留白)大,故按 5/6 缩到其可见方块尺寸；
+    /// 图标自带留白、本就与 app 图标同口径,维持 size 不缩。
     @ViewBuilder
     private func coverImage(size: CGFloat) -> some View {
         if let cover, cover.isThumbnail {

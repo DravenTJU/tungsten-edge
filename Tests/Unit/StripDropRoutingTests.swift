@@ -1,7 +1,7 @@
 import XCTest
 
 /// 外部文件拖入任务条的几何路由纯函数（StripDropRouting.route）。
-/// 布局假定："strip" 空间,中转格在 x=100..144,文件夹 chip 44pt 宽、8pt 间距从 x=152 起排。
+/// 布局假定："strip" 空间,中转格在 x=100..144,文件夹 chip 52pt 宽、8pt 间距从 x=152 起排。
 final class StripDropRoutingTests: XCTestCase {
     private let shelf = CGRect(x: 100, y: 0, width: 44, height: 52)
 
@@ -9,8 +9,8 @@ final class StripDropRoutingTests: XCTestCase {
         var result: [String: CGRect] = [:]
         var x = startX
         for path in paths {
-            result["folder-" + path] = CGRect(x: x, y: 0, width: 44, height: 52)
-            x += 52
+            result["folder-" + path] = CGRect(x: x, y: 0, width: 52, height: 52)
+            x += 60
         }
         return result
     }
@@ -40,26 +40,48 @@ final class StripDropRoutingTests: XCTestCase {
         XCTAssertEqual(target, .pin(insertIndex: 0))
     }
 
-    func testDropOnLeftHalfOfFirstFolderPinsBeforeIt() {
+    func testDropOnLeftHalfOfFirstFolderMovesIntoIt() {
         let paths = ["/a", "/b"]
-        // 第一个 chip 在 152..196,midX=174;落 160 在其左半 → 插 0 位。
+        // 第一个 chip 在 152..204；左右半都属于移入目标。
         let target = StripDropRouting.route(location: CGPoint(x: 160, y: 26),
                                             shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths)
-        XCTAssertEqual(target, .pin(insertIndex: 0))
+        XCTAssertEqual(target, .moveInto(path: "/a"))
     }
 
-    func testDropOnRightHalfOfFirstFolderPinsAfterIt() {
+    func testDropOnRightHalfOfFirstFolderMovesIntoIt() {
         let paths = ["/a", "/b"]
-        // 落 180 在第一 chip 中点(174)右侧、第二 chip 中点(226)左侧 → 插 1 位。
-        let target = StripDropRouting.route(location: CGPoint(x: 180, y: 26),
+        let target = StripDropRouting.route(location: CGPoint(x: 190, y: 26),
+                                            shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths)
+        XCTAssertEqual(target, .moveInto(path: "/a"))
+    }
+
+    func testDropUsesHorizontalChipBand() {
+        let paths = ["/a"]
+        let target = StripDropRouting.route(location: CGPoint(x: 180, y: 200),
+                                            shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths)
+        XCTAssertEqual(target, .moveInto(path: "/a"))
+    }
+
+    func testGapBetweenFoldersStillPins() {
+        let paths = ["/a", "/b"]
+        // 第一张右缘 204、第二张左缘 212；x=208 是真实 8pt 间隙。
+        let target = StripDropRouting.route(location: CGPoint(x: 208, y: 26),
                                             shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths)
         XCTAssertEqual(target, .pin(insertIndex: 1))
     }
 
+    func testMissingFrameDoesNotBecomeMoveTarget() {
+        let paths = ["/a", "/b"]
+        let partial = ["folder-/b": CGRect(x: 212, y: 0, width: 52, height: 52)]
+        let target = StripDropRouting.route(location: CGPoint(x: 160, y: 26),
+                                            shelfFrame: shelf, folderFrames: partial, orderedPaths: paths)
+        XCTAssertEqual(target, .pin(insertIndex: 0))
+    }
+
     func testTailSlackAfterLastFolderPinsAtEnd() {
         let paths = ["/a", "/b"]
-        // 第二 chip 右缘 248,+24 余量内 → 追加末位(2)。
-        let target = StripDropRouting.route(location: CGPoint(x: 260, y: 26),
+        // 第二 chip 右缘 264,+24 余量内 → 追加末位(2)。
+        let target = StripDropRouting.route(location: CGPoint(x: 276, y: 26),
                                             shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths)
         XCTAssertEqual(target, .pin(insertIndex: 2))
     }
