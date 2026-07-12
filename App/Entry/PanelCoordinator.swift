@@ -185,7 +185,8 @@ final class PanelCoordinator: NSObject {
     private var edgeWakeTimer: Timer?
     private var edgeWakeTargetScreen: NSScreen?
     private var edgeWakeRequiresHotZone = true
-    private var edgeHiddenMouseMonitor: Any?
+    private var hoverLocalMouseMonitor: Any?
+    private var hoverGlobalMouseMonitor: Any?
 
     init(runtime: AppRuntime,
          drawerStore: DrawerStore,
@@ -241,13 +242,9 @@ final class PanelCoordinator: NSObject {
 
     deinit {
         fullscreenReconcileTimer?.invalidate()
-        hoverPollTimer?.invalidate()
+        MainActor.assumeIsolated { removeHoverMouseMonitors() }
         edgeIdleHideTimer?.invalidate()
         edgeWakeTimer?.invalidate()
-        if let monitor = edgeHiddenMouseMonitor {
-            NSEvent.removeMonitor(monitor)
-            edgeHiddenMouseMonitor = nil
-        }
         springOpenTimer?.invalidate()
         springCloseTimer?.invalidate()
         folderPopupFrameTimer?.invalidate()
@@ -1175,7 +1172,6 @@ final class PanelCoordinator: NSObject {
         closeFolderPopup()             // 屏幕参数变了,旧锚点坐标作废
         guard dockPanel != nil else { return }
         relayout(animated: false)      // 切屏瞬时,不滑
-        startHoverPollTimer()
         reconcilePanelVisibility()
     }
 
@@ -1316,7 +1312,6 @@ final class PanelCoordinator: NSObject {
     private static let hoverHotZone: CGFloat = 4.0
     private static let hoverSwitchDwell: TimeInterval = 0.35   // 光标驻留热区 ≥ 350ms 才切换，路过不算
     private static let hoverVerboseLogging = false
-    private var hoverPollTimer: Timer?
     private var hoverLastScreenIndex: Int? = nil
     private var hoverLastInHotZone: Bool? = nil
     private var hoverSwitchTimer: Timer?
@@ -1324,47 +1319,36 @@ final class PanelCoordinator: NSObject {
 
     private func setupHoverDiagnostics() {
         if Self.hoverVerboseLogging { logScreenMap() }
-        startHoverPollTimer()
+        installHoverMouseMonitors()
+        pollMousePosition()
     }
 
-    private func startHoverPollTimer() {
-        guard hoverPollTimer == nil else { return }
-        hoverPollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.pollMousePosition() }
+    private func installHoverMouseMonitors() {
+        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        if hoverLocalMouseMonitor == nil {
+            hoverLocalMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+                Task { @MainActor [weak self] in self?.pollMousePosition() }
+                return event
+            }
         }
-        hoverPollTimer?.tolerance = 0.01
-    }
-
-    private func stopHoverPollTimer() {
-        hoverPollTimer?.invalidate()
-        hoverPollTimer = nil
-        cancelHoverSwitch()
-        cancelEdgeWake()
-    }
-
-    private func installEdgeHiddenMouseMonitorIfNeeded() {
-        guard edgeHiddenMouseMonitor == nil,
-              EdgeAutoHideRuntimeRules.canArmWake(state: visibilityState, delay: settingsStore.edgeAutoHideDelay) else { return }
-        edgeHiddenMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.pollMousePosition()
+        if hoverGlobalMouseMonitor == nil {
+            hoverGlobalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.pollMousePosition() }
             }
         }
     }
 
-    private func removeEdgeHiddenMouseMonitor() {
-        guard let monitor = edgeHiddenMouseMonitor else { return }
-        NSEvent.removeMonitor(monitor)
-        edgeHiddenMouseMonitor = nil
-    }
-
-    private func syncEdgeHiddenMouseMonitor() {
-        if !panelsAreVisible,
-           EdgeAutoHideRuntimeRules.canArmWake(state: visibilityState, delay: settingsStore.edgeAutoHideDelay) {
-            installEdgeHiddenMouseMonitorIfNeeded()
-        } else {
-            removeEdgeHiddenMouseMonitor()
+    private func removeHoverMouseMonitors() {
+        if let monitor = hoverLocalMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            hoverLocalMouseMonitor = nil
         }
+        if let monitor = hoverGlobalMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            hoverGlobalMouseMonitor = nil
+        }
+        cancelHoverSwitch()
+        cancelEdgeWake()
     }
 
     private func logScreenMap() {
@@ -1517,7 +1501,6 @@ final class PanelCoordinator: NSObject {
         }
 
         applyPanelVisibility()
-        syncEdgeHiddenMouseMonitor()
     }
 
     private func updateEdgeIdleTimerFromMouse() {
@@ -1602,14 +1585,12 @@ final class PanelCoordinator: NSObject {
         guard shouldShow != panelsAreVisible else { return }
         panelsAreVisible = shouldShow
         if shouldShow {
-            removeEdgeHiddenMouseMonitor()
             dockPanel?.orderFrontRegardless()
             capsulePanel?.orderFrontRegardless()
             if drawerWantsOpen { drawerPanel?.orderFrontRegardless() }
         } else {
             if visibilityState.hideReasons.contains(.fullscreen) { closeDrawer() }
             closeFolderPopup()
-            installEdgeHiddenMouseMonitorIfNeeded()
             dockPanel?.orderOut(nil)
             capsulePanel?.orderOut(nil)
         }
