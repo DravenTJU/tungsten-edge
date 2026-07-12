@@ -123,6 +123,7 @@
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
 - Per-folder sort persists in `PinnedFolderStore.sortOrders`; covers follow the current sort's first **file**.
 - Fixed folder chips render as a flat single small cover with the folder name always visible below it. Do not restore hover-only names, 36/24 hover resizing, or stacked-paper layers.
+- Folder-chip hover feedback (whole-chip scale-up anchored to the bottom) and the drop-target highlight are non-layout visual overlays only (`scaleEffect`): they must never change the chip's layout size or the reported drop-hit frame. The resident name row stays truncated; the full name comes from the `.help` tooltip, never by widening the chip or unclipping that row.
 - Finder windows do not expose folder paths reliably through AX. Do not retry Finder-window-chip-to-pinned-folder via AX without an owner decision.
 - `PinnedFolderCoverStore` must keep background enumeration and generation checks so stale async thumbnails cannot overwrite fresh covers.
 - `FolderCover.isThumbnail` decides rendering: thumbnails get square-crop + border; icons render fit.

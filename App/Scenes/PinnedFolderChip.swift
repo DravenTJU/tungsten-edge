@@ -20,6 +20,8 @@ struct PinnedFolderChip: View {
     let onSetSortOrder: (FolderSortOrder) -> Void
     var isDropTarget = false
 
+    @State private var isHovering = false
+
     private var folderName: String {
         FileManager.default.displayName(atPath: path)
     }
@@ -45,10 +47,15 @@ struct PinnedFolderChip: View {
         }
         .frame(width: 52, height: 52)
         .contentShape(Rectangle())
+        // 悬停：整个 chip 放大上顶（原生 Dock 手感）。anchor .bottom 让底部名称基本不动、封面往上顶起。
+        // scaleEffect 只是渲染变换，不改布局 frame——拖放命中读的是 .background GeometryReader 上报的未缩放 frame，不受影响。
+        .scaleEffect(isHovering ? 1.12 : 1, anchor: .bottom)
+        .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
         .nativeContextMenu { buildMenu() }
         .help(folderName)
         .animation(.easeOut(duration: 0.12), value: isDropTarget)
+        .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 
     /// 封面：真缩略图方形裁切 + 细白边；文件图标 / 空文件夹图标 fit 渲染不裁不描边。
