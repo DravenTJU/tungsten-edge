@@ -148,7 +148,9 @@ struct DockStripView: View {
             messagingStore.bundleIDs,
             excludingKeptIDs: keptIDs
         )                                             // ordered → drag-reorder friendly
-            .filter { !drawerStore.contains($0) && snapshotBundleIDs.contains($0) }
+            // 消息身份常驻（owner 2026-07-12 #2）：不再要求运行中——未运行消息应用也进消息区（变灰、
+            // 点击启动）。抽屉例外：被收进抽屉的消息应用仍隐藏（显示在抽屉，抽屉是"不想钉在区里"的逃生舱）。
+            .filter { !drawerStore.contains($0) }
         let msgSet = Set(msg)
         let items = allNonDrawerItems
 
@@ -226,7 +228,8 @@ struct DockStripView: View {
     private var stripEntries: [StripEntry] {
         let (messaging, liveNatural) = partitioned()
         let appKeyOf = liveAppKeys
-        let order = stripOrderStore.reconciled(current: liveNatural.map(\.id), appKeyOf: appKeyOf)
+        let order = stripOrderStore.reconciled(current: liveNatural.map(\.id), appKeyOf: appKeyOf,
+                                               headPreferred: Set(messagingStore.bundleIDs))
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let orderedLive = order.compactMap { byID[$0] }
         // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
@@ -461,7 +464,8 @@ struct DockStripView: View {
     /// `onChange(of:initial:)` seed that pre-macOS-14 `onChange` doesn't provide).
     private func reconcileLiveOrder() {
         let current = liveOrderIDs
-        stripOrderStore.sync(current: current, appKeyOf: liveAppKeys)
+        stripOrderStore.sync(current: current, appKeyOf: liveAppKeys,
+                             headPreferred: Set(messagingStore.bundleIDs))
         // 拖动中被拖窗口消失 → 取消拖动，免得空位卡死。(松手无回调那条由 DragController 的轮询兜底。)
         if let p = dragController.draggingPayload, p.source == .strip, !current.contains(p.id) {
             dragController.cancelDrag()
@@ -849,28 +853,27 @@ struct DockStripView: View {
             // draw on top of the icon (classic Dock badge sits over the icon corner).
             ZStack(alignment: .topTrailing) {
                 if let main {
-                    // Main window exists → the app chip IS the main window's chip:
-                    // standard toggle on tap, full window context menu. Icon-only so the
-                    // pinned zone stays a constant-width row of app icons; running dot
-                    // marks it as an app entry.
+                    // 运行中有主窗 → app chip 即主窗卡：标准 toggle + 完整窗口菜单。iconOnly 保持消息区
+                    // 定宽图标行，运行点标记它是 app 入口。
                     ChipView(item: main, iconOnly: true, showRunningDot: true)
                 } else {
-                    // Main window closed (app still running) → full-opacity app icon;
-                    // tap sends reopen so the app recreates its main window.
+                    // 无主窗两态（owner 2026-07-12 #2，消息身份常驻）：运行中（关窗/常驻）→ 亮图标、点击
+                    // reopen 主窗；未运行 → 灰图标、点击启动（不能 reopen 一个没运行的进程）。菜单不再给
+                    // 「在程序坞中保留」（那会 unmark + 转 kept 把消息应用拽出区，正是 owner 撞到的 bug）。
+                    let running = runningApplicationStore.isRunning(bid)
                     LauncherChip(bundleID: bid,
-                                 isRunning: true,
-                                 isHidden: isHiddenInSnapshot(bundleID: bid),
+                                 isRunning: running,
+                                 isHidden: running && isHiddenInSnapshot(bundleID: bid),
                                  scale: 1.0,
                                  dimsWhenInactive: false,
                                  membershipItems: [
-                                    LauncherMembershipItem(label: "在程序坞中保留") {
-                                        appMembershipController.keepInDock(bid)
-                                    },
                                     LauncherMembershipItem(label: "取消标记消息应用") {
                                         messagingStore.unmark(bid)
                                     }
                                  ],
-                                 onTap: { Self.reopenMainWindow(bundleID: bid) })
+                                 onTap: running ? { Self.reopenMainWindow(bundleID: bid) } : nil,
+                                 onLaunch: { runtime.beginLaunch(bid) },
+                                 launchReady: !runtime.launchingBundleIDs.contains(bid))
                 }
                 if let badge = badgeStore.badgesByBundleID[bid] {
                     ChipBadgeView(text: badge)
@@ -888,7 +891,7 @@ struct DockStripView: View {
                 isRunning: isRunning,
                 isHidden: runningApplicationStore.isHidden(bid),
                 scale: 1.0,
-                membershipItems: keptAppMembershipItems(bundleID: bid),
+                membershipItems: keptAppMembershipItems(bundleID: bid, isRunning: isRunning),
                 onTap: reopen,
                 onLaunch: { runtime.beginLaunch(bid) },
                 launchReady: !runtime.launchingBundleIDs.contains(bid)
@@ -902,15 +905,19 @@ struct DockStripView: View {
         }
     }
 
-    private func keptAppMembershipItems(bundleID: String) -> [LauncherMembershipItem] {
-        [
-            LauncherMembershipItem(label: "从程序坞中移除") {
+    /// 保留应用图标的成员菜单。「从程序坞中移除」**仅未运行**时出现（owner 2026-07-12 #1）：运行中的
+    /// 保留应用移出靠先退出、变灰后再移除，避免一点就把窗口甩到任务条。「标记为消息应用」两态都给。
+    private func keptAppMembershipItems(bundleID: String, isRunning: Bool) -> [LauncherMembershipItem] {
+        var items: [LauncherMembershipItem] = []
+        if !isRunning {
+            items.append(LauncherMembershipItem(label: "从程序坞中移除") {
                 appMembershipController.removeFromDock(bundleID)
-            },
-            LauncherMembershipItem(label: "标记为消息应用") {
-                appMembershipController.markMessaging(bundleID)
-            }
-        ]
+            })
+        }
+        items.append(LauncherMembershipItem(label: "标记为消息应用") {
+            appMembershipController.markMessaging(bundleID)
+        })
+        return items
     }
 
     /// 固定文件夹左键唯一入口：按 `FolderInteraction.primaryAction` 分派（现固定 = 内容预览）。
@@ -1284,13 +1291,11 @@ struct ChipView: View {
         guard let bid = item.bundleIdentifier,
               bid != KeptAppStore.forbiddenBundleID else { return }
         menu.addItem(.separator())
-        if keptAppStore.canKeep(bid), !keptAppStore.contains(bid) {
+        // 窗口卡必然运行中 → 不出现「从程序坞中移除」（owner 2026-07-12 #1，运行中移出靠拖动）。
+        // 「在程序坞中保留」对消息应用关死（它会 unmark + 转 kept 把消息应用拽出区）。
+        if keptAppStore.canKeep(bid), !keptAppStore.contains(bid), !messagingStore.contains(bid) {
             menu.addItem(ClosureMenuItem("在程序坞中保留") {
                 appMembershipController.keepInDock(bid)
-            })
-        } else if keptAppStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("从程序坞中移除") {
-                appMembershipController.removeFromDock(bid)
             })
         }
         if messagingStore.contains(bid) {

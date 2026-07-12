@@ -68,6 +68,7 @@
 		A00000000000000000009541 /* AppMembershipProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009540 /* AppMembershipProjectionTests.swift */; };
 		A00000000000000000009551 /* AppMembershipControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009550 /* AppMembershipControllerTests.swift */; };
 		A00000000000000000009561 /* KeptAppPositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009560 /* KeptAppPositionTests.swift */; };
+		A00000000000000000009771 /* MessagingWindowOrderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009770 /* MessagingWindowOrderingTests.swift */; };
 		A00000000000000000009502 /* KeptAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009500 /* KeptAppStore.swift */; };
 		A00000000000000000009522 /* AppMembershipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009520 /* AppMembershipController.swift */; };
 		A00000000000000000001047 /* DrawerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006B /* DrawerStore.swift */; };
@@ -252,6 +253,7 @@
 		A00000000000000000009540 /* AppMembershipProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMembershipProjectionTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009550 /* AppMembershipControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMembershipControllerTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009560 /* KeptAppPositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeptAppPositionTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009770 /* MessagingWindowOrderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingWindowOrderingTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009320 /* ShelfChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfChip.swift; sourceTree = "<group>"; };
 		A00000000000000000009330 /* ShelfGridPopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfGridPopupView.swift; sourceTree = "<group>"; };
 		A00000000000000000009340 /* StripDropRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripDropRoutingTests.swift; sourceTree = "<group>"; };
@@ -625,6 +627,7 @@
 				A00000000000000000009370 /* FolderChipDropZoneTests.swift */,
 				A00000000000000000009530 /* KeptAppStoreTests.swift */,
 				A00000000000000000009560 /* KeptAppPositionTests.swift */,
+				A00000000000000000009770 /* MessagingWindowOrderingTests.swift */,
 				A00000000000000000009540 /* AppMembershipProjectionTests.swift */,
 				A00000000000000000009550 /* AppMembershipControllerTests.swift */,
 				A00000000000000000009601 /* TabFoldDecisionTests.swift */,
@@ -893,6 +896,7 @@
 				A00000000000000000009541 /* AppMembershipProjectionTests.swift in Sources */,
 				A00000000000000000009551 /* AppMembershipControllerTests.swift in Sources */,
 				A00000000000000000009561 /* KeptAppPositionTests.swift in Sources */,
+				A00000000000000000009771 /* MessagingWindowOrderingTests.swift in Sources */,
 				A00000000000000000009502 /* KeptAppStore.swift in Sources */,
 				A00000000000000000009522 /* AppMembershipController.swift in Sources */,
 				A00000000000000000005012 /* StripOrderStore.swift in Sources */,

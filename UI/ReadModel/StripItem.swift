@@ -128,16 +128,24 @@ enum StripOrdering {
     ///   成独立窗口 / Cmd+N 都紧跟本 app 现有 chip，不再甩到任务条最右）；该 app 一个都没有
     ///   （= 全新 app）才追加末尾。`appKeyOf` 给空（默认）→ 退化为「一律追加末尾」的旧行为。
     /// - 记住的但当前已不在 → 丢弃（座位真结束，见类型注释）。
-    static func reconcile(remembered: [String], current: [String], appKeyOf: [String: String] = [:]) -> [String] {
+    /// `headPreferredKeys`：属这些 app 键的**新**窗口若无同伴，插到 live 区**头部**（而非末尾）——
+    /// 消息应用的弹出窗口紧邻消息区落地（owner 2026-07-12 #4）。只影响没记过的新 id；已记住的保持原位。
+    static func reconcile(remembered: [String], current: [String], appKeyOf: [String: String] = [:],
+                          headPreferredKeys: Set<String> = []) -> [String] {
         let currentSet = Set(current)
         let rememberedSet = Set(remembered)
         // 已记住且仍在：保持记住的相对顺序
         var result = remembered.filter { currentSet.contains($0) }
-        // 新出现：按 current 顺序逐个插到同 app 同伴之后；无同伴（全新 app）则末尾。
-        // 按 current 顺序处理 → 同一 app 的多个新窗口彼此也保持相对序。
+        // 新出现：① 有同 app 同伴 → 插同伴之后；② 无同伴且 app 属 head-preferred（消息应用弹出窗）→
+        // 插头部（排在已有 head-preferred 之后，保持彼此相对序）；③ 否则末尾。按 current 顺序处理 →
+        // 同一 app 的多个新窗口彼此也保持相对序。
         for id in current where !rememberedSet.contains(id) {
-            if let app = appKeyOf[id], let pos = result.lastIndex(where: { appKeyOf[$0] == app }) {
+            let app = appKeyOf[id]
+            if let app, let pos = result.lastIndex(where: { appKeyOf[$0] == app }) {
                 result.insert(id, at: pos + 1)
+            } else if let app, headPreferredKeys.contains(app) {
+                let headPos = result.lastIndex { appKeyOf[$0].map(headPreferredKeys.contains) ?? false }
+                result.insert(id, at: headPos.map { $0 + 1 } ?? 0)
             } else {
                 result.append(id)
             }

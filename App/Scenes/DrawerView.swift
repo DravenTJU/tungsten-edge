@@ -183,12 +183,12 @@ struct DrawerView: View {
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let delay = Double(min(index, 6)) * 0.018
-        // 抽屉即程序坞的一部分：进了抽屉 = 已「在程序坞中保留」（owner 2026-07-11）。菜单只剩唯一
-        // 退出动词「从程序坞中移除」（通用退出,消息应用同时 unmark）；「移出抽屉/在程序坞中保留」
-        // 不再出现——位置用拖动表达（拖出抽屉 = 搬家）。
-        let membership: [LauncherMembershipItem] = [
-            LauncherMembershipItem(label: "从程序坞中移除") { appMembershipController.removeFromDock(id) }
-        ]
+        // 抽屉即程序坞的一部分：进了抽屉 = 已「在程序坞中保留」（owner 2026-07-11）。「移出抽屉/在程序坞
+        // 中保留」不出现——位置用拖动表达（拖出抽屉 = 搬家）。唯一退出动词「从程序坞中移除」**仅未运行**图标
+        // （下区灰图标）显示（owner 2026-07-12 #1）：运行中（上区）移出靠拖出，避免一点就把窗口甩到任务条。
+        let membership: [LauncherMembershipItem] = running
+            ? []
+            : [LauncherMembershipItem(label: "从程序坞中移除") { appMembershipController.removeFromDock(id) }]
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,

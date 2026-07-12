@@ -59,16 +59,18 @@ final class StripOrderStore: ObservableObject {
     /// 显示顺序 = 记住的顺序与当前活着的 chip id 对账后的结果（不改自身状态，可在 body 里读）。
     /// `appKeyOf`（chip id → 所属 app 键）让新窗口插到同 app 同伴旁，而非任务条最右。
     /// 粘性 appKey 在此处非破坏合并：传入的优先，记忆的兜底。
-    func reconciled(current: [String], appKeyOf: [String: String] = [:]) -> [String] {
+    func reconciled(current: [String], appKeyOf: [String: String] = [:],
+                    headPreferred: Set<String> = []) -> [String] {
         var merged = stickyAppKeys
         merged.merge(appKeyOf) { _, new in new }
-        return StripOrdering.reconcile(remembered: liveOrder, current: current, appKeyOf: merged)
+        return StripOrdering.reconcile(remembered: liveOrder, current: current, appKeyOf: merged,
+                                       headPreferredKeys: headPreferred)
     }
 
     /// 把记住的顺序与当前 live 集合收敛（丢掉真关闭的、新窗口插到同 app 同伴旁），保留手动排好的相对序。
     /// **作为快照变化的副作用调用，绝不在 body 求值期间调**。`appKeyOf` 必须与 `reconciled` 同源，
     /// 否则落盘的记忆序与显示序不一致，下一帧新窗口会从同伴旁跳回末尾。
-    func sync(current: [String], appKeyOf: [String: String] = [:]) {
+    func sync(current: [String], appKeyOf: [String: String] = [:], headPreferred: Set<String> = []) {
         let now = self.now()
         // 合并 appKeyOf 到粘性记忆
         stickyAppKeys.merge(appKeyOf) { _, new in new }
@@ -87,7 +89,8 @@ final class StripOrderStore: ObservableObject {
             return now.timeIntervalSince(t) <= Self.rankRetentionGrace
         }
         let effectiveCurrent = current + retainedAbsent
-        var next = StripOrdering.reconcile(remembered: liveOrder, current: effectiveCurrent, appKeyOf: stickyAppKeys)
+        var next = StripOrdering.reconcile(remembered: liveOrder, current: effectiveCurrent, appKeyOf: stickyAppKeys,
+                                           headPreferredKeys: headPreferred)
         absentSince = absentSince.filter { now.timeIntervalSince($0.value) <= Self.rankRetentionGrace }
         // 消费外部块暂存：当被拖 app 的窗口卡都进了 current（reconcile 已纳入 next），用 appKeyOf 解出这组
         // 卡、整块落到暂存目标，**在一次发布里完成**——无尾部闪入、不被对账规则挪走。排除 app-* 兜底卡。
