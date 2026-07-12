@@ -125,36 +125,6 @@ final class AppTracker: ObservableObject {
         }
     }
 
-    // MARK: - CG Window Set
-
-    private func cgWindowIDSet() -> Set<CGWindowID> {
-        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
-        var ids = Set<CGWindowID>()
-        for info in list {
-            guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
-                  let num = info[kCGWindowNumber as String] as? Int else { continue }
-            ids.insert(CGWindowID(num))
-        }
-        return ids
-    }
-
-    /// 「当前真正在屏」的窗口集合（含被遮挡的，但不含最小化 / 被 order-out 的后台标签 / 其它 Space）。
-    /// 用于标签组里判定哪个标签可见——这是即时可靠的合成层信号，不像 AX min 会滞后数秒。
-    private func onScreenCGWindowIDSet() -> Set<CGWindowID> {
-        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
-        var ids = Set<CGWindowID>()
-        for info in list {
-            guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
-                  let num = info[kCGWindowNumber as String] as? Int else { continue }
-            ids.insert(CGWindowID(num))
-        }
-        return ids
-    }
-
     /// 「同 pid + 逐像素相同 frame」键。物理座位据此认领"切标签顶替"的新当前标签：同一物理窗口的
     /// 各标签 frame 完全一致，新当前标签会出现在座位当前的 frame 上。
     private func frameKey(_ pid: pid_t, _ bounds: CGRect?) -> String? {
@@ -171,8 +141,15 @@ final class AppTracker: ObservableObject {
     /// - 后台标签【不】单独留座位。同 frame 有多个老座位（窗口重叠）时不顶替、宁可新建，避免误并。
     /// 返回 true 表示座位集合或关键属性变了（调用方据此决定是否重建快照）。
     @discardableResult
-    private func reconcileSeats(pid: pid_t, cgIDs: Set<CGWindowID>, now: Date, preloadedEligible: [AXWindowSnapshot]? = nil) -> Bool {
+    private func reconcileSeats(
+        pid: pid_t,
+        cgSnapshot: AppTrackerCGWindowSnapshot,
+        now: Date,
+        preloadedEligible: [AXWindowSnapshot]? = nil
+    ) -> Bool {
         guard var app = apps[pid] else { return false }
+        let cgIDs = cgSnapshot.allWindowIDs
+        let onScreenCGIDs = cgSnapshot.onScreenWindowIDs
         let eligible: [AXWindowSnapshot]
         if let preloaded = preloadedEligible {
             eligible = preloaded
@@ -181,7 +158,6 @@ final class AppTracker: ObservableObject {
                 isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
             }
         }
-        let onScreenCGIDs = onScreenCGWindowIDSet()
         func fk(_ b: CGRect?) -> String? { frameKey(pid, b) }
 
         var eligibleByCgID: [CGWindowID: AXWindowSnapshot] = [:]
@@ -342,6 +318,7 @@ final class AppTracker: ObservableObject {
 
         var admittedCount = 0
         var unreadList: [String] = []
+        let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
 
         for app in NSWorkspace.shared.runningApplications {
             guard isRegularNonSelf(app) else { continue }
@@ -369,19 +346,19 @@ final class AppTracker: ObservableObject {
             if FinderWindowRules.isFinder(bundleIdentifier: bid) {
                 // Finder 始终占坑：unread 就先空窗口占位（槽位常驻，通知/reconcile 随后补）。
                 addApp(app, enumerateImmediately: false)
-                reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date(), preloadedEligible: probedEligible)
+                reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), preloadedEligible: probedEligible)
                 admittedCount += 1
                 continue
             }
 
             if !probedEligible.isEmpty {
                 addApp(app, enumerateImmediately: false)
-                reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date(), preloadedEligible: probedEligible)
+                reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), preloadedEligible: probedEligible)
                 admittedCount += 1
             }
         }
 
-        rebuildSnapshot()
+        rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs)
 
         let elapsed = Date().timeIntervalSince(seedStart)
         logger.info("seed done: \(admittedCount) admitted, \(unreadList.count) unread [\(unreadList.joined(separator: ", "))], elapsed=\(String(format: "%.2f", elapsed))s")
@@ -560,8 +537,9 @@ final class AppTracker: ObservableObject {
 
     private func enumerateWindows(for pid: pid_t) {
         guard apps[pid] != nil else { return }
-        if reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date()) {
-            rebuildSnapshot()
+        let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
+        if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date()) {
+            rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs)
         }
     }
 
@@ -610,7 +588,10 @@ final class AppTracker: ObservableObject {
         purgeFromSeatHistories(cgWindowID)
         // 不直接删座位：若这是某标签窗口的当前标签被关、而同一物理窗口还有别的标签顶上，
         // reconcileSeats 会让座位原地换 activeCgID、保住 token（卡不闪不换身份）。整窗关掉则真删。
-        if reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date()) { rebuildSnapshot() }
+        let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
+        if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date()) {
+            rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs)
+        }
     }
 
     private func handleWindowMinimized(pid: pid_t, cgWindowID: CGWindowID) {
@@ -659,11 +640,12 @@ final class AppTracker: ObservableObject {
 
         // 单座位模型下：标签窗口切标签 = 座位 activeCgID 被顶替，reconcileSeats 即时收敛。
         // 前台 app 每 0.5s 跑一次,切标签/最小化/拽出都能秒级反映(不再依赖 AX 事件可靠性)。
-        var changed = reconcileSeats(pid: pid, cgIDs: cgWindowIDSet(), now: Date())
+        let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
+        var changed = reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date())
         // on-screen 变了(切了标签)也强制刷新一次,兜住座位指纹没变但可见标签换了的边角。
-        let onScreen = onScreenCGWindowIDSet()
+        let onScreen = cgSnapshot.onScreenWindowIDs
         if onScreen != lastOnScreenCGIDs { changed = true }
-        if changed { rebuildSnapshot() }
+        if changed { rebuildSnapshot(onScreenCGIDs: onScreen) }
     }
 
     private func reconcile() {
@@ -694,14 +676,14 @@ final class AppTracker: ObservableObject {
             changed = true
         }
 
-        // Snapshot CG window set once for the entire reconcile pass
-        let cgIDs = cgWindowIDSet()
+        // Snapshot CG window state once for the entire reconcile pass.
+        let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
 
         for pid in appOrder {
-            if reconcileSeats(pid: pid, cgIDs: cgIDs, now: now) { changed = true }
+            if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: now) { changed = true }
         }
 
-        if changed { rebuildSnapshot() }
+        if changed { rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs) }
         scanNonAdmittedApps()
     }
 
@@ -745,10 +727,10 @@ final class AppTracker: ObservableObject {
 
     // MARK: - Snapshot Building
 
-    private func rebuildSnapshot() {
+    private func rebuildSnapshot(onScreenCGIDs: Set<CGWindowID>? = nil) {
         // Read frontmost PID once; passed to windowStatus to determine active highlight
         let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        lastOnScreenCGIDs = onScreenCGWindowIDSet()
+        lastOnScreenCGIDs = onScreenCGIDs ?? AppTrackerCGWindowSnapshot.captureOnScreenWindowIDs()
 
         var windows: [WindowID: WindowRecord] = [:]
         var orderedWindowIDs: [WindowID] = []
