@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sortOrderProvider: { [pinnedFolderStore] path in pinnedFolderStore.sortOrder(for: path) }
     )
     private var panelCoordinator: PanelCoordinator?
+    private var windowZoomAvoidanceController: WindowZoomAvoidanceController?
     private var debugWindow: NSWindow?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var messagingAutoRegisterSubscription: AnyCancellable?
@@ -52,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             requestAccessibilityPermission()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        windowZoomAvoidanceController?.stop()
     }
 
     private func requestAccessibilityPermission() {
@@ -107,6 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runtime.onToggleDrawer = { [weak coordinator] in coordinator?.toggleDrawer() }
         coordinator.onAddFolder = { [weak self] in self?.presentAddPinnedFolderPanel() }
         coordinator.start()
+        let zoomAvoidance = WindowZoomAvoidanceController(
+            contextProvider: { [weak coordinator] in coordinator?.windowZoomAvoidanceContext() }
+        )
+        windowZoomAvoidanceController = zoomAvoidance
+        zoomAvoidance.start()
         badgeStore.start()
         // 探针结论（2026-07-06,阶段0探针3）：访达窗口 AX 属性表虽列有 AXDocument 但恒无值
         // （kAXErrorNoValue），AXProxy/AXTitleUIElement 也只有文件夹名无路径——「拖任务条访达
