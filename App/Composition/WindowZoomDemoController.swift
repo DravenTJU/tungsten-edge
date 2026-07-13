@@ -188,12 +188,12 @@ final class WindowZoomDemoController {
                 return
             }
 
-            // End detection wins over frontmost-change detection after new-window discovery.
-            let stillZoomLike = Self.trackedWindowIsZoomLike(
+            // 持续会话仍使用宽松 isZoomLike：抬起后的窗口只有约 93% 高度。
+            let trackedFrame = Self.trackedWindowFrame(
                 key: session.key,
-                geometry: session.geometry,
                 primaryHeight: slidePrimaryScreenHeight
             )
+            let stillZoomLike = trackedFrame.map(session.geometry.isZoomLike) ?? false
             if stillZoomLike {
                 trackedFalseSamples = 0
             } else {
@@ -205,6 +205,21 @@ final class WindowZoomDemoController {
                 }
             }
 
+            // App 可能在窗口重新获得焦点时恢复自己的全屏 frame；只在它又接近满屏时重抬，
+            // 已经处于抬起 frame 时 adjustedFrame 会返回 nil，不会每轮重复写 AX。
+            if case .shown = slideState,
+               slideWriteTask == nil,
+               let trackedFrame,
+               session.geometry.adjustedFrame(for: trackedFrame) != nil {
+                applySlideLift(
+                    key: session.key,
+                    geometry: session.geometry,
+                    primaryHeight: slidePrimaryScreenHeight,
+                    generation: session.generation
+                )
+            }
+
+            // End detection wins over frontmost-change detection after new-window discovery.
             guard case .hidden = slideState else { return }
             guard let frontmost = stableFrontmostWindowKey() else { return }
             if frontmost != session.baselineFrontmost {
@@ -350,6 +365,13 @@ final class WindowZoomDemoController {
         let reader = self.reader
         let logger = self.logger
         let task: Task<Void, Never> = Task.detached { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    guard let self, self.isCurrentSlideGeneration(key: key, generation: generation) else { return }
+                    self.slideWriteTask = nil
+                }
+            }
+
             guard !Task.isCancelled,
                   let handle = reader.captureHandle(
                       forPID: pid_t(key.pid),
@@ -381,7 +403,6 @@ final class WindowZoomDemoController {
                 if case .failure = result {
                     logger.error("slide lift failed pid=\(key.pid, privacy: .public) wid=\(key.cgWindowID, privacy: .public) gen=\(generation, privacy: .public)")
                 }
-                self.slideWriteTask = nil
             }
         }
         slideWriteTask = task
@@ -398,7 +419,7 @@ final class WindowZoomDemoController {
 
     // MARK: - CG snapshots and coordinate conversion
 
-    /// 钨极所在屏上、面积过半的最前窗口：若它 ≈ 铺满 visibleFrame 则返回，否则 nil。
+    /// 钨极所在屏上、面积过半的最前窗口：只有四边都贴近 visibleFrame 才视为新最大化窗口。
     nonisolated private static func frontmostZoomLikeWindow(
         context: WindowZoomAvoidanceContext
     ) -> (key: DemoWindowKey, appKit: CGRect)? {
@@ -414,7 +435,7 @@ final class WindowZoomDemoController {
                 continue
             }
             let appKit = appKitFrame(fromQuartz: candidate.bounds, primaryHeight: context.primaryScreenHeight)
-            guard context.geometry.isZoomLike(appKit) else { return nil }
+            guard context.geometry.fillsVisibleFrame(appKit) else { return nil }
             return (candidate.key, appKit)
         }
         return nil
@@ -429,14 +450,13 @@ final class WindowZoomDemoController {
         return list.compactMap { eligibleWindow($0, excludingPID: selfPID)?.key }.first
     }
 
-    nonisolated private static func trackedWindowIsZoomLike(
+    nonisolated private static func trackedWindowFrame(
         key: DemoWindowKey,
-        geometry: WindowZoomAvoidance.Geometry,
         primaryHeight: CGFloat
-    ) -> Bool {
+    ) -> CGRect? {
         let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return false
+            return nil
         }
 
         for info in list {
@@ -445,12 +465,11 @@ final class WindowZoomDemoController {
                 continue
             }
             if let onScreen = info[kCGWindowIsOnscreen as String] as? Bool, !onScreen {
-                return false
+                return nil
             }
-            let appKit = appKitFrame(fromQuartz: candidate.bounds, primaryHeight: primaryHeight)
-            return geometry.isZoomLike(appKit)
+            return appKitFrame(fromQuartz: candidate.bounds, primaryHeight: primaryHeight)
         }
-        return false
+        return nil
     }
 
     private struct Candidate {
