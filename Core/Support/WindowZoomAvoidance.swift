@@ -43,16 +43,6 @@ enum WindowZoomAvoidance {
                 && overlap.height >= visibleFrame.height * 0.85
         }
 
-        /// Strict discovery predicate: all four edges must cover the visible frame within tolerance.
-        /// Keep this separate from isZoomLike, which intentionally accepts the raised frame during a session.
-        func fillsVisibleFrame(_ frame: CGRect, tolerance: CGFloat = 12) -> Bool {
-            guard visibleFrame.width > 0, visibleFrame.height > 0 else { return false }
-            return abs(frame.minX - visibleFrame.minX) <= tolerance
-                && abs(frame.minY - visibleFrame.minY) <= tolerance
-                && abs(frame.maxX - visibleFrame.maxX) <= tolerance
-                && abs(frame.maxY - visibleFrame.maxY) <= tolerance
-        }
-
         private func mostlyBelongsToScreen(_ frame: CGRect) -> Bool {
             guard frame.width > 0, frame.height > 0 else { return false }
             let overlap = frame.intersection(screenFrame)

@@ -57,18 +57,6 @@ final class WindowZoomAvoidanceTests: XCTestCase {
         XCTAssertNil(geometry.adjustedFrame(for: native))
     }
 
-    func testFillsVisibleFrameAcceptsSmallEdgeDrift() {
-        let almostVisible = CGRect(x: 5, y: 4, width: 1505, height: 945)
-
-        XCTAssertTrue(geometry.fillsVisibleFrame(almostVisible))
-    }
-
-    func testFillsVisibleFrameRejectsLargeWindowThatMissesVisibleEdges() {
-        let largeButNotMaximized = CGRect(x: 0, y: 0, width: 1512, height: 808)
-
-        XCTAssertFalse(geometry.fillsVisibleFrame(largeButNotMaximized))
-    }
-
     func testPollScheduleUsesAbsoluteDeadlinesAndVirtualElapsedTime() {
         let schedule = WindowZoomAvoidance.PollSchedule.standard
 
