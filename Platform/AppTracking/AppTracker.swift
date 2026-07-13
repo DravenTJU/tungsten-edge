@@ -12,6 +12,11 @@ struct AppEntry {
     var windowsByID: [CGWindowID: WindowEntry]
     var windowOrder: [CGWindowID]
     var isHidden: Bool
+    /// 影子标签池：上一轮対账时「在 CG 全列表(本 pid, layer 0)、却不在 AXWindows」的窗口 id——
+    /// order-out 后台标签独有的签名（真窗口不管可见/最小化/隐藏/其它 Space 都始终在 AXWindows 里）。
+    /// Pass B 折叠判定第二级用它兜住「成员历史被 dock 重启清零」的缺口；每轮从活信号重建，
+    /// 不依赖持久化。判定用上一轮的池（最小化爆发瞬间所有标签涌进 AX，本轮现算会是空的）。
+    var shadowTabCgIDs: Set<CGWindowID> = []
 }
 
 /// 一个**物理窗口座位**（单座位模型）。`cgWindowID` 是它**当前**的可见标签（= 动作落点），会随
@@ -28,6 +33,13 @@ struct WindowEntry {
     /// 仅作「曾经 AX 缺席」的标记，用来在 AX 重新看到它时清零；【不据此回收座位】——实测
     /// Safari 等正常窗口一最小化就整个离开 AX，按缺席回收会误删。座位回收只看 CG 全列表是否消失。
     var absentSince: Date? = nil
+    /// min/隐藏保留分支里的 AX 连续缺席起始时刻（与 absentSince 分开，不碰 closedReapGrace 语义）。
+    /// 只喂给幽灵座位自愈判定（PhantomSeatDecision，五门槛），重新在 AX 出现随 make() 自然清零。
+    var minAbsentSince: Date? = nil
+    /// 这个座位是否曾以 min=false 出现在 AX 里（座位延续时继承）。真窗口几乎必然可见过；
+    /// 幽灵座位（折叠失手时从 min=true 爆发候选裂出来的）永远是 false——自愈判定的头号门槛，
+    /// 同时保护 Safari 式「一最小化就整个离开 AX」的真窗口不被自愈误删。
+    var everSeenVisible: Bool = false
     /// 曾经当过这个座位 activeCgID 的标签（切标签被顶替时记入；折叠成功且归属唯一时也学习记入）。
     /// 标签创建即成为活跃标签 ⇒ 每个后台标签都在所属座位历史里。Pass B 折叠优先按此成员关系
     /// 判定，与几何、min 标志无关——豁免「窗口移动/缩放后后台标签 AX 几何过时」与「min 滞后
@@ -52,6 +64,9 @@ final class AppTracker: ObservableObject {
     /// 一个「本来正常、却离开了 AX、但还赖在 CG 全列表」的座位，持续多久判定为关窗后残留并删。
     /// 给一点 grace 扛 AX 偶发漏读（真窗口短暂漏一两次不该被删）。最小化/隐藏的座位不走这条（豁免）。
     private static let closedReapGrace: TimeInterval = 1.5
+    /// 幽灵座位自愈门槛：min 保留的座位 AX 连续缺席多久后才允许进入 PhantomSeatDecision 判定
+    /// （还要过 everSeenVisible / CG 在场 / AX 读健康 / 有 AX 在场兄弟座位 四道门）。
+    private static let phantomReapGrace: TimeInterval = 10.0
 
     /// 上次重建快照时的 CG on-screen 集合。前台轮询据此发现「切标签」——AX 可能完全不报，
     /// 但 on-screen 集合会即时变化，变了就重建（标签组可见标签随之即时更新）。
@@ -111,12 +126,13 @@ final class AppTracker: ObservableObject {
         }
     }
 
-    /// cgID 会被系统复用：窗口真销毁时立刻从所有座位历史(formerCgIDs)里清除该 cgID，
-    /// 防止它复用到新窗口后被成员折叠误吸进旧座位。跨 pid 清（cgID 全局唯一、复用不认进程）。
+    /// cgID 会被系统复用：窗口真销毁时立刻从所有座位历史(formerCgIDs)和影子标签池里清除该
+    /// cgID，防止它复用到新窗口后被成员/影子池折叠误吸。跨 pid 清（cgID 全局唯一、复用不认进程）。
     private func purgeFromSeatHistories(_ cgID: CGWindowID) {
         for pid in appOrder {
             guard var app = apps[pid] else { continue }
             var touched = false
+            if app.shadowTabCgIDs.remove(cgID) != nil { touched = true }
             for wid in app.windowOrder where app.windowsByID[wid]?.formerCgIDs.contains(cgID) == true {
                 app.windowsByID[wid]?.formerCgIDs.remove(cgID)
                 touched = true
@@ -150,6 +166,9 @@ final class AppTracker: ObservableObject {
         guard var app = apps[pid] else { return false }
         let cgIDs = cgSnapshot.allWindowIDs
         let onScreenCGIDs = cgSnapshot.onScreenWindowIDs
+        let cgPidIDs = cgSnapshot.windowIDsByPID[pid] ?? []
+        // 影子标签池按【上一轮】的快照判定：最小化爆发瞬间所有标签涌进 AX，本轮现算池子会是空的。
+        let shadowPool = app.shadowTabCgIDs
         let eligible: [AXWindowSnapshot]
         if let preloaded = preloadedEligible {
             eligible = preloaded
@@ -169,16 +188,23 @@ final class AppTracker: ObservableObject {
         var newByID: [CGWindowID: WindowEntry] = [:]
         func place(_ e: WindowEntry) { newOrder.append(e.cgWindowID); newByID[e.cgWindowID] = e }
         // history = 座位延续时继承的「曾任活跃标签」集合。与 CG 全列表求交集：真关掉的标签
-        // 随之出列，防 cgID 复用后被误折叠进旧座位。
-        func make(token: String, _ s: AXWindowSnapshot, history: Set<CGWindowID> = []) -> WindowEntry {
+        // 随之出列，防 cgID 复用后被误折叠进旧座位。wasEverVisible = 座位此前是否可见过（延续时
+        // 继承）；本次以 min=false 现身也算——幽灵座位永远凑不齐这个标记（自愈判定的头号门槛）。
+        func make(token: String, _ s: AXWindowSnapshot, history: Set<CGWindowID> = [],
+                  wasEverVisible: Bool = false) -> WindowEntry {
             WindowEntry(cgWindowID: s.cgWindowID!, token: token, title: s.title ?? "",
                         bounds: s.bounds, isMinimized: s.isMinimized, isFocused: s.isFocusedWindow,
+                        everSeenVisible: wasEverVisible || !s.isMinimized,
                         formerCgIDs: history.subtracting([s.cgWindowID!]).intersection(cgIDs))
         }
         // 某 frame 当前有几个老座位认领（>1 = 窗口重叠歧义，切标签顶替时跳过，保守不误并）
         func seatsAtFrame(_ key: String) -> Int {
             app.windowOrder.filter { fk(app.windowsByID[$0]?.bounds) == key }.count
         }
+
+        // 当前 activeCgID 仍在 AX 里的座位数——幽灵自愈的「兄弟座位在场」门槛（幽灵自己缺席，天然不计入）。
+        let axPresentSeatCount = app.windowOrder.filter { eligibleByCgID[$0] != nil }.count
+        var healedCgIDs: [CGWindowID] = []
 
         // Pass A：每个老座位尝试延续
         for cgID in app.windowOrder {
@@ -193,11 +219,14 @@ final class AppTracker: ObservableObject {
                        return fk(s.bounds) == seatKey
                    }), let yc = Y.cgWindowID {
                     // 座位留旧 frame、顶替成 Y，token 不变。X 被赶出成独立窗口 → 【不】记入历史
-                    place(make(token: seat.token, Y, history: seat.formerCgIDs))
+                    place(make(token: seat.token, Y, history: seat.formerCgIDs,
+                               wasEverVisible: seat.everSeenVisible))
                     usedEligible.insert(yc)
                     // X 不标 used → 落到 Pass B 成新座位（被赶出去的当前标签）
                 } else {
-                    place(make(token: seat.token, snapX, history: seat.formerCgIDs))  // 普通：跟着 X（frame 可移动）
+                    // 普通：跟着 X（frame 可移动）
+                    place(make(token: seat.token, snapX, history: seat.formerCgIDs,
+                               wasEverVisible: seat.everSeenVisible))
                     usedEligible.insert(X)
                 }
             } else {
@@ -211,16 +240,32 @@ final class AppTracker: ObservableObject {
                     // tombstone / 已离开 CG，make 的交集会把真关掉的挡在门外）
                     var history = seat.formerCgIDs
                     if !isTombstoned(X) { history.insert(X) }
-                    place(make(token: seat.token, Y, history: history))
+                    place(make(token: seat.token, Y, history: history,
+                               wasEverVisible: seat.everSeenVisible))
                     usedEligible.insert(yc)
                 } else if cgIDs.contains(X) && !isTombstoned(X) {
                     // X 离开 AX 但仍在 CG。区分「最小化/隐藏(保座位)」vs「关窗后窗口赖在 CG(该删)」:
                     // 信号 = 离开 AX 前最后一次是不是 min(最小化会先经 Miniaturized 通知标 min；关窗不会)。
                     seat.formerCgIDs.formIntersection(cgIDs)   // 历史防复用：出 CG 即出列
                     if seat.isMinimized || app.isHidden {
-                        seat.isFocused = false
-                        seat.absentSince = nil
-                        place(seat)                       // 真最小化(Safari 离开 AX)/ 应用隐藏 → 保座位
+                        if seat.minAbsentSince == nil { seat.minAbsentSince = now }
+                        // 幽灵座位自愈：从未可见过 + AX 连续缺席够久 + app 没挂死 + 有 AX 在场
+                        // 兄弟座位 → 判定为折叠失手裂出来的幽灵，释放（不 place）。真最小化/隐藏
+                        // 的窗口过不了 everSeenVisible 或兄弟门槛，照旧无限期保座位。
+                        if PhantomSeatDecision.shouldRelease(
+                            everSeenVisible: seat.everSeenVisible,
+                            axAbsentFor: now.timeIntervalSince(seat.minAbsentSince ?? now),
+                            threshold: Self.phantomReapGrace,
+                            cgStillPresent: true,   // 本分支前提就是 cgIDs.contains(X)
+                            axReadSawWindows: !eligible.isEmpty,
+                            axPresentSiblingCount: axPresentSeatCount
+                        ) {
+                            healedCgIDs.append(X)   // Pass B 之后归档：唯一在场座位则记入其历史
+                        } else {
+                            seat.isFocused = false
+                            seat.absentSince = nil
+                            place(seat)                   // 真最小化(Safari 离开 AX)/ 应用隐藏 → 保座位
+                        }
                     } else if let since = seat.absentSince, now.timeIntervalSince(since) >= Self.closedReapGrace {
                         // 正常窗口却离开 AX 且持续超过 grace → 判定关窗后赖在 CG,删座位（不 place）
                     } else {
@@ -255,6 +300,7 @@ final class AppTracker: ObservableObject {
                 candidateBounds: s.bounds,
                 candidateIsMinimized: s.isMinimized,
                 candidateIsOnScreen: onScreenCGIDs.contains(c),
+                candidateIsKnownShadow: shadowPool.contains(c),
                 placedSeats: placedForFold,
                 frameKey: fk
             )
@@ -263,6 +309,17 @@ final class AppTracker: ObservableObject {
                 usedEligible.insert(c)   // 后台标签 → 折叠进已有座位,不另建
                 if let owner { newByID[owner]?.formerCgIDs.insert(c) }   // 成员学习
             case .newSeat:
+                if s.isMinimized, !placedForFold.isEmpty {
+                    // 诊断（常驻）：min=true 候选在已有落座座位时四级判定全失败走到新建座位 =
+                    // 潜在分裂点，dump 全部判定输入抓现场。placed 为空（seed 时本就最小化的
+                    // 独立窗口）是正确新建，不打。正常路径零输出——别再当遗留清掉。
+                    let cand = s.bounds.map { "\(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
+                    let placedDesc = placedForFold.map { p in
+                        let b = p.bounds.map { "\(Int($0.origin.x)),\(Int($0.origin.y)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
+                        return "(cg=\(p.activeCgID) min=\(p.isMinimized) b=[\(b)] hist=\(p.formerCgIDs.sorted()))"
+                    }.joined(separator: " ")
+                    print("[tabfold] 分裂点 pid=\(pid) 为 min 窗口新建座位 cg=\(c) b=[\(cand)] onScreen=\(onScreenCGIDs.contains(c)) shadow=\(shadowPool.contains(c)) pool=\(shadowPool.count) placed=\(placedDesc)")
+                }
                 nextSeatSerial += 1
                 let entry = make(token: "tabgrp-\(pid)-s\(nextSeatSerial)", s)
                 place(entry)
@@ -270,6 +327,31 @@ final class AppTracker: ObservableObject {
                 placedForFold.append(TabFoldDecision.PlacedSeat(activeCgID: entry.cgWindowID, bounds: entry.bounds,
                                                                 isMinimized: entry.isMinimized, formerCgIDs: entry.formerCgIDs))
             }
+        }
+
+        // 幽灵自愈归档：恰有唯一 AX 在场座位时把释放的 cgID 记入其历史（下次爆发按成员秒折），
+        // 多座位歧义则不学习——释放的 id 反正会回到影子池，照样被池挡住。
+        if !healedCgIDs.isEmpty {
+            let axPresentPlaced = newOrder.filter { eligibleByCgID[$0] != nil }
+            for x in healedCgIDs {
+                if axPresentPlaced.count == 1, let owner = axPresentPlaced.first {
+                    newByID[owner]?.formerCgIDs.insert(x)
+                }
+                print("[tabheal] 自愈 pid=\(pid) 释放幽灵座位 cg=\(x) 归入=\(axPresentPlaced.count == 1 ? "\(axPresentPlaced[0])" : "无(歧义)")")
+            }
+        }
+
+        // 影子标签池滚动到下一轮（本轮判定用的是旧池）。健康门槛：AX 一个窗口都没读到而 CG
+        // 还有（app 挂死/AX 读失败）→ 本轮不动池子。规则：出 CG（真关闭）→ 出池；以 min=false
+        // 现身 AX（活跃标签/真可见窗口/拽出标签）→ 出池；在 CG 却不在 AX 且不是在座 activeCgID
+        // （min 保留的 Safari 式真窗口、grace 暂留座位不入池，防座位丢失后被误折叠）→ 入池。
+        // min=true 现身 AX 的不出池——那正是最小化爆发时刻，池子要撑住整个最小化期。
+        if !eligible.isEmpty || cgPidIDs.isEmpty {
+            var pool = app.shadowTabCgIDs
+            pool.formIntersection(cgPidIDs)
+            for s in eligible { if let c = s.cgWindowID, !s.isMinimized { pool.remove(c) } }
+            pool.formUnion(cgPidIDs.subtracting(eligibleByCgID.keys).subtracting(newOrder))
+            app.shadowTabCgIDs = pool
         }
 
         app.windowOrder = newOrder

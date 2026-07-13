@@ -3,10 +3,12 @@ import CoreGraphics
 struct AppTrackerCGWindowSnapshot: Equatable {
     let allWindowIDs: Set<CGWindowID>
     let onScreenWindowIDs: Set<CGWindowID>
+    /// 按属主 pid 分组的 layer-0 窗口 id（影子标签池用：CG(pid) − AX 暴露集 = order-out 后台标签）。
+    let windowIDsByPID: [pid_t: Set<CGWindowID>]
 
     static func capture() -> AppTrackerCGWindowSnapshot {
         guard let windowInfo = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else {
-            return AppTrackerCGWindowSnapshot(allWindowIDs: [], onScreenWindowIDs: [])
+            return AppTrackerCGWindowSnapshot(allWindowIDs: [], onScreenWindowIDs: [], windowIDsByPID: [:])
         }
         return parse(windowInfo)
     }
@@ -24,6 +26,7 @@ struct AppTrackerCGWindowSnapshot: Equatable {
     static func parse(_ windowInfo: [[String: Any]]) -> AppTrackerCGWindowSnapshot {
         var allWindowIDs: Set<CGWindowID> = []
         var onScreenWindowIDs: Set<CGWindowID> = []
+        var windowIDsByPID: [pid_t: Set<CGWindowID>] = [:]
 
         for info in windowInfo {
             guard let windowID = layerZeroWindowID(in: info) else { continue }
@@ -31,11 +34,15 @@ struct AppTrackerCGWindowSnapshot: Equatable {
             if info[kCGWindowIsOnscreen as String] as? Bool == true {
                 onScreenWindowIDs.insert(windowID)
             }
+            if let ownerPID = info[kCGWindowOwnerPID as String] as? Int {
+                windowIDsByPID[pid_t(ownerPID), default: []].insert(windowID)
+            }
         }
 
         return AppTrackerCGWindowSnapshot(
             allWindowIDs: allWindowIDs,
-            onScreenWindowIDs: onScreenWindowIDs
+            onScreenWindowIDs: onScreenWindowIDs,
+            windowIDsByPID: windowIDsByPID
         )
     }
 

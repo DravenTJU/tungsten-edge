@@ -8,13 +8,17 @@ import Foundation
 /// min=true。后台标签是 order-out 窗口，收不到 moved/resized 通知——窗口被移动/缩放过之后，
 /// 它们的 AX 坐标和尺寸都停留在过时值，纯几何匹配会失效（一个标签裂一张卡）。
 ///
-/// 判定三级，从强到弱：
+/// 判定四级，从强到弱：
 /// 1. **成员关系**：候选 cgID 曾是某已放置座位的 activeCgID（标签创建即成为活跃标签 ⇒ 每个
 ///    后台标签都进过所属座位的历史）。与几何、min 标志完全无关——同时豁免「移动/缩放后
-///    AX 几何过时」和「min 滞后竞态」两类折叠失效。
-/// 2. **frame 精确匹配**：后台标签与所属窗口逐像素同 frame（窗口没动过时成立）。
-/// 3. **尺寸兜底**：同宽高 ±3 + 屏幕外 + 对应座位已标最小化（窗口移动过、但没缩放过时成立）。
-/// 三级全失败 → 新建座位（对 min=true 候选这是潜在分裂点，调用方打诊断日志）。
+///    AX 几何过时」和「min 滞后竞态」两类折叠失效。注意历史是**会话态**（dock 重启清零）。
+/// 2. **影子标签池**：候选 cgID 上一轮対账时「在 CG 全列表、却不在 AXWindows」——这是
+///    order-out 后台标签独有的签名（真窗口不管可见/最小化/隐藏/其它 Space 都始终在 AXWindows
+///    里）。池子每轮从活信号重建，**天然免疫 dock 重启**，是成员历史清零后的重启安全层。
+///    仅当已有落座座位时生效：零座位时不折（真最小化窗口组的代表标签必须能建座位）。
+/// 3. **frame 精确匹配**：后台标签与所属窗口逐像素同 frame（窗口没动过时成立）。
+/// 4. **尺寸兜底**：同宽高 ±3 + 屏幕外 + 对应座位已标最小化（窗口移动过、但没缩放过时成立）。
+/// 四级全失败 → 新建座位（对 min=true 候选这是潜在分裂点，调用方打诊断日志）。
 enum TabFoldDecision {
 
     /// 本轮对账已放置座位的折叠视角摘要。`activeCgID` 仅作回写索引（成员学习），不是身份。
@@ -27,6 +31,7 @@ enum TabFoldDecision {
 
     enum Reason: String {
         case membership   // 曾是该座位的活跃标签
+        case shadowPool   // 上一轮在 CG 却不在 AX（order-out 后台标签签名）
         case exactFrame   // frame 逐像素匹配
         case sameSize     // 同尺寸 + 屏幕外兜底
     }
@@ -43,10 +48,12 @@ enum TabFoldDecision {
         candidateBounds: CGRect?,
         candidateIsMinimized: Bool,
         candidateIsOnScreen: Bool,
+        candidateIsKnownShadow: Bool,
         placedSeats: [PlacedSeat],
         frameKey: (CGRect?) -> String?
     ) -> Verdict {
-        // 非 min 的未认领窗口是合法新窗口（含"两个独立窗口重叠"场景），照常新建座位。
+        // 非 min 的未认领窗口是合法新窗口（含"两个独立窗口重叠"和"拽出标签变可见"场景），
+        // 照常新建座位——影子池对 min=false 候选一律不生效。
         guard candidateIsMinimized else { return .newSeat }
 
         // 1. 成员关系
@@ -54,14 +61,21 @@ enum TabFoldDecision {
         if owners.count == 1 { return .fold(ownerActiveCgID: owners[0].activeCgID, reason: .membership) }
         if owners.count > 1 { return .fold(ownerActiveCgID: nil, reason: .membership) }
 
-        // 2. frame 精确匹配
+        // 2. 影子标签池：唯一座位 → 归属 + 学习；多座位 → 只折叠不学习（宁可少学不误记）。
+        // 零座位不折——否则真最小化窗口组连一张卡都建不出来。
+        if candidateIsKnownShadow, !placedSeats.isEmpty {
+            if placedSeats.count == 1 { return .fold(ownerActiveCgID: placedSeats[0].activeCgID, reason: .shadowPool) }
+            return .fold(ownerActiveCgID: nil, reason: .shadowPool)
+        }
+
+        // 3. frame 精确匹配
         if let key = frameKey(candidateBounds) {
             let matches = placedSeats.filter { frameKey($0.bounds) == key }
             if matches.count == 1 { return .fold(ownerActiveCgID: matches[0].activeCgID, reason: .exactFrame) }
             if matches.count > 1 { return .fold(ownerActiveCgID: nil, reason: .exactFrame) }
         }
 
-        // 3. 尺寸兜底：屏幕外（非活跃标签）+ 与某已放置的最小化座位宽高相同
+        // 4. 尺寸兜底：屏幕外（非活跃标签）+ 与某已放置的最小化座位宽高相同
         if !candidateIsOnScreen, let sb = candidateBounds {
             let matches = placedSeats.filter { seat in
                 guard seat.isMinimized, let pb = seat.bounds else { return false }
@@ -73,5 +87,35 @@ enum TabFoldDecision {
         }
 
         return .newSeat
+    }
+}
+
+/// 幽灵座位自愈的纯决策层。
+///
+/// 幽灵座位 = 折叠判定失手时从 min=true 爆发候选里裂出来的多余座位（典型：dock 启动时窗口
+/// 已最小化，seed 无历史无影子池可用）。它标着 min=true，被「最小化不释放座位」的保留规则
+/// 永久扣住——还原窗口后它的 cgID 只是离开 AX、仍在 CG，卡就一直裂着。
+///
+/// 自愈判定五门槛（全满足才释放，宁可不愈不误删）：
+/// - `everSeenVisible == false`：该座位的 activeCgID 在本会话从未以 min=false 出现在 AX 里。
+///   真窗口几乎必然可见过；这门槛保护 Safari 式「一最小化就整个离开 AX」的真窗口。
+/// - AX 连续缺席 ≥ threshold：不是一两轮漏读。
+/// - cgID 仍在 CG：不在就是真关闭，走既有删除路径，轮不到自愈。
+/// - 本轮 AX 读到了该 app 的窗口：app 挂死/AX 读失败时按兵不动。
+/// - 同 pid 至少一个座位当前在 AX 里：孤座位永不自愈（防误删 app 仅有的卡）。
+enum PhantomSeatDecision {
+    static func shouldRelease(
+        everSeenVisible: Bool,
+        axAbsentFor: TimeInterval,
+        threshold: TimeInterval,
+        cgStillPresent: Bool,
+        axReadSawWindows: Bool,
+        axPresentSiblingCount: Int
+    ) -> Bool {
+        !everSeenVisible
+            && axAbsentFor >= threshold
+            && cgStillPresent
+            && axReadSawWindows
+            && axPresentSiblingCount >= 1
     }
 }
