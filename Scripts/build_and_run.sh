@@ -8,9 +8,18 @@ PROJECT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/macos-dock-cc-v2.
 DERIVED_DATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/build/DerivedData"
 APP_BUNDLE="$DERIVED_DATA_DIR/Build/Products/Debug/$APP_NAME.app"
 APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+LOCAL_SIGNING_IDENTITY="macos-dock-cc Local Code Signing"
 
 build_app() {
   xcodebuild -project "$PROJECT_PATH" -scheme "$APP_NAME" -configuration Debug -derivedDataPath "$DERIVED_DATA_DIR" build >/tmp/macos-dock-cc-v2-build.log 2>&1
+}
+
+sign_app() {
+  if security find-identity -v -p codesigning | grep -Fq "\"$LOCAL_SIGNING_IDENTITY\""; then
+    /usr/bin/codesign --force --deep --sign "$LOCAL_SIGNING_IDENTITY" "$APP_BUNDLE" >/tmp/macos-dock-cc-v2-codesign.log 2>&1
+  else
+    echo "warning: local signing identity not found; keeping Xcode's build signature" >&2
+  fi
 }
 
 run_cli() {
@@ -37,6 +46,7 @@ case "$MODE" in
   run)
     pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     build_app
+    sign_app
     open_app
     ;;
   --debug|debug)
@@ -46,18 +56,21 @@ case "$MODE" in
   --logs|logs)
     pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     build_app
+    sign_app
     open_app
     /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
     ;;
   --telemetry|telemetry)
     pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     build_app
+    sign_app
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"com.caye.macosdockcc.v2\""
     ;;
   --verify|verify)
     pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     build_app
+    sign_app
     open_app
     wait_for_app
     ;;

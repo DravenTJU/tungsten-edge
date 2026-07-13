@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowZoomAvoidanceController: WindowZoomAvoidanceController?
     private var windowZoomDemoController: WindowZoomDemoController?
     private var debugWindow: NSWindow?
+    private var permissionWindow: NSWindow?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var messagingAutoRegisterSubscription: AnyCancellable?
     private var permissionModel: AccessibilityPermissionModel?
@@ -46,22 +47,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 行缓冲 stdout：从命令行/后台启动时，print() 输出到文件默认是块缓冲，
         // 日志要攒满缓冲区才落盘。改成行缓冲后每条 print 立即写出，便于实时读日志。
         setvbuf(stdout, nil, _IOLBF, 0)
-        NSApp.setActivationPolicy(.accessory)
         _ = statusMenuController
 
         if AXIsProcessTrusted() {
+            NSApp.setActivationPolicy(.accessory)
             startApp()
         } else {
+            // 没有权限时任务条不会创建任何面板，保持 accessory 会让用户只能看到一个
+            // 不一定明显的状态栏图标；先用普通应用策略把权限引导窗口带到前台。
+            NSApp.setActivationPolicy(.regular)
             requestAccessibilityPermission()
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         windowZoomAvoidanceController?.stop()
+        windowZoomDemoController?.stop()
     }
 
     private func requestAccessibilityPermission() {
-        // 系统原生提示框：既弹出"打开系统设置"按钮，又把本应用注册进辅助功能列表。
+        showPermissionWindow()
+        // 系统原生提示框：把本应用注册进辅助功能列表，并在首次请求时提示用户打开设置。
         AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
 
         let model = AccessibilityPermissionModel()
@@ -73,7 +79,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handlePermissionGranted() {
         permissionModel?.stop()
         permissionModel = nil
+        permissionWindow?.orderOut(nil)
+        permissionWindow?.close()
+        permissionWindow = nil
+        NSApp.setActivationPolicy(.accessory)
         startApp()
+    }
+
+    private func showPermissionWindow() {
+        if let permissionWindow {
+            permissionWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 250),
+            styleMask: [.titled, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Tungsten Edge 钨极"
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: PermissionOnboardingView(
+            onOpenSettings: { [weak self] in self?.openAccessibilitySettings() },
+            onQuit: { NSApp.terminate(nil) }
+        ))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        permissionWindow = window
+    }
+
+    private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func startApp() {
