@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var panelCoordinator: PanelCoordinator?
     private var windowZoomAvoidanceController: WindowZoomAvoidanceController?
+    private var windowZoomDemoController: WindowZoomDemoController?
     private var debugWindow: NSWindow?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var messagingAutoRegisterSubscription: AnyCancellable?
@@ -112,11 +113,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runtime.onToggleDrawer = { [weak coordinator] in coordinator?.toggleDrawer() }
         coordinator.onAddFolder = { [weak self] in self?.presentAddPinnedFolderPanel() }
         coordinator.start()
-        let zoomAvoidance = WindowZoomAvoidanceController(
-            contextProvider: { [weak coordinator] in coordinator?.windowZoomAvoidanceContext() }
-        )
-        windowZoomAvoidanceController = zoomAvoidance
-        zoomAvoidance.start()
+        // DOCK_ZOOM_DEMO=lift|slide 时启动对比 demo（看结果触发），并跳过 Option+绿钮的支线控制器，避免撞车。
+        if let demoRaw = ProcessInfo.processInfo.environment["DOCK_ZOOM_DEMO"],
+           let demoMode = WindowZoomDemoMode(rawValue: demoRaw) {
+            let demo = WindowZoomDemoController(mode: demoMode, host: coordinator)
+            windowZoomDemoController = demo
+            demo.start()
+        } else {
+            let zoomAvoidance = WindowZoomAvoidanceController(
+                contextProvider: { [weak coordinator] in coordinator?.windowZoomAvoidanceContext() }
+            )
+            windowZoomAvoidanceController = zoomAvoidance
+            zoomAvoidance.start()
+        }
         badgeStore.start()
         // 探针结论（2026-07-06,阶段0探针3）：访达窗口 AX 属性表虽列有 AXDocument 但恒无值
         // （kAXErrorNoValue），AXProxy/AXTitleUIElement 也只有文件夹名无路径——「拖任务条访达
