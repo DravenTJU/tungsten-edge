@@ -183,6 +183,12 @@ final class PanelCoordinator: NSObject {
     private var fullscreenReconcileTimer: Timer?
     private var visibilityState = PanelVisibilityState()
     private var panelsAreVisible = true
+    // 缩放避让 demo（throwaway，DOCK_ZOOM_DEMO=slide 时）：slide 模式下 demo 全权接管栏可见性，
+    // reconcilePanelVisibility 早返回，栏的隐/现走 demoSetBarHidden 的透明度动画。
+    private var demoSlideModeActive = false
+    private var demoSlideSessionActive = false
+    private var demoBarHiddenBySlide = false
+    private var demoBarAnimationToken: UInt64 = 0
     private var edgeIdleHideTimer: Timer?
     private var edgeWakeTimer: Timer?
     private var edgeWakeTargetScreen: NSScreen?
@@ -267,7 +273,7 @@ final class PanelCoordinator: NSObject {
             return nil
         }
 
-        let screen = panelCurrentScreen(panel: panel)
+        let screen = effectiveDockScreen(panel)
         let primaryHeight = NSScreen.main?.frame.height ?? 0
         return WindowZoomAvoidanceContext(
             geometry: WindowZoomAvoidance.Geometry(
@@ -278,6 +284,133 @@ final class PanelCoordinator: NSObject {
             screenQuartzFrame: Self.toCGRect(screen),
             primaryScreenHeight: primaryHeight
         )
+    }
+
+    // MARK: - 缩放避让 demo 支持（throwaway，DOCK_ZOOM_DEMO 门控）
+
+    /// demo 版几何上下文：去掉「常驻」门槛，只要求栏当前可见且非全屏。
+    /// slide 模式栏被 demo 隐起时 panelsAreVisible 仍为 true（demo 绕过它），故两模式都能取到。
+    func demoZoomContext() -> WindowZoomAvoidanceContext? {
+        guard let panel = dockPanel,
+              panelsAreVisible,
+              !visibilityState.hideReasons.contains(.fullscreen) else {
+            return nil
+        }
+        let screen = effectiveDockScreen(panel)
+        let primaryHeight = NSScreen.main?.frame.height ?? 0
+        return WindowZoomAvoidanceContext(
+            geometry: WindowZoomAvoidance.Geometry(
+                screenFrame: screen.frame,
+                visibleFrame: screen.visibleFrame,
+                tungstenTop: screen.frame.minY + Self.layoutMetrics.bottomGap + Self.panelHeight
+            ),
+            screenQuartzFrame: Self.toCGRect(screen),
+            primaryScreenHeight: primaryHeight
+        )
+    }
+
+    /// slide demo 一次性激活：此后 reconcilePanelVisibility 早返回，栏可见性由 demo 独占。
+    func demoActivateSlideMode() {
+        demoSlideModeActive = true
+    }
+
+    /// slide 会话开始时关闭普通自动隐藏定时器；栏仍允许被 hover 机制切到另一块屏幕。
+    func demoSetSlideSessionActive(_ active: Bool) {
+        if active {
+            guard !demoSlideSessionActive else { return }
+            demoSlideSessionActive = true
+            cancelEdgeWake()
+            edgeIdleHideTimer?.invalidate()
+            edgeIdleHideTimer = nil
+            visibilityState.setEdgeAutoHidden(false)
+        } else {
+            demoSlideSessionActive = false
+            visibilityState.setEdgeAutoHidden(false)
+        }
+    }
+
+    /// 屏幕参数或全屏状态改变时的同步中止入口。必须在普通 relayout 前调用，
+    /// 否则隐藏面板的 live frame 仍会把布局误判到主屏。
+    func demoAbortSlideSession() {
+        guard demoSlideSessionActive || demoBarHiddenBySlide else { return }
+        cancelHoverSwitch()
+        cancelEdgeWake()
+        edgeIdleHideTimer?.invalidate()
+        edgeIdleHideTimer = nil
+        if demoBarHiddenBySlide {
+            demoSetBarHidden(false, animated: false, completion: nil)
+        }
+        demoSlideSessionActive = false
+        visibilityState.setEdgeAutoHidden(false)
+    }
+
+    /// 鼠标是否落在可见的栏（dock/capsule 目标矩形，含阴影）上——slide 唤出后判定是否该收起。
+    func demoIsMouseOverBar() -> Bool {
+        let mouse = NSEvent.mouseLocation
+        if lastDockTargetFrame != .zero, lastDockTargetFrame.contains(mouse) { return true }
+        if lastCapsuleTargetFrame != .zero, lastCapsuleTargetFrame.contains(mouse) { return true }
+        return false
+    }
+
+    /// slide demo 的栏透明度隐藏 / 唤出。面板 frame 始终留在目标位置，hidden=true 结束后 orderOut。
+    func demoSetBarHidden(_ hidden: Bool, animated: Bool, completion: (() -> Void)? = nil) {
+        guard demoSlideModeActive, hidden != demoBarHiddenBySlide,
+              let dock = dockPanel, let capsule = capsulePanel else {
+            completion?()
+            return
+        }
+        demoBarHiddenBySlide = hidden
+        demoBarAnimationToken &+= 1
+        let animationToken = demoBarAnimationToken
+        let dockVisible = lastDockTargetFrame != .zero ? lastDockTargetFrame : dock.frame
+        let capsuleVisible = lastCapsuleTargetFrame != .zero ? lastCapsuleTargetFrame : capsule.frame
+        dock.setFrame(dockVisible, display: false)
+        capsule.setFrame(capsuleVisible, display: false)
+
+        if hidden {
+            guard animated else {
+                dock.alphaValue = 0
+                capsule.alphaValue = 0
+                dock.orderOut(nil); capsule.orderOut(nil)
+                dock.alphaValue = 1
+                capsule.alphaValue = 1
+                completion?()
+                return
+            }
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = Self.demoFadeDuration
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                dock.animator().alphaValue = 0
+                capsule.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, self.demoBarAnimationToken == animationToken,
+                      self.demoBarHiddenBySlide == true else { return }
+                dock.orderOut(nil); capsule.orderOut(nil)
+                dock.alphaValue = 1
+                capsule.alphaValue = 1
+                completion?()
+            })
+        } else {
+            dock.alphaValue = 0
+            capsule.alphaValue = 0
+            dock.orderFrontRegardless(); capsule.orderFrontRegardless()
+            guard animated else {
+                dock.alphaValue = 1
+                capsule.alphaValue = 1
+                completion?()
+                return
+            }
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = Self.demoFadeDuration
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                dock.animator().alphaValue = 1
+                capsule.animator().alphaValue = 1
+            }, completionHandler: { [weak self] in
+                guard let self, self.demoBarAnimationToken == animationToken,
+                      self.demoBarHiddenBySlide == false else { return }
+                completion?()
+            })
+        }
     }
 
     private func openDrawer() {
@@ -306,7 +439,7 @@ final class PanelCoordinator: NSObject {
         }
         guard let panel = drawerPanel else { return }
 
-        let screen = panelCurrentScreen(panel: mainPanel)
+        let screen = effectiveDockScreen(mainPanel)
         let screenGeometry = Self.screenGeometry(screen)
         // 用胶囊**目标** frame 定位（不读 live：用户可能在任务条宽度动画中触发弹簧开抽屉,Codex 二审 P1）。
         let capsuleRef = lastCapsuleTargetFrame == .zero ? (capsulePanel?.frame ?? .zero) : lastCapsuleTargetFrame
@@ -515,7 +648,7 @@ final class PanelCoordinator: NSObject {
         }
         guard let panel = folderPopupPanel else { return }
 
-        let screen = panelCurrentScreen(panel: mainPanel)
+        let screen = effectiveDockScreen(mainPanel)
         let screenGeometry = Self.screenGeometry(screen)
         let maxContentHeight = PanelGeometry.maxFolderPopupContentHeight(
             anchorVisibleRect: anchorVisibleRect, on: screenGeometry, metrics: Self.layoutMetrics)
@@ -597,7 +730,7 @@ final class PanelCoordinator: NSObject {
         let fitting = hosting.fittingSize
         let size = CGSize(width: max(fitting.width, 160), height: max(fitting.height, 120))
         lastPopupSize = size
-        let screen = panelCurrentScreen(panel: dock)
+        let screen = effectiveDockScreen(dock)
         let target = PanelGeometry.folderPopupTargetFrame(
             anchorVisibleRect: popupAnchorVisibleRect, size: size, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
         lastPopupTargetFrame = target
@@ -650,7 +783,7 @@ final class PanelCoordinator: NSObject {
             panel.setFrame(target, display: true)
             return
         }
-        let screen = Self.screenGeometry(panelCurrentScreen(panel: dock))
+        let screen = Self.screenGeometry(effectiveDockScreen(dock))
 
         let ease = UnitBezierEase(timingFunction)
         let (w0, w1) = (start.width, target.width)
@@ -829,7 +962,7 @@ final class PanelCoordinator: NSObject {
                 // 而过冲向下（owner 2026-06-21"先向下扩展再上移"的真因）。
                 let inset = d.insetBy(dx: Self.shadowPadding, dy: Self.shadowPadding)
                 // 投放区向上延伸到与抽屉一致的顶部上限：避让菜单栏/刘海，但不避让原生 Dock。
-                let top = Self.screenGeometry(panelCurrentScreen(panel: drawer)).topUsableY
+                let top = Self.screenGeometry(effectiveDockScreen(drawer)).topUsableY
                 zones.append(CGRect(x: inset.minX, y: inset.minY, width: inset.width, height: max(inset.height, top - inset.minY)))
             }
             return zones
@@ -844,7 +977,7 @@ final class PanelCoordinator: NSObject {
     }
 
     private func carrierTargetScreen() -> NSScreen {
-        if let dock = dockPanel { return panelCurrentScreen(panel: dock) }
+        if let dock = dockPanel { return effectiveDockScreen(dock) }
         return NSScreen.main ?? NSScreen.screens[0]
     }
 
@@ -1137,6 +1270,7 @@ final class PanelCoordinator: NSObject {
     // frame（纯函数,互不读 live frame），三面板在**同一个动画组**里各自滑向目标。
 
     private static let layoutAnimationDuration: TimeInterval = DrawerAnimation.duration
+    private static let demoFadeDuration: TimeInterval = 0.22
 
     /// 任务条目标 frame（按内容宽度、居中、限宽）。
     private func dockTargetFrame(contentWidth: CGFloat, on screen: NSScreen) -> NSRect {
@@ -1191,7 +1325,7 @@ final class PanelCoordinator: NSObject {
         // 跨面板转正进行中 → 任务条宽度钳在拖动前的值（窗口卡溢出/留空而非改变面板宽度，owner 2026-06-22）；
         // 松手/还原解钳后，下一次 relayout 用真实测量值把任务条变到最终长度。
         let contentWidth = frozenDockContentWidth ?? measured
-        layoutPanels(contentWidth: contentWidth, on: panelCurrentScreen(panel: panel), animated: animated)
+        layoutPanels(contentWidth: contentWidth, on: effectiveDockScreen(panel), animated: animated)
     }
 
     /// 三面板同一个动画组提交,共用一条时间轴（Codex 二审 P2：避免各跑各的时间轴抖动）。
@@ -1207,6 +1341,7 @@ final class PanelCoordinator: NSObject {
     @objc private func screenParametersChanged() {
         dragController?.cancelDrag()   // 切屏/分辨率变 → 取消进行中的跨面板拖动，免得载体留在旧屏坐标
         cancelHoverSwitch()
+        demoAbortSlideSession()
         closeFolderPopup()             // 屏幕参数变了,旧锚点坐标作废
         guard dockPanel != nil else { return }
         relayout(animated: false)      // 切屏瞬时,不滑
@@ -1243,7 +1378,7 @@ final class PanelCoordinator: NSObject {
 
     private func checkFullscreenViaCGSync() -> Bool {
         guard let panel = dockPanel else { return false }
-        let screen = panelCurrentScreen(panel: panel)
+        let screen = effectiveDockScreen(panel)
         let screenCGFrame = Self.toCGRect(screen)
         let ourPID = pid_t(ProcessInfo.processInfo.processIdentifier)
 
@@ -1272,7 +1407,7 @@ final class PanelCoordinator: NSObject {
     private func triggerAsyncFullscreenCheck(pid explicitPID: pid_t? = nil) {
         guard let panel = dockPanel else { return }
         // Convert to CG coords on main thread; AX kAXPositionAttribute also uses CG (top-left origin)
-        let screenCGFrame = Self.toCGRect(panelCurrentScreen(panel: panel))
+        let screenCGFrame = Self.toCGRect(effectiveDockScreen(panel))
         // NSWorkspace.frontmostApplication 是滞后缓存，可见性决策不可依赖（AGENTS 守则）——
         // 无显式 PID 时改用新鲜的 isActive 扫描
         let frontPID = explicitPID
@@ -1290,6 +1425,7 @@ final class PanelCoordinator: NSObject {
 
     private func applyFullscreenVisibility(_ isFullscreen: Bool) {
         if isFullscreen {
+            demoAbortSlideSession()
             closeDrawer()
             closeFolderPopup()
             visibilityState.setFullscreen(true)
@@ -1311,6 +1447,10 @@ final class PanelCoordinator: NSObject {
         return NSScreen.screens.first(where: { $0.frame.contains(visualCenter) })
             ?? NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
             ?? NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    private func effectiveDockScreen(_ panel: NSPanel) -> NSScreen {
+        panelCurrentScreen(panel: panel)
     }
 
     // AppKit frame (bottom-left origin) → CG/Quartz frame (top-left origin of primary screen)
@@ -1514,6 +1654,8 @@ final class PanelCoordinator: NSObject {
     }
 
     private func reconcilePanelVisibility() {
+        // slide demo 独占栏可见性：不让常规边缘自动隐藏/全屏路径去 order 面板，避免和 demo 下滑/上滑打架。
+        if demoSlideModeActive { return }
         edgeIdleHideTimer?.invalidate()
         edgeIdleHideTimer = nil
 
@@ -1542,6 +1684,11 @@ final class PanelCoordinator: NSObject {
     }
 
     private func updateEdgeIdleTimerFromMouse() {
+        guard !demoSlideModeActive, !demoSlideSessionActive else {
+            edgeIdleHideTimer?.invalidate()
+            edgeIdleHideTimer = nil
+            return
+        }
         guard EdgeAutoHideRuntimeRules.canArmIdleHide(state: visibilityState, delay: settingsStore.edgeAutoHideDelay) else { return }
 
         if isMouseOutsideInteractivePanels() {
@@ -1565,6 +1712,7 @@ final class PanelCoordinator: NSObject {
 
     private func edgeIdleHideTimerFired() {
         edgeIdleHideTimer = nil
+        guard !demoSlideModeActive, !demoSlideSessionActive else { return }
         guard EdgeAutoHideRuntimeRules.canArmIdleHide(state: visibilityState, delay: settingsStore.edgeAutoHideDelay),
               isMouseOutsideInteractivePanels() else { return }
         visibilityState.setEdgeAutoHidden(true)
@@ -1572,6 +1720,7 @@ final class PanelCoordinator: NSObject {
     }
 
     private func armEdgeWakeIfNeeded(on screen: NSScreen, requiresHotZone: Bool = true) {
+        guard !demoSlideSessionActive else { return }
         guard EdgeAutoHideRuntimeRules.canArmWake(state: visibilityState, delay: settingsStore.edgeAutoHideDelay) else { return }
         if edgeWakeTargetScreen == screen,
            edgeWakeTimer != nil,
@@ -1588,6 +1737,11 @@ final class PanelCoordinator: NSObject {
 
     private func edgeWakeTimerFired() {
         edgeWakeTimer = nil
+        guard !demoSlideSessionActive else {
+            edgeWakeTargetScreen = nil
+            edgeWakeRequiresHotZone = true
+            return
+        }
         guard let screen = edgeWakeTargetScreen,
               edgeWakeShouldStillFire(on: screen),
               EdgeAutoHideRuntimeRules.canArmWake(state: visibilityState, delay: settingsStore.edgeAutoHideDelay) else {
@@ -1597,7 +1751,7 @@ final class PanelCoordinator: NSObject {
         }
         edgeWakeTargetScreen = nil
         edgeWakeRequiresHotZone = true
-        if let panel = dockPanel, panelCurrentScreen(panel: panel) != screen {
+        if let panel = dockPanel, effectiveDockScreen(panel) != screen {
             layoutPanels(contentWidth: lastDesiredWidth, on: screen, animated: false)
         }
         visibilityState.setEdgeAutoHidden(false)

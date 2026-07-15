@@ -158,6 +158,10 @@
 		A00000000000000000009A01 /* WindowZoomAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowZoomAvoidance.swift */; };
 		A00000000000000000009A02 /* WindowZoomAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowZoomAvoidance.swift */; };
 		A00000000000000000009A11 /* WindowZoomAvoidanceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A10 /* WindowZoomAvoidanceController.swift */; };
+		A00000000000000000009D21 /* WindowZoomDemoController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D20 /* WindowZoomDemoController.swift */; };
+		A00000000000000000009D31 /* WindowSlideAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D30 /* WindowSlideAvoidance.swift */; };
+		A00000000000000000009D32 /* WindowSlideAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D30 /* WindowSlideAvoidance.swift */; };
+		A00000000000000000009D41 /* WindowSlideAvoidanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D40 /* WindowSlideAvoidanceTests.swift */; };
 		A00000000000000000009A21 /* WindowZoomAvoidanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A20 /* WindowZoomAvoidanceTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -186,6 +190,9 @@
 		A00000000000000000009730 /* DragControllerConversionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragControllerConversionTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A00 /* WindowZoomAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomAvoidance.swift; sourceTree = "<group>"; };
 		A00000000000000000009A10 /* WindowZoomAvoidanceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomAvoidanceController.swift; sourceTree = "<group>"; };
+		A00000000000000000009D20 /* WindowZoomDemoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomDemoController.swift; sourceTree = "<group>"; };
+		A00000000000000000009D30 /* WindowSlideAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSlideAvoidance.swift; sourceTree = "<group>"; };
+		A00000000000000000009D40 /* WindowSlideAvoidanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSlideAvoidanceTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A20 /* WindowZoomAvoidanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomAvoidanceTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000066 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A0000000000000000000006C /* PanelCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelCoordinator.swift; sourceTree = "<group>"; };
@@ -361,6 +368,7 @@
 				A00000000000000000009030 /* PanelVisibilityState.swift */,
 				A00000000000000000009080 /* PanelGeometry.swift */,
 				A00000000000000000009A10 /* WindowZoomAvoidanceController.swift */,
+				A00000000000000000009D20 /* WindowZoomDemoController.swift */,
 				A000000000000000000019B2 /* BadgeStore.swift */,
 				A00000000000000000009200 /* PinnedFolderStore.swift */,
 				A00000000000000000009230 /* PinnedFolderCoverStore.swift */,
@@ -437,6 +445,7 @@
 				A00000000000000000009400 /* LauncherMenuPlan.swift */,
 				A00000000000000000009700 /* DragConversionPlan.swift */,
 				A00000000000000000009A00 /* WindowZoomAvoidance.swift */,
+				A00000000000000000009D30 /* WindowSlideAvoidance.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
 			);
 			path = Support;
@@ -659,6 +668,7 @@
 				A00000000000000000009720 /* MessagingAppStoreTests.swift */,
 				A00000000000000000009730 /* DragControllerConversionTests.swift */,
 				A00000000000000000009A20 /* WindowZoomAvoidanceTests.swift */,
+				A00000000000000000009D40 /* WindowSlideAvoidanceTests.swift */,
 			);
 			path = Unit;
 			sourceTree = "<group>";
@@ -804,6 +814,8 @@
 					A00000000000000000009031 /* PanelVisibilityState.swift in Sources */,
 					A00000000000000000009081 /* PanelGeometry.swift in Sources */,
 					A00000000000000000009A11 /* WindowZoomAvoidanceController.swift in Sources */,
+					A00000000000000000009D21 /* WindowZoomDemoController.swift in Sources */,
+					A00000000000000000009D31 /* WindowSlideAvoidance.swift in Sources */,
 					A00000000000000000009A01 /* WindowZoomAvoidance.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
 					A000000000000000000019A1 /* LauncherChip.swift in Sources */,
@@ -937,6 +949,8 @@
 				A000000000000000000090B1 /* FullscreenClassificationTests.swift in Sources */,
 				A00000000000000000009A02 /* WindowZoomAvoidance.swift in Sources */,
 				A00000000000000000009A21 /* WindowZoomAvoidanceTests.swift in Sources */,
+				A00000000000000000009D32 /* WindowSlideAvoidance.swift in Sources */,
+				A00000000000000000009D41 /* WindowSlideAvoidanceTests.swift in Sources */,
 				A00000000000000000001020 /* Identifiers.swift in Sources */,
 				A00000000000000000001021 /* WindowModels.swift in Sources */,
 					A00000000000000000001022 /* SystemBoundaryModels.swift in Sources */,
