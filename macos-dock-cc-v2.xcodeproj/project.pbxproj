@@ -158,6 +158,12 @@
 		A00000000000000000009721 /* MessagingAppStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009720 /* MessagingAppStoreTests.swift */; };
 		A00000000000000000009731 /* DragControllerConversionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009730 /* DragControllerConversionTests.swift */; };
 		A00000000000000000009612 /* TabFoldDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009601 /* TabFoldDecisionTests.swift */; };
+		A00000000000000000009E10 /* WindowInventoryAnomalyLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */; };
+		A00000000000000000009E11 /* WindowInventoryAnomalyLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */; };
+		A00000000000000000009E12 /* WindowInventoryAnomalyLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */; };
+		A00000000000000000009E13 /* AXWindowReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000054 /* AXWindowReader.swift */; };
+		A00000000000000000009E14 /* AXWindowReaderResultTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E02 /* AXWindowReaderResultTests.swift */; };
+		A00000000000000000009E15 /* AXWindowMatchPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000064 /* AXWindowMatchPolicy.swift */; };
 		A00000000000000000009810 /* CGWindowSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009800 /* CGWindowSnapshot.swift */; };
 		A00000000000000000009811 /* CGWindowSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009800 /* CGWindowSnapshot.swift */; };
 		A00000000000000000009812 /* CGWindowSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009801 /* CGWindowSnapshotTests.swift */; };
@@ -178,6 +184,9 @@
 		A00000000000000000000069 /* AppTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTracker.swift; sourceTree = "<group>"; };
 		A00000000000000000009600 /* TabFoldDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabFoldDecision.swift; sourceTree = "<group>"; };
 		A00000000000000000009601 /* TabFoldDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabFoldDecisionTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowInventoryAnomalyLog.swift; sourceTree = "<group>"; };
+		A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowInventoryAnomalyLogTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009E02 /* AXWindowReaderResultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXWindowReaderResultTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009800 /* CGWindowSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGWindowSnapshot.swift; sourceTree = "<group>"; };
 		A00000000000000000009801 /* CGWindowSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGWindowSnapshotTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009700 /* DragConversionPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragConversionPlan.swift; sourceTree = "<group>"; };
@@ -536,6 +545,7 @@
 				A00000000000000000000069 /* AppTracker.swift */,
 				A00000000000000000009800 /* CGWindowSnapshot.swift */,
 				A00000000000000000009600 /* TabFoldDecision.swift */,
+				A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */,
 			);
 			path = AppTracking;
 			sourceTree = "<group>";
@@ -659,6 +669,8 @@
 				A00000000000000000009540 /* AppMembershipProjectionTests.swift */,
 				A00000000000000000009550 /* AppMembershipControllerTests.swift */,
 				A00000000000000000009601 /* TabFoldDecisionTests.swift */,
+				A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */,
+				A00000000000000000009E02 /* AXWindowReaderResultTests.swift */,
 				A00000000000000000009801 /* CGWindowSnapshotTests.swift */,
 				A00000000000000000009710 /* DragConversionPlanTests.swift */,
 				A00000000000000000009720 /* MessagingAppStoreTests.swift */,
@@ -867,6 +879,7 @@
 				A00000000000000000001043 /* AppTracker.swift in Sources */,
 				A00000000000000000009810 /* CGWindowSnapshot.swift in Sources */,
 				A00000000000000000009610 /* TabFoldDecision.swift in Sources */,
+				A00000000000000000009E10 /* WindowInventoryAnomalyLog.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -959,6 +972,11 @@
 					A00000000000000000001105 /* FinderAppleEventMatcherTests.swift in Sources */,
 					A00000000000000000009611 /* TabFoldDecision.swift in Sources */,
 					A00000000000000000009612 /* TabFoldDecisionTests.swift in Sources */,
+					A00000000000000000009E11 /* WindowInventoryAnomalyLog.swift in Sources */,
+					A00000000000000000009E12 /* WindowInventoryAnomalyLogTests.swift in Sources */,
+					A00000000000000000009E13 /* AXWindowReader.swift in Sources */,
+					A00000000000000000009E14 /* AXWindowReaderResultTests.swift in Sources */,
+					A00000000000000000009E15 /* AXWindowMatchPolicy.swift in Sources */,
 					A00000000000000000009811 /* CGWindowSnapshot.swift in Sources */,
 					A00000000000000000009812 /* CGWindowSnapshotTests.swift in Sources */,
 					A00000000000000000009702 /* DragConversionPlan.swift in Sources */,

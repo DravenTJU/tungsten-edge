@@ -104,6 +104,36 @@ enum TabFoldDecision {
 /// - 本轮 AX 读到了该 app 的窗口：app 挂死/AX 读失败时按兵不动。
 /// - 同 pid 至少一个座位当前在 AX 里：孤座位永不自愈（防误删 app 仅有的卡）。
 enum PhantomSeatDecision {
+    enum HoldReason: String, Codable, Hashable {
+        case everSeenVisible
+        case absenceGraceNotElapsed
+        case cgMissing
+        case noEligibleWindows
+        case noAXPresentSibling
+    }
+
+    struct Evaluation: Equatable {
+        let shouldRelease: Bool
+        let holdReasons: Set<HoldReason>
+    }
+
+    static func evaluate(
+        everSeenVisible: Bool,
+        axAbsentFor: TimeInterval,
+        threshold: TimeInterval,
+        cgStillPresent: Bool,
+        axReadSawWindows: Bool,
+        axPresentSiblingCount: Int
+    ) -> Evaluation {
+        var reasons: Set<HoldReason> = []
+        if everSeenVisible { reasons.insert(.everSeenVisible) }
+        if axAbsentFor < threshold { reasons.insert(.absenceGraceNotElapsed) }
+        if !cgStillPresent { reasons.insert(.cgMissing) }
+        if !axReadSawWindows { reasons.insert(.noEligibleWindows) }
+        if axPresentSiblingCount < 1 { reasons.insert(.noAXPresentSibling) }
+        return Evaluation(shouldRelease: reasons.isEmpty, holdReasons: reasons)
+    }
+
     static func shouldRelease(
         everSeenVisible: Bool,
         axAbsentFor: TimeInterval,
@@ -112,10 +142,13 @@ enum PhantomSeatDecision {
         axReadSawWindows: Bool,
         axPresentSiblingCount: Int
     ) -> Bool {
-        !everSeenVisible
-            && axAbsentFor >= threshold
-            && cgStillPresent
-            && axReadSawWindows
-            && axPresentSiblingCount >= 1
+        evaluate(
+            everSeenVisible: everSeenVisible,
+            axAbsentFor: axAbsentFor,
+            threshold: threshold,
+            cgStillPresent: cgStillPresent,
+            axReadSawWindows: axReadSawWindows,
+            axPresentSiblingCount: axPresentSiblingCount
+        ).shouldRelease
     }
 }

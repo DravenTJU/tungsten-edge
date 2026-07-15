@@ -36,6 +36,9 @@ struct WindowEntry {
     /// min/隐藏保留分支里的 AX 连续缺席起始时刻（与 absentSince 分开，不碰 closedReapGrace 语义）。
     /// 只喂给幽灵座位自愈判定（PhantomSeatDecision，五门槛），重新在 AX 出现随 make() 自然清零。
     var minAbsentSince: Date? = nil
+    /// 仅用于诊断：与 `minAbsentSince` 同时置位/清除，标识一次连续 AX 缺席 episode。
+    /// 不参与座位签名、折叠或自愈判断。
+    var absenceEpisodeID: UUID? = nil
     /// 这个座位是否曾以 min=false 出现在 AX 里（座位延续时继承）。真窗口几乎必然可见过；
     /// 幽灵座位（折叠失手时从 min=true 爆发候选裂出来的）永远是 false——自愈判定的头号门槛，
     /// 同时保护 Safari 式「一最小化就整个离开 AX」的真窗口不被自愈误删。
@@ -75,12 +78,32 @@ final class AppTracker: ObservableObject {
     /// 物理座位 token 的全局自增序号。保证每个新座位拿到唯一 token（绝不从会复用的 cgID 派生）。
     private var nextSeatSerial: Int = 0
 
+    private struct ShadowPoolDiagnosticState {
+        var initialized = false
+        var updateWasSkipped = false
+        var lastSuccessfulRoundID: UInt64?
+    }
+
+    private var nextInventoryRoundID: UInt64 = 0
+    private var reconcileOrdinalsByPID: [pid_t: UInt64] = [:]
+    private var lastReconcileAtByPID: [pid_t: Date] = [:]
+    private var shadowPoolDiagnosticsByPID: [pid_t: ShadowPoolDiagnosticState] = [:]
+    private var heldLogDeduplicator = InventoryPhantomHeldDeduplicator()
+
     private let reader = AXWindowReader()
     private let eligibilityPolicy = DockWindowEligibilityPolicy()
     private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "app-tracker")
+    private let inventoryLog = WindowInventoryAnomalyLog()
 
     func start() {
         guard workspaceObservers.isEmpty else { return }
+        let info = Bundle.main.infoDictionary
+        inventoryLog.record(.sessionStart(InventorySessionStartPayload(
+            version: info?["CFBundleShortVersionString"] as? String,
+            build: info?["CFBundleVersion"] as? String,
+            processID: ProcessInfo.processInfo.processIdentifier,
+            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString
+        )))
         // 通知先订阅再 seed：seed 期间的启动/退出事件不再漏（addApp 有 apps[pid] == nil guard，重复准入安全）。
         subscribeWorkspaceNotifications()
         seedRunningApps()
@@ -109,7 +132,12 @@ final class AppTracker: ObservableObject {
         apps.removeAll()
         appOrder.removeAll()
         destroyedCGIDs.removeAll()
+        reconcileOrdinalsByPID.removeAll()
+        lastReconcileAtByPID.removeAll()
+        shadowPoolDiagnosticsByPID.removeAll()
+        heldLogDeduplicator.removeAll()
         snapshot = .empty
+        inventoryLog.flush()
     }
 
     // MARK: - Tombstone
@@ -161,7 +189,9 @@ final class AppTracker: ObservableObject {
         pid: pid_t,
         cgSnapshot: AppTrackerCGWindowSnapshot,
         now: Date,
-        preloadedEligible: [AXWindowSnapshot]? = nil
+        source: InventoryReconcileSource,
+        preloadedEligible: [AXWindowSnapshot]? = nil,
+        preloadedReadOutcome: InventoryAXReadOutcome? = nil
     ) -> Bool {
         guard var app = apps[pid] else { return false }
         let cgIDs = cgSnapshot.allWindowIDs
@@ -170,13 +200,31 @@ final class AppTracker: ObservableObject {
         // 影子标签池按【上一轮】的快照判定：最小化爆发瞬间所有标签涌进 AX，本轮现算池子会是空的。
         let shadowPool = app.shadowTabCgIDs
         let eligible: [AXWindowSnapshot]
+        let axReadOutcome: InventoryAXReadOutcome
         if let preloaded = preloadedEligible {
             eligible = preloaded
+            axReadOutcome = preloadedReadOutcome ?? .success(count: preloaded.count)
         } else {
-            eligible = reader.windows(forPID: pid).filter {
-                isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
+            switch reader.windowReadResult(forPID: pid) {
+            case .success(let windows):
+                axReadOutcome = .success(count: windows.count)
+                eligible = windows.filter {
+                    isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
+                }
+            case .unread(let error):
+                axReadOutcome = .unread(errorCode: error.rawValue)
+                eligible = []
             }
         }
+        let reconcileContext = inventoryLog.isEnabled
+            ? inventoryReconcileContext(
+                pid: pid,
+                source: source,
+                now: now,
+                usedPreloadedAX: preloadedEligible != nil,
+                axReadOutcome: axReadOutcome
+            )
+            : nil
         func fk(_ b: CGRect?) -> String? { frameKey(pid, b) }
 
         var eligibleByCgID: [CGWindowID: AXWindowSnapshot] = [:]
@@ -204,7 +252,8 @@ final class AppTracker: ObservableObject {
 
         // 当前 activeCgID 仍在 AX 里的座位数——幽灵自愈的「兄弟座位在场」门槛（幽灵自己缺席，天然不计入）。
         let axPresentSeatCount = app.windowOrder.filter { eligibleByCgID[$0] != nil }.count
-        var healedCgIDs: [CGWindowID] = []
+        var healedSeats: [(cgID: CGWindowID, token: String, episodeID: UUID)] = []
+        var tearOutCgIDs: Set<CGWindowID> = []
 
         // Pass A：每个老座位尝试延续
         for cgID in app.windowOrder {
@@ -212,6 +261,13 @@ final class AppTracker: ObservableObject {
             let X = seat.cgWindowID
             let seatKey = fk(seat.bounds)
             if let snapX = eligibleByCgID[X], !usedEligible.contains(X) {
+                if inventoryLog.isEnabled, let episodeID = seat.absenceEpisodeID {
+                    heldLogDeduplicator.clear(pid: pid, seatToken: seat.token, episodeID: episodeID)
+                }
+                InventoryAbsenceEpisode.clear(
+                    absentSince: &seat.minAbsentSince,
+                    episodeID: &seat.absenceEpisodeID
+                )
                 // X 仍可见。检查「拖当前标签出去」：X 移到了新 frame，旧 frame 上来了别的合格窗口 Y
                 if let seatKey, fk(snapX.bounds) != seatKey,
                    let Y = eligible.first(where: { s in
@@ -222,6 +278,7 @@ final class AppTracker: ObservableObject {
                     place(make(token: seat.token, Y, history: seat.formerCgIDs,
                                wasEverVisible: seat.everSeenVisible))
                     usedEligible.insert(yc)
+                    tearOutCgIDs.insert(X)
                     // X 不标 used → 落到 Pass B 成新座位（被赶出去的当前标签）
                 } else {
                     // 普通：跟着 X（frame 可移动）
@@ -236,6 +293,13 @@ final class AppTracker: ObservableObject {
                        guard let c = s.cgWindowID, !usedEligible.contains(c), app.windowsByID[c] == nil else { return false }
                        return fk(s.bounds) == seatKey
                    }), let yc = Y.cgWindowID {
+                    if inventoryLog.isEnabled, let episodeID = seat.absenceEpisodeID {
+                        heldLogDeduplicator.clear(pid: pid, seatToken: seat.token, episodeID: episodeID)
+                    }
+                    InventoryAbsenceEpisode.clear(
+                        absentSince: &seat.minAbsentSince,
+                        episodeID: &seat.absenceEpisodeID
+                    )
                     // 顶替，token 不变 → 卡不跳。X 是切走的后台标签 → 记入历史（关标签有
                     // tombstone / 已离开 CG，make 的交集会把真关掉的挡在门外）
                     var history = seat.formerCgIDs
@@ -248,20 +312,57 @@ final class AppTracker: ObservableObject {
                     // 信号 = 离开 AX 前最后一次是不是 min(最小化会先经 Miniaturized 通知标 min；关窗不会)。
                     seat.formerCgIDs.formIntersection(cgIDs)   // 历史防复用：出 CG 即出列
                     if seat.isMinimized || app.isHidden {
-                        if seat.minAbsentSince == nil { seat.minAbsentSince = now }
+                        InventoryAbsenceEpisode.beginIfNeeded(
+                            absentSince: &seat.minAbsentSince,
+                            episodeID: &seat.absenceEpisodeID,
+                            now: now
+                        )
+                        let absentFor = now.timeIntervalSince(seat.minAbsentSince ?? now)
+                        let evaluation = PhantomSeatDecision.evaluate(
+                            everSeenVisible: seat.everSeenVisible,
+                            axAbsentFor: absentFor,
+                            threshold: Self.phantomReapGrace,
+                            cgStillPresent: true,
+                            axReadSawWindows: !eligible.isEmpty,
+                            axPresentSiblingCount: axPresentSeatCount
+                        )
                         // 幽灵座位自愈：从未可见过 + AX 连续缺席够久 + app 没挂死 + 有 AX 在场
                         // 兄弟座位 → 判定为折叠失手裂出来的幽灵，释放（不 place）。真最小化/隐藏
                         // 的窗口过不了 everSeenVisible 或兄弟门槛，照旧无限期保座位。
-                        if PhantomSeatDecision.shouldRelease(
-                            everSeenVisible: seat.everSeenVisible,
-                            axAbsentFor: now.timeIntervalSince(seat.minAbsentSince ?? now),
-                            threshold: Self.phantomReapGrace,
-                            cgStillPresent: true,   // 本分支前提就是 cgIDs.contains(X)
-                            axReadSawWindows: !eligible.isEmpty,
-                            axPresentSiblingCount: axPresentSeatCount
-                        ) {
-                            healedCgIDs.append(X)   // Pass B 之后归档：唯一在场座位则记入其历史
+                        if evaluation.shouldRelease, let episodeID = seat.absenceEpisodeID {
+                            healedSeats.append((X, seat.token, episodeID))
+                            if inventoryLog.isEnabled {
+                                heldLogDeduplicator.clear(
+                                    pid: pid, seatToken: seat.token, episodeID: episodeID
+                                )
+                            }
                         } else {
+                            if let reconcileContext,
+                               absentFor >= Self.phantomReapGrace,
+                               let episodeID = seat.absenceEpisodeID,
+                               heldLogDeduplicator.shouldRecord(
+                                   pid: pid,
+                                   seatToken: seat.token,
+                                   episodeID: episodeID,
+                                   reasons: evaluation.holdReasons
+                               ) {
+                                inventoryLog.record(.phantomHeld(InventoryPhantomHeldPayload(
+                                    context: reconcileContext,
+                                    pid: pid,
+                                    bundleID: app.bundleIdentifier,
+                                    seatToken: seat.token,
+                                    activeCgID: X,
+                                    absenceEpisodeID: episodeID,
+                                    holdReasons: evaluation.holdReasons.map(\.rawValue).sorted(),
+                                    appHidden: app.isHidden,
+                                    everSeenVisible: seat.everSeenVisible,
+                                    absentForMs: Int((absentFor * 1_000).rounded()),
+                                    thresholdMs: Int((Self.phantomReapGrace * 1_000).rounded()),
+                                    eligibleWindowCount: eligible.count,
+                                    axPresentSiblingCount: axPresentSeatCount,
+                                    bounds: seat.bounds.map(InventoryLogRect.init)
+                                )))
+                            }
                             seat.isFocused = false
                             seat.absentSince = nil
                             place(seat)                   // 真最小化(Safari 离开 AX)/ 应用隐藏 → 保座位
@@ -309,6 +410,7 @@ final class AppTracker: ObservableObject {
                 usedEligible.insert(c)   // 后台标签 → 折叠进已有座位,不另建
                 if let owner { newByID[owner]?.formerCgIDs.insert(c) }   // 成员学习
             case .newSeat:
+                let hadPlacedSeat = !placedForFold.isEmpty
                 if s.isMinimized, !placedForFold.isEmpty {
                     // 诊断（常驻）：min=true 候选在已有落座座位时四级判定全失败走到新建座位 =
                     // 潜在分裂点，dump 全部判定输入抓现场。placed 为空（seed 时本就最小化的
@@ -322,6 +424,70 @@ final class AppTracker: ObservableObject {
                 }
                 nextSeatSerial += 1
                 let entry = make(token: "tabgrp-\(pid)-s\(nextSeatSerial)", s)
+                if let reconcileContext {
+                    let isOnScreen = onScreenCGIDs.contains(c)
+                    let creationReason = InventorySeatCreationReason.classify(
+                        hasPlacedSeat: hadPlacedSeat,
+                        isTearOut: tearOutCgIDs.contains(c),
+                        isMinimized: s.isMinimized,
+                        isOnScreen: isOnScreen
+                    )
+                    let relations: [InventorySeatRelation] = newOrder.compactMap { id in
+                        guard let existing = newByID[id] else { return nil }
+                        let exactFrame = fk(existing.bounds) != nil && fk(existing.bounds) == fk(s.bounds)
+                        let nearbyFrame: Bool
+                        if let lhs = existing.bounds, let rhs = s.bounds {
+                            nearbyFrame = WindowFrameMatchPolicy.areClose(lhs, rhs)
+                        } else {
+                            nearbyFrame = false
+                        }
+                        let sizeMatches: Bool
+                        if let lhs = existing.bounds, let rhs = s.bounds {
+                            sizeMatches = abs(lhs.width - rhs.width) < 3 && abs(lhs.height - rhs.height) < 3
+                        } else {
+                            sizeMatches = false
+                        }
+                        return InventorySeatRelation(
+                            seatToken: existing.token,
+                            activeCgID: existing.cgWindowID,
+                            isMinimized: existing.isMinimized,
+                            everSeenVisible: existing.everSeenVisible,
+                            bounds: existing.bounds.map(InventoryLogRect.init),
+                            formerCgIDs: existing.formerCgIDs.sorted(),
+                            formerContainsCandidate: existing.formerCgIDs.contains(c),
+                            normalizedTitleMatches: WindowInventoryDiagnosticRelations.normalizedTitlesMatch(
+                                existing.title, s.title
+                            ),
+                            exactFrameMatches: exactFrame,
+                            nearbyFrameMatches: nearbyFrame,
+                            sizeMatches: sizeMatches
+                        )
+                    }
+                    inventoryLog.record(.seatCreated(InventorySeatCreatedPayload(
+                        context: reconcileContext,
+                        pid: pid,
+                        bundleID: app.bundleIdentifier,
+                        seatToken: entry.token,
+                        activeCgID: c,
+                        creationReason: creationReason,
+                        isMinimized: s.isMinimized,
+                        isOnScreen: isOnScreen,
+                        isFocused: s.isFocusedWindow,
+                        appHidden: app.isHidden,
+                        bounds: s.bounds.map(InventoryLogRect.init),
+                        candidateKnownShadow: shadowPool.contains(c),
+                        eligibleWindowCount: eligible.count,
+                        minimizedEligibleCount: eligible.filter(\.isMinimized).count,
+                        onScreenEligibleCount: eligible.compactMap(\.cgWindowID).filter {
+                            onScreenCGIDs.contains($0)
+                        }.count,
+                        cgWindowCount: cgPidIDs.count,
+                        eligibleCgIDs: eligible.compactMap(\.cgWindowID).sorted(),
+                        cgWindowIDs: cgPidIDs.sorted(),
+                        shadowPool: shadowPool.sorted(),
+                        existingSeats: relations
+                    )))
+                }
                 place(entry)
                 observers[pid]?.registerWindow(s.element, cgWindowID: c)
                 placedForFold.append(TabFoldDecision.PlacedSeat(activeCgID: entry.cgWindowID, bounds: entry.bounds,
@@ -331,13 +497,32 @@ final class AppTracker: ObservableObject {
 
         // 幽灵自愈归档：恰有唯一 AX 在场座位时把释放的 cgID 记入其历史（下次爆发按成员秒折），
         // 多座位歧义则不学习——释放的 id 反正会回到影子池，照样被池挡住。
-        if !healedCgIDs.isEmpty {
+        if !healedSeats.isEmpty {
             let axPresentPlaced = newOrder.filter { eligibleByCgID[$0] != nil }
-            for x in healedCgIDs {
-                if axPresentPlaced.count == 1, let owner = axPresentPlaced.first {
-                    newByID[owner]?.formerCgIDs.insert(x)
+            let ownerCandidates = axPresentPlaced.compactMap { cgID -> InventoryPhantomOwner? in
+                guard let token = newByID[cgID]?.token else { return nil }
+                return InventoryPhantomOwner(seatToken: token, activeCgID: cgID)
+            }
+            let owner = InventoryPhantomOwnerResolution.uniqueOwner(from: ownerCandidates)
+            for healed in healedSeats {
+                if let owner {
+                    newByID[owner.activeCgID]?.formerCgIDs.insert(healed.cgID)
                 }
-                print("[tabheal] 自愈 pid=\(pid) 释放幽灵座位 cg=\(x) 归入=\(axPresentPlaced.count == 1 ? "\(axPresentPlaced[0])" : "无(歧义)")")
+                if let reconcileContext {
+                    inventoryLog.record(.phantomHealed(InventoryPhantomHealedPayload(
+                        context: reconcileContext,
+                        pid: pid,
+                        bundleID: app.bundleIdentifier,
+                        releasedSeatToken: healed.token,
+                        releasedActiveCgID: healed.cgID,
+                        absenceEpisodeID: healed.episodeID,
+                        ownerSeatToken: owner?.seatToken,
+                        ownerActiveCgID: owner?.activeCgID,
+                        ownerCandidateCount: ownerCandidates.count
+                    )))
+                }
+                let ownerDescription = owner.map { String($0.activeCgID) } ?? "无(歧义)"
+                print("[tabheal] 自愈 pid=\(pid) 释放幽灵座位 cg=\(healed.cgID) 归入=\(ownerDescription)")
             }
         }
 
@@ -346,18 +531,100 @@ final class AppTracker: ObservableObject {
         // 现身 AX（活跃标签/真可见窗口/拽出标签）→ 出池；在 CG 却不在 AX 且不是在座 activeCgID
         // （min 保留的 Safari 式真窗口、grace 暂留座位不入池，防座位丢失后被误折叠）→ 入池。
         // min=true 现身 AX 的不出池——那正是最小化爆发时刻，池子要撑住整个最小化期。
-        if !eligible.isEmpty || cgPidIDs.isEmpty {
+        let shouldUpdateShadowPool = !eligible.isEmpty || cgPidIDs.isEmpty
+        if shouldUpdateShadowPool {
             var pool = app.shadowTabCgIDs
             pool.formIntersection(cgPidIDs)
             for s in eligible { if let c = s.cgWindowID, !s.isMinimized { pool.remove(c) } }
             pool.formUnion(cgPidIDs.subtracting(eligibleByCgID.keys).subtracting(newOrder))
             app.shadowTabCgIDs = pool
+
+            if let reconcileContext {
+                var diagnostic = shadowPoolDiagnosticsByPID[pid] ?? ShadowPoolDiagnosticState()
+                func recordShadowPool(_ status: InventoryShadowPoolStatus) {
+                    inventoryLog.record(.shadowPoolState(InventoryShadowPoolPayload(
+                        context: reconcileContext,
+                        pid: pid,
+                        bundleID: app.bundleIdentifier,
+                        status: status,
+                        previousSuccessfulRoundID: diagnostic.lastSuccessfulRoundID,
+                        before: shadowPool.sorted(),
+                        after: pool.sorted(),
+                        added: pool.subtracting(shadowPool).sorted(),
+                        removed: shadowPool.subtracting(pool).sorted(),
+                        eligibleWindowCount: eligible.count,
+                        cgWindowCount: cgPidIDs.count
+                    )))
+                }
+                if !diagnostic.initialized {
+                    recordShadowPool(.initialized)
+                }
+                if diagnostic.updateWasSkipped {
+                    recordShadowPool(.resumed)
+                } else if diagnostic.initialized, pool != shadowPool {
+                    recordShadowPool(.changed)
+                }
+                diagnostic.initialized = true
+                diagnostic.updateWasSkipped = false
+                diagnostic.lastSuccessfulRoundID = reconcileContext.roundID
+                shadowPoolDiagnosticsByPID[pid] = diagnostic
+            }
+        } else if let reconcileContext {
+            var diagnostic = shadowPoolDiagnosticsByPID[pid] ?? ShadowPoolDiagnosticState()
+            if !diagnostic.updateWasSkipped {
+                inventoryLog.record(.shadowPoolState(InventoryShadowPoolPayload(
+                    context: reconcileContext,
+                    pid: pid,
+                    bundleID: app.bundleIdentifier,
+                    status: .updateSkipped,
+                    previousSuccessfulRoundID: diagnostic.lastSuccessfulRoundID,
+                    before: shadowPool.sorted(),
+                    after: shadowPool.sorted(),
+                    added: [],
+                    removed: [],
+                    eligibleWindowCount: eligible.count,
+                    cgWindowCount: cgPidIDs.count
+                )))
+            }
+            diagnostic.updateWasSkipped = true
+            shadowPoolDiagnosticsByPID[pid] = diagnostic
         }
 
         app.windowOrder = newOrder
         app.windowsByID = newByID
         apps[pid] = app
         return seatSignature(app) != before
+    }
+
+    private func inventoryReconcileContext(
+        pid: pid_t,
+        source: InventoryReconcileSource,
+        now: Date,
+        usedPreloadedAX: Bool,
+        axReadOutcome: InventoryAXReadOutcome
+    ) -> InventoryReconcileContext {
+        nextInventoryRoundID += 1
+        let ordinal = (reconcileOrdinalsByPID[pid] ?? 0) + 1
+        let gapMs = lastReconcileAtByPID[pid].map {
+            max(0, Int((now.timeIntervalSince($0) * 1_000).rounded()))
+        }
+        reconcileOrdinalsByPID[pid] = ordinal
+        lastReconcileAtByPID[pid] = now
+        return InventoryReconcileContext(
+            roundID: nextInventoryRoundID,
+            appReconcileOrdinal: ordinal,
+            source: source,
+            gapMs: gapMs,
+            usedPreloadedAX: usedPreloadedAX,
+            axReadOutcome: axReadOutcome
+        )
+    }
+
+    private func clearInventoryDiagnostics(pid: pid_t) {
+        reconcileOrdinalsByPID.removeValue(forKey: pid)
+        lastReconcileAtByPID.removeValue(forKey: pid)
+        shadowPoolDiagnosticsByPID.removeValue(forKey: pid)
+        heldLogDeduplicator.removeAll(pid: pid)
     }
 
     /// 座位集合的轻量指纹（顺序 + token + 标题 + 最小化/焦点），用来判断这次对账有没有实际变化。
@@ -406,25 +673,42 @@ final class AppTracker: ObservableObject {
             }
 
             let probedEligible: [AXWindowSnapshot]
+            let inventoryReadOutcome: InventoryAXReadOutcome
             switch result {
             case .success(let snaps):
                 probedEligible = snaps.filter { isEligible($0, bundleIdentifier: bid, activationPolicy: policy) }
-            case .unread:
+                inventoryReadOutcome = .success(count: snaps.count)
+            case .unread(let error):
                 probedEligible = []
+                inventoryReadOutcome = .unread(errorCode: error.rawValue)
                 unreadList.append(app.localizedName ?? bid ?? "\(pid)")
             }
 
             if FinderWindowRules.isFinder(bundleIdentifier: bid) {
                 // Finder 始终占坑：unread 就先空窗口占位（槽位常驻，通知/reconcile 随后补）。
                 addApp(app, enumerateImmediately: false)
-                reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), preloadedEligible: probedEligible)
+                reconcileSeats(
+                    pid: pid,
+                    cgSnapshot: cgSnapshot,
+                    now: Date(),
+                    source: .seed,
+                    preloadedEligible: probedEligible,
+                    preloadedReadOutcome: inventoryReadOutcome
+                )
                 admittedCount += 1
                 continue
             }
 
             if !probedEligible.isEmpty {
                 addApp(app, enumerateImmediately: false)
-                reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), preloadedEligible: probedEligible)
+                reconcileSeats(
+                    pid: pid,
+                    cgSnapshot: cgSnapshot,
+                    now: Date(),
+                    source: .seed,
+                    preloadedEligible: probedEligible,
+                    preloadedReadOutcome: inventoryReadOutcome
+                )
                 admittedCount += 1
             }
         }
@@ -498,6 +782,7 @@ final class AppTracker: ObservableObject {
                 observers.removeValue(forKey: stalePID)
                 apps.removeValue(forKey: stalePID)
                 appOrder.removeAll { $0 == stalePID }
+                clearInventoryDiagnostics(pid: stalePID)
             }
             addApp(app, enumerateImmediately: true)
             rebuildSnapshot()
@@ -519,6 +804,7 @@ final class AppTracker: ObservableObject {
     private func handleAppTerminated(pid: pid_t) {
         observers[pid]?.stop()
         observers.removeValue(forKey: pid)
+        clearInventoryDiagnostics(pid: pid)
 
         // Finder relaunches immediately via launchd. Keep the entry (no windows) so the chip
         // stays visible during the gap. handleAppLaunched will replace this stale entry with
@@ -547,7 +833,11 @@ final class AppTracker: ObservableObject {
 
     // MARK: - App Management
 
-    private func addApp(_ app: NSRunningApplication, enumerateImmediately: Bool) {
+    private func addApp(
+        _ app: NSRunningApplication,
+        enumerateImmediately: Bool,
+        source: InventoryReconcileSource = .initialEnumeration
+    ) {
         let pid = app.processIdentifier
         guard apps[pid] == nil else { return }
 
@@ -575,7 +865,7 @@ final class AppTracker: ObservableObject {
         }
 
         if enumerateImmediately {
-            enumerateWindows(for: pid)
+            enumerateWindows(for: pid, source: source)
         }
     }
 
@@ -586,7 +876,7 @@ final class AppTracker: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 guard let self else { return }
                 if self.apps[pid] != nil {
-                    self.enumerateWindows(for: pid)
+                    self.enumerateWindows(for: pid, source: .initialEnumeration)
                     return
                 }
                 guard NSRunningApplication(processIdentifier: pid)?.isTerminated == false else { return }
@@ -606,10 +896,10 @@ final class AppTracker: ObservableObject {
 
     // MARK: - Window Enumeration
 
-    private func enumerateWindows(for pid: pid_t) {
+    private func enumerateWindows(for pid: pid_t, source: InventoryReconcileSource) {
         guard apps[pid] != nil else { return }
         let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
-        if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date()) {
+        if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), source: source) {
             rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs)
         }
     }
@@ -650,7 +940,7 @@ final class AppTracker: ObservableObject {
     // MARK: - AX Event Handlers
 
     private func handleWindowCreated(pid: pid_t) {
-        enumerateWindows(for: pid)
+        enumerateWindows(for: pid, source: .windowCreated)
     }
 
     private func handleWindowDestroyed(pid: pid_t, cgWindowID: CGWindowID) {
@@ -660,7 +950,7 @@ final class AppTracker: ObservableObject {
         // 不直接删座位：若这是某标签窗口的当前标签被关、而同一物理窗口还有别的标签顶上，
         // reconcileSeats 会让座位原地换 activeCgID、保住 token（卡不闪不换身份）。整窗关掉则真删。
         let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
-        if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date()) {
+        if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), source: .windowDestroyed) {
             rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs)
         }
     }
@@ -677,11 +967,11 @@ final class AppTracker: ObservableObject {
     }
 
     private func handleFocusedWindowChanged(pid: pid_t) {
-        enumerateWindows(for: pid)
+        enumerateWindows(for: pid, source: .focusChanged)
     }
 
     private func handleTitleChanged(pid: pid_t, cgWindowID: CGWindowID) {
-        enumerateWindows(for: pid)
+        enumerateWindows(for: pid, source: .titleChanged)
     }
 
     // MARK: - Reconcile
@@ -712,7 +1002,7 @@ final class AppTracker: ObservableObject {
         // 单座位模型下：标签窗口切标签 = 座位 activeCgID 被顶替，reconcileSeats 即时收敛。
         // 前台 app 每 0.5s 跑一次,切标签/最小化/拽出都能秒级反映(不再依赖 AX 事件可靠性)。
         let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
-        var changed = reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date())
+        var changed = reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: Date(), source: .frontmostPoll)
         // on-screen 变了(切了标签)也强制刷新一次,兜住座位指纹没变但可见标签换了的边角。
         let onScreen = cgSnapshot.onScreenWindowIDs
         if onScreen != lastOnScreenCGIDs { changed = true }
@@ -744,6 +1034,7 @@ final class AppTracker: ObservableObject {
             observers.removeValue(forKey: pid)
             apps.removeValue(forKey: pid)
             appOrder.removeAll { $0 == pid }
+            clearInventoryDiagnostics(pid: pid)
             changed = true
         }
 
@@ -751,7 +1042,7 @@ final class AppTracker: ObservableObject {
         let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
 
         for pid in appOrder {
-            if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: now) { changed = true }
+            if reconcileSeats(pid: pid, cgSnapshot: cgSnapshot, now: now, source: .periodicReconcile) { changed = true }
         }
 
         if changed { rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs) }

@@ -231,4 +231,68 @@ final class PhantomSeatDecisionTests: XCTestCase {
         // 出了 CG 是真关闭，走既有删除路径，自愈不管
         XCTAssertFalse(release(cgStillPresent: false))
     }
+
+    func testEvaluationExportsAllFailedGates() {
+        let evaluation = PhantomSeatDecision.evaluate(
+            everSeenVisible: true,
+            axAbsentFor: 9.9,
+            threshold: 10,
+            cgStillPresent: false,
+            axReadSawWindows: false,
+            axPresentSiblingCount: 0
+        )
+
+        XCTAssertFalse(evaluation.shouldRelease)
+        XCTAssertEqual(evaluation.holdReasons, [
+            .everSeenVisible,
+            .absenceGraceNotElapsed,
+            .cgMissing,
+            .noEligibleWindows,
+            .noAXPresentSibling,
+        ])
+    }
+
+    func testEvaluationExportsEachFailedGate() {
+        let cases: [(PhantomSeatDecision.HoldReason, PhantomSeatDecision.Evaluation)] = [
+            (.everSeenVisible, PhantomSeatDecision.evaluate(
+                everSeenVisible: true, axAbsentFor: 10, threshold: 10,
+                cgStillPresent: true, axReadSawWindows: true, axPresentSiblingCount: 1
+            )),
+            (.absenceGraceNotElapsed, PhantomSeatDecision.evaluate(
+                everSeenVisible: false, axAbsentFor: 9.9, threshold: 10,
+                cgStillPresent: true, axReadSawWindows: true, axPresentSiblingCount: 1
+            )),
+            (.cgMissing, PhantomSeatDecision.evaluate(
+                everSeenVisible: false, axAbsentFor: 10, threshold: 10,
+                cgStillPresent: false, axReadSawWindows: true, axPresentSiblingCount: 1
+            )),
+            (.noEligibleWindows, PhantomSeatDecision.evaluate(
+                everSeenVisible: false, axAbsentFor: 10, threshold: 10,
+                cgStillPresent: true, axReadSawWindows: false, axPresentSiblingCount: 1
+            )),
+            (.noAXPresentSibling, PhantomSeatDecision.evaluate(
+                everSeenVisible: false, axAbsentFor: 10, threshold: 10,
+                cgStillPresent: true, axReadSawWindows: true, axPresentSiblingCount: 0
+            )),
+        ]
+
+        for (reason, evaluation) in cases {
+            XCTAssertFalse(evaluation.shouldRelease)
+            XCTAssertEqual(evaluation.holdReasons, [reason])
+        }
+    }
+
+    func testEvaluationHasNoHoldReasonsWhenAllGatesPass() {
+        let evaluation = PhantomSeatDecision.evaluate(
+            everSeenVisible: false,
+            axAbsentFor: 10,
+            threshold: 10,
+            cgStillPresent: true,
+            axReadSawWindows: true,
+            axPresentSiblingCount: 1
+        )
+
+        XCTAssertTrue(evaluation.shouldRelease)
+        XCTAssertTrue(evaluation.holdReasons.isEmpty)
+    }
 }

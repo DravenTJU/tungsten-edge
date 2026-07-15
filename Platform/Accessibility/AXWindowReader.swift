@@ -32,6 +32,13 @@ struct AXWindowHandle {
 enum AXWindowReadResult {
     case success([AXWindowSnapshot])
     case unread(AXError)
+
+    var windowsOrEmpty: [AXWindowSnapshot] {
+        switch self {
+        case .success(let windows): return windows
+        case .unread: return []
+        }
+    }
 }
 
 struct AXWindowReader {
@@ -40,12 +47,13 @@ struct AXWindowReader {
     }
 
     func windows(forPID pid: pid_t) -> [AXWindowSnapshot] {
-        switch readWindows(forPID: pid, messagingTimeout: nil) {
-        case let .success(windows):
-            return windows
-        case .unread:
-            return []
-        }
+        windowReadResult(forPID: pid).windowsOrEmpty
+    }
+
+    /// Same untimed/two-attempt read used by `windows(forPID:)`, with the read outcome preserved
+    /// for diagnostics. Callers must keep mapping `.unread` to the same empty array for behavior.
+    func windowReadResult(forPID pid: pid_t) -> AXWindowReadResult {
+        readWindows(forPID: pid, messagingTimeout: nil)
     }
 
     func inventoryWindows(for app: NSRunningApplication, messagingTimeout: TimeInterval) -> AXWindowReadResult {

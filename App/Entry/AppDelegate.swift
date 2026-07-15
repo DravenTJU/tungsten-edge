@@ -59,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        runtime.stop()
+    }
+
     private func requestAccessibilityPermission() {
         showPermissionWindow()
         // 系统原生提示框：把本应用注册进辅助功能列表，并在首次请求时提示用户打开设置。
