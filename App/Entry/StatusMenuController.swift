@@ -10,6 +10,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let store: AppSettingsStore
     private let launchAtLoginService: LaunchAtLoginServicing
     private let nativeDockPreferencesService: NativeDockPreferencesServicing
+    private let updateChecker: UpdateChecking
     // 闭包注入而非直接依赖 PermissionService：测试 target 编译本文件但不含 PermissionService.swift。
     private let isAccessibilityTrusted: () -> Bool
     private let onShowDebugConsole: () -> Void
@@ -25,12 +26,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let launchAtLoginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let openLoginItemsSettingsItem = NSMenuItem(title: "打开登录项设置…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
     private let addPinnedFolderItem = NSMenuItem(title: "添加固定文件夹…", action: #selector(addPinnedFolder), keyEquivalent: "")
+    private let checkForUpdatesItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
+    private var updateCheckState = UpdateCheckMenuState()
 
     init(store: AppSettingsStore,
          launchAtLoginService: LaunchAtLoginServicing,
          nativeDockPreferencesService: NativeDockPreferencesServicing,
+         updateChecker: UpdateChecking,
          isAccessibilityTrusted: @escaping () -> Bool,
          onShowDebugConsole: @escaping () -> Void,
          onExportDebugSnapshot: @escaping () -> Void,
@@ -39,6 +43,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.store = store
         self.launchAtLoginService = launchAtLoginService
         self.nativeDockPreferencesService = nativeDockPreferencesService
+        self.updateChecker = updateChecker
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.onShowDebugConsole = onShowDebugConsole
         self.onExportDebugSnapshot = onExportDebugSnapshot
@@ -50,6 +55,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         configureStatusItem()
         configureMenu()
         refreshCheckmarks()
+        refreshUpdateCheckItem()
         nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
     }
@@ -116,6 +122,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         #endif
 
         menu.addItem(.separator())
+        checkForUpdatesItem.target = self
+        menu.addItem(checkForUpdatesItem)
         if let versionTitle = Self.versionMenuTitle() {
             let versionItem = NSMenuItem(title: versionTitle, action: nil, keyEquivalent: "")
             versionItem.isEnabled = false
@@ -144,6 +152,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         permissionWarningItem.isHidden = granted
         permissionWarningSeparator.isHidden = granted
         refreshCheckmarks()
+        refreshUpdateCheckItem()
         nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
     }
@@ -158,6 +167,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         launchAtLoginItem.state = presentation.isChecked ? .on : .off
         launchAtLoginItem.isEnabled = presentation.isEnabled
         openLoginItemsSettingsItem.isHidden = !presentation.showsSettingsItem
+    }
+
+    private func refreshUpdateCheckItem() {
+        let presentation = updateCheckState.presentation
+        checkForUpdatesItem.title = presentation.title
+        checkForUpdatesItem.isEnabled = presentation.isEnabled
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -176,6 +191,63 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func addPinnedFolder() { onAddPinnedFolder() }
+
+    @objc private func checkForUpdates() {
+        guard updateCheckState.begin() else { return }
+        refreshUpdateCheckItem()
+        menu.cancelTrackingWithoutAnimation()
+
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let outcome = try await updateChecker.check(currentVersion: currentVersion)
+                finishUpdateCheck()
+                presentUpdateOutcome(outcome)
+            } catch {
+                finishUpdateCheck()
+                presentUpdateCheckFailure()
+            }
+        }
+    }
+
+    private func finishUpdateCheck() {
+        updateCheckState.finish()
+        refreshUpdateCheckItem()
+    }
+
+    private func presentUpdateOutcome(_ outcome: UpdateCheckOutcome) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+
+        switch outcome {
+        case .updateAvailable(let currentVersion, let latestVersion, let releaseURL):
+            alert.messageText = "发现新版本 \(latestVersion)"
+            alert.informativeText = "当前版本 \(currentVersion)。钨极目前仍需手动下载安装。"
+            alert.addButton(withTitle: "前往下载")
+            alert.addButton(withTitle: "稍后")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(releaseURL)
+            }
+        case .upToDate(let currentVersion, let latestVersion):
+            alert.messageText = "当前已是最新版本"
+            alert.informativeText = "当前版本 \(currentVersion)，GitHub 最新正式版为 \(latestVersion)。"
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+        }
+    }
+
+    private func presentUpdateCheckFailure() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "暂时无法检查更新"
+        alert.informativeText = "请检查网络连接后重试，也可以直接打开 GitHub 发布页。"
+        alert.addButton(withTitle: "打开发布页")
+        alert.addButton(withTitle: "好")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(GitHubUpdateChecker.releasesURL)
+        }
+    }
 
     @objc private func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }

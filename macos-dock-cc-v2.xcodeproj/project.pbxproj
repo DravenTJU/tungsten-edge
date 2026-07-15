@@ -62,6 +62,9 @@
 		A00000000000000000009051 /* PanelVisibilityState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009030 /* PanelVisibilityState.swift */; };
 		A00000000000000000009061 /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009010 /* LaunchAtLoginService.swift */; };
 		A00000000000000000009071 /* StatusMenuController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000008020 /* StatusMenuController.swift */; };
+		A00000000000000000009C01 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009C00 /* UpdateChecker.swift */; };
+		A00000000000000000009C02 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009C00 /* UpdateChecker.swift */; };
+		A00000000000000000009C03 /* UpdateCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009C10 /* UpdateCheckerTests.swift */; };
 		A000000000000000000019A1 /* LauncherChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019B1 /* LauncherChip.swift */; };
 		A000000000000000000019D1 /* AppMenuFragments.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019C1 /* AppMenuFragments.swift */; };
 		A000000000000000000019D2 /* RecentDocumentsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019C2 /* RecentDocumentsReader.swift */; };
@@ -274,6 +277,8 @@
 		A00000000000000000009250 /* PinnedFolderChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedFolderChip.swift; sourceTree = "<group>"; };
 		A00000000000000000009280 /* FolderContentsLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderContentsLoaderTests.swift; sourceTree = "<group>"; };
 		A000000000000000000090B0 /* FullscreenClassificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullscreenClassificationTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009C00 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		A00000000000000000009C10 /* UpdateCheckerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheckerTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000059 /* macos-dock-cc-v2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "macos-dock-cc-v2Tests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -351,6 +356,7 @@
 				A00000000000000000008010 /* AppSettingsStore.swift */,
 				A00000000000000000009010 /* LaunchAtLoginService.swift */,
 				A00000000000000000009020 /* NativeDockPreferencesService.swift */,
+				A00000000000000000009C00 /* UpdateChecker.swift */,
 				A00000000000000000009030 /* PanelVisibilityState.swift */,
 				A00000000000000000009080 /* PanelGeometry.swift */,
 				A000000000000000000019B2 /* BadgeStore.swift */,
@@ -631,6 +637,7 @@
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
 				A000000000000000000090A0 /* PanelGeometryTests.swift */,
 				A000000000000000000090B0 /* FullscreenClassificationTests.swift */,
+				A00000000000000000009C10 /* UpdateCheckerTests.swift */,
 				A00000000000000000009280 /* FolderContentsLoaderTests.swift */,
 				A00000000000000000009290 /* FolderSortTests.swift */,
 				A00000000000000000009340 /* StripDropRoutingTests.swift */,
@@ -794,6 +801,7 @@
 					A00000000000000000009031 /* PanelVisibilityState.swift in Sources */,
 					A00000000000000000009081 /* PanelGeometry.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
+					A00000000000000000009C01 /* UpdateChecker.swift in Sources */,
 					A000000000000000000019A1 /* LauncherChip.swift in Sources */,
 					A000000000000000000019D1 /* AppMenuFragments.swift in Sources */,
 					A000000000000000000019D2 /* RecentDocumentsReader.swift in Sources */,
@@ -892,6 +900,8 @@
 				A00000000000000000008031 /* AppSettingsStore.swift in Sources */,
 				A00000000000000000008041 /* AppSettingsStoreTests.swift in Sources */,
 				A00000000000000000009071 /* StatusMenuController.swift in Sources */,
+				A00000000000000000009C02 /* UpdateChecker.swift in Sources */,
+				A00000000000000000009C03 /* UpdateCheckerTests.swift in Sources */,
 				A00000000000000000009061 /* LaunchAtLoginService.swift in Sources */,
 				A00000000000000000009041 /* NativeDockPreferencesService.swift in Sources */,
 				A00000000000000000009051 /* PanelVisibilityState.swift in Sources */,

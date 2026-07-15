@@ -110,6 +110,7 @@ Tungsten Edge lives in the macOS menu bar. Its menu currently includes:
 - **Launch at login** — available on macOS 13 and later. If macOS asks for approval, open Login Items in System Settings and approve Tungsten Edge there.
 - **`系统 Dock`** — adjusts the native macOS Dock wake delay. The inline hint `⌘⌥D 显示/隐藏` reminds you that the system Dock can be shown or hidden with the macOS shortcut. The value is saved while dragging; when you release the slider after a real change, Tungsten Edge applies it to the system Dock and restarts the Dock so it takes effect.
 - **`Tungsten Edge 钨极`** — controls how long the pointer must stay on the bottom edge before Tungsten Edge wakes. `常驻` keeps it visible, finite values run from `0.1s` to `3.0s`, and `不唤醒` keeps auto-hide but disables bottom-edge wake.
+- **检查更新…** — manually checks the latest stable GitHub release. When an update is available, Tungsten Edge opens that release page for you to download and install it.
 
 The native Dock setting requires a non-sandboxed build because macOS sandboxed apps cannot directly write the system Dock preferences or restart Dock.
 
