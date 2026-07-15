@@ -258,6 +258,28 @@ final class PanelCoordinator: NSObject {
         if drawerWantsOpen { closeDrawer() } else { openDrawer() }
     }
 
+    /// Option+绿点避让只在钨极常驻且当前可见时生效。返回点击时的值快照，后续切屏不追改窗口。
+    func windowZoomAvoidanceContext() -> WindowZoomAvoidanceContext? {
+        guard settingsStore.edgeAutoHideDelay == AppSettingsStore.neverHideDelay,
+              panelsAreVisible,
+              !visibilityState.hideReasons.contains(.fullscreen),
+              let panel = dockPanel else {
+            return nil
+        }
+
+        let screen = panelCurrentScreen(panel: panel)
+        let primaryHeight = NSScreen.main?.frame.height ?? 0
+        return WindowZoomAvoidanceContext(
+            geometry: WindowZoomAvoidance.Geometry(
+                screenFrame: screen.frame,
+                visibleFrame: screen.visibleFrame,
+                tungstenTop: screen.frame.minY + Self.layoutMetrics.bottomGap + Self.panelHeight
+            ),
+            screenQuartzFrame: Self.toCGRect(screen),
+            primaryScreenHeight: primaryHeight
+        )
+    }
+
     private func openDrawer() {
         guard let mainPanel = dockPanel, capsulePanel != nil else { return }
         drawerActionCloseToken += 1  // 旧点击排队的 delayed close 捕获旧 token，不匹配则丢弃
