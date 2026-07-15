@@ -140,6 +140,55 @@ final class PanelGeometryTests: XCTestCase {
         XCTAssertEqual(maxContent, (screen.topUsableY - (anchor.maxY + 8)) - 2 * metrics.shadowPadding)
     }
 
+    // MARK: - Window title tooltip
+
+    func testWindowTitleTooltipAnchorsVisibleBubbleAbovePillAndCenters() {
+        let screen = screen(frame: CGRect(x: 0, y: 0, width: 1512, height: 982))
+        let anchor = CGRect(x: 700, y: 20, width: 160, height: 34)
+        let frame = PanelGeometry.windowTitleTooltipTargetFrame(
+            anchorVisibleRect: anchor, size: CGSize(width: 300, height: 60), on: screen
+        )
+        let bubble = frame.insetBy(dx: PanelGeometry.windowTitleTooltipShadowPadding,
+                                   dy: PanelGeometry.windowTitleTooltipShadowPadding)
+
+        XCTAssertEqual(bubble.minY, anchor.maxY + PanelGeometry.windowTitleTooltipGap)
+        XCTAssertEqual(bubble.midX, anchor.midX)
+    }
+
+    func testWindowTitleTooltipClampsVisibleBubbleInsideNonZeroScreenEdges() {
+        let screen = screen(frame: CGRect(x: -1512, y: 982, width: 1512, height: 982))
+        let size = CGSize(width: 300, height: 60)
+        let left = PanelGeometry.windowTitleTooltipTargetFrame(
+            anchorVisibleRect: CGRect(x: screen.frame.minX, y: 1000, width: 40, height: 30),
+            size: size, on: screen
+        ).insetBy(dx: PanelGeometry.windowTitleTooltipShadowPadding,
+                  dy: PanelGeometry.windowTitleTooltipShadowPadding)
+        let right = PanelGeometry.windowTitleTooltipTargetFrame(
+            anchorVisibleRect: CGRect(x: screen.frame.maxX - 40, y: 1000, width: 40, height: 30),
+            size: size, on: screen
+        ).insetBy(dx: PanelGeometry.windowTitleTooltipShadowPadding,
+                  dy: PanelGeometry.windowTitleTooltipShadowPadding)
+
+        XCTAssertEqual(left.minX, screen.frame.minX + PanelGeometry.windowTitleTooltipScreenMargin)
+        XCTAssertEqual(right.maxX, screen.frame.maxX - PanelGeometry.windowTitleTooltipScreenMargin)
+    }
+
+    func testWindowTitleTooltipRespectsTopUsableY() {
+        let screen = PanelScreenGeometry(
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 920),
+            safeAreaTop: 0
+        )
+        let frame = PanelGeometry.windowTitleTooltipTargetFrame(
+            anchorVisibleRect: CGRect(x: 700, y: 900, width: 100, height: 30),
+            size: CGSize(width: 300, height: 60), on: screen
+        )
+        let bubble = frame.insetBy(dx: PanelGeometry.windowTitleTooltipShadowPadding,
+                                   dy: PanelGeometry.windowTitleTooltipShadowPadding)
+
+        XCTAssertEqual(bubble.maxY, screen.topUsableY)
+    }
+
     private func layout(
         on screen: PanelScreenGeometry,
         contentWidth: CGFloat = 620,

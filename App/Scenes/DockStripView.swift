@@ -60,6 +60,8 @@ struct DockStripView: View {
     var onAddFolder: () -> Void = {}
     /// 外部文件命中固定文件夹 chip 后，上抛给 composition 层在后台执行搬运。
     var onMoveExternalFiles: ([URL], String) -> Void = { _, _ in }
+    /// 被截断窗口标题的真实悬停事件。PanelCoordinator 负责延迟与独立提示面板。
+    var onWindowTitleTooltipEvent: (WindowTitleTooltipEvent) -> Void = { _ in }
     /// 跨面板拖动权威（拖卡进抽屉 路线 C）：起拖 → beginDrag；读 draggingItem 隐藏原位卡片、
     /// 读 isOverDropZone 在进投放区时停掉条内重排。载体面板/监视器/收尾都在它里面，本视图不碰。
     @EnvironmentObject var dragController: DragController
@@ -822,7 +824,8 @@ struct DockStripView: View {
             ChipView(item: item,
                      showRunningDot: true,
                      forceHover: dragging,
-                     pulseNonce: chipPulseNonces[item.id] ?? 0)
+                     pulseNonce: chipPulseNonces[item.id] ?? 0,
+                     onWindowTitleTooltipEvent: onWindowTitleTooltipEvent)
         case .divider:
             Rectangle()
                 .fill(.white.opacity(0.18))
@@ -1069,8 +1072,10 @@ struct ChipView: View {
     /// 外部手势（重击/中键预览）触发的脉冲信号：nonce 变化即触发一次 fireTapPulse，
     /// 给活访达窗口预览那 ~200ms 反查延迟一个"点到了"的即时确认。默认 0 = 不脉冲。
     var pulseNonce: Int = 0
+    var onWindowTitleTooltipEvent: (WindowTitleTooltipEvent) -> Void = { _ in }
 
     @State private var isHovering = false
+    @State private var titlePillScreenRect: CGRect = .zero
     /// 点击确认脉冲：与状态无关的按压回弹。激活「已可见」窗口在亮/暗轴上零变化,
     /// 没有它就"毫无反应"（owner 2026-07-06）。纯视图层信号,永不喂 planner/frontmost 轴（AGENTS）。
     /// 声明式 .animation(value:) 驱动（LauncherChip 僵尸动画教训:禁 repeatForever+复位）。
@@ -1101,6 +1106,23 @@ struct ChipView: View {
     private var isMessagingAppWindow: Bool {
         guard let bid = item.bundleIdentifier else { return false }
         return !item.isAppLevelFallback && messagingStore.contains(bid)
+    }
+
+    private var titleNeedsTooltip: Bool {
+        WindowTitleTextMetrics.needsTooltip(for: displayTitle, scale: scale)
+    }
+
+    private func updateWindowTitleTooltip(hovering: Bool, anchor: CGRect? = nil) {
+        let rect = anchor ?? titlePillScreenRect
+        guard hovering, titleNeedsTooltip, rect != .zero else {
+            onWindowTitleTooltipEvent(.exit(chipID: item.id))
+            return
+        }
+        onWindowTitleTooltipEvent(.update(WindowTitleTooltipRequest(
+            chipID: item.id,
+            title: displayTitle,
+            anchorVisibleRect: rect
+        )))
     }
 
     var body: some View {
@@ -1192,6 +1214,11 @@ struct ChipView: View {
                         )
                 )
         )
+        .background(ScreenRectReader { rect in
+            guard rect != titlePillScreenRect else { return }
+            titlePillScreenRect = rect
+            if isHovering { updateWindowTitleTooltip(hovering: true, anchor: rect) }
+        })
 
         return VStack(spacing: 2) {
             Spacer(minLength: 0)
@@ -1209,13 +1236,22 @@ struct ChipView: View {
         .frame(height: 52 * scale)
         .scaleEffect(isTapPressed ? 0.93 : 1.0)
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = hovering
+            updateWindowTitleTooltip(hovering: hovering)
+        }
         .onTapGesture {
             fireTapPulse()
             if let drawerTap { drawerTap() } else { runtime.toggle(windowID: item.actionWindowID) }
         }
         .nativeContextMenu { buildChipMenu() }
-        .help(displayTitle)
+        .onChange(of: displayTitle) { _ in
+            if isHovering { updateWindowTitleTooltip(hovering: true) }
+        }
+        .onChange(of: scale) { _ in
+            if isHovering { updateWindowTitleTooltip(hovering: true) }
+        }
+        .onDisappear { onWindowTitleTooltipEvent(.exit(chipID: item.id)) }
         .animation(.easeInOut(duration: 0.18), value: isHovering)
         .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
     }

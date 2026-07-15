@@ -65,6 +65,9 @@
 		A00000000000000000009C01 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009C00 /* UpdateChecker.swift */; };
 		A00000000000000000009C02 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009C00 /* UpdateChecker.swift */; };
 		A00000000000000000009C03 /* UpdateCheckerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009C10 /* UpdateCheckerTests.swift */; };
+		A00000000000000000009D01 /* WindowTitleTooltip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D00 /* WindowTitleTooltip.swift */; };
+		A00000000000000000009D02 /* WindowTitleTooltip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D00 /* WindowTitleTooltip.swift */; };
+		A00000000000000000009D03 /* WindowTitleTooltipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D10 /* WindowTitleTooltipTests.swift */; };
 		A000000000000000000019A1 /* LauncherChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019B1 /* LauncherChip.swift */; };
 		A000000000000000000019D1 /* AppMenuFragments.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019C1 /* AppMenuFragments.swift */; };
 		A000000000000000000019D2 /* RecentDocumentsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019C2 /* RecentDocumentsReader.swift */; };
@@ -242,6 +245,8 @@
 		A00000000000000000000058 /* FinderP0Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderP0Tests.swift; sourceTree = "<group>"; };
 		A00000000000000000008040 /* AppSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsStoreTests.swift; sourceTree = "<group>"; };
 		A000000000000000000090A0 /* PanelGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelGeometryTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009D00 /* WindowTitleTooltip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTitleTooltip.swift; sourceTree = "<group>"; };
+		A00000000000000000009D10 /* WindowTitleTooltipTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowTitleTooltipTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009200 /* PinnedFolderStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedFolderStore.swift; sourceTree = "<group>"; };
 		A00000000000000000009210 /* DirectoryWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectoryWatcher.swift; sourceTree = "<group>"; };
 		A00000000000000000009220 /* FolderContentsLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderContentsLoader.swift; sourceTree = "<group>"; };
@@ -398,6 +403,7 @@
 				A00000000000000000000002 /* ContentView.swift */,
 				A000000000000000000000F1 /* PermissionOnboardingView.swift */,
 				A00000000000000000000067 /* DockStripView.swift */,
+				A00000000000000000009D00 /* WindowTitleTooltip.swift */,
 				A0000000000000000000006A /* DrawerView.swift */,
 				A000000000000000000019B1 /* LauncherChip.swift */,
 				A000000000000000000019C1 /* AppMenuFragments.swift */,
@@ -636,6 +642,7 @@
 				A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
 				A000000000000000000090A0 /* PanelGeometryTests.swift */,
+				A00000000000000000009D10 /* WindowTitleTooltipTests.swift */,
 				A000000000000000000090B0 /* FullscreenClassificationTests.swift */,
 				A00000000000000000009C10 /* UpdateCheckerTests.swift */,
 				A00000000000000000009280 /* FolderContentsLoaderTests.swift */,
@@ -784,6 +791,7 @@
 					A00000000000000000001040 /* AppDelegate.swift in Sources */,
 					A00000000000000000001046 /* PanelCoordinator.swift in Sources */,
 					A00000000000000000001041 /* DockStripView.swift in Sources */,
+					A00000000000000000009D01 /* WindowTitleTooltip.swift in Sources */,
 					A00000000000000000001044 /* DrawerView.swift in Sources */,
 					A00000000000000000001002 /* ContentView.swift in Sources */,
 					A000000000000000000010F1 /* PermissionOnboardingView.swift in Sources */,
@@ -907,6 +915,8 @@
 				A00000000000000000009051 /* PanelVisibilityState.swift in Sources */,
 				A00000000000000000009091 /* PanelGeometry.swift in Sources */,
 				A000000000000000000090A1 /* PanelGeometryTests.swift in Sources */,
+				A00000000000000000009D02 /* WindowTitleTooltip.swift in Sources */,
+				A00000000000000000009D03 /* WindowTitleTooltipTests.swift in Sources */,
 				A00000000000000000009222 /* FolderContentsLoader.swift in Sources */,
 				A00000000000000000009281 /* FolderContentsLoaderTests.swift in Sources */,
 				A00000000000000000009291 /* FolderSortTests.swift in Sources */,

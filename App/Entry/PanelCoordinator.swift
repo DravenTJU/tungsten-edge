@@ -140,6 +140,13 @@ final class PanelCoordinator: NSObject {
     /// 当前在飞 tween 的目标帧（nil = 没在飞）。双重 defer 的兜底校正常带着**同一个**目标再进来,
     /// 若无脑重启就会打断刚起步的动画、重置时钟(速度突变+总时长变长);目标相同直接放行让它走完。
     private var folderPopupTweenTarget: NSRect?
+    // MARK: 窗口标题 Tooltip（专属面板，不复用 folderPopupPanel）
+    private var windowTitleTooltipPanel: NSPanel?
+    private var windowTitleTooltipRequest: WindowTitleTooltipRequest?
+    private var windowTitleTooltipSuppressedChipID: String?
+    private var windowTitleTooltipTimer: Timer?
+    private var windowTitleTooltipLocalMonitor: Any?
+    private var windowTitleTooltipGlobalMonitor: Any?
     private var pinnedFolderStoreSubscription: AnyCancellable?
     private var pinnedFolderSortSubscription: AnyCancellable?
     private var snapshotWidthSubscription: AnyCancellable?
@@ -244,7 +251,10 @@ final class PanelCoordinator: NSObject {
 
     deinit {
         fullscreenReconcileTimer?.invalidate()
-        MainActor.assumeIsolated { removeHoverMouseMonitors() }
+        MainActor.assumeIsolated {
+            removeHoverMouseMonitors()
+            dismissWindowTitleTooltip()
+        }
         edgeIdleHideTimer?.invalidate()
         edgeWakeTimer?.invalidate()
         springOpenTimer?.invalidate()
@@ -847,8 +857,138 @@ final class PanelCoordinator: NSObject {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] dragging in
+                if dragging { self?.dismissWindowTitleTooltip(suppressCurrentUntilExit: true) }
                 self?.setAutoHideInhibitor(.dragging, active: dragging)
             }
+    }
+
+    // MARK: - Window title tooltip
+
+    private func handleWindowTitleTooltipEvent(_ event: WindowTitleTooltipEvent) {
+        switch event {
+        case let .update(request):
+            if windowTitleTooltipSuppressedChipID == request.chipID { return }
+            windowTitleTooltipSuppressedChipID = nil
+            if windowTitleTooltipRequest?.chipID == request.chipID {
+                windowTitleTooltipRequest = request
+                if windowTitleTooltipPanel?.isVisible == true {
+                    presentWindowTitleTooltip(request, animated: false)
+                }
+                return
+            }
+
+            dismissWindowTitleTooltip()
+            windowTitleTooltipRequest = request
+            installWindowTitleTooltipMouseMonitors()
+            let chipID = request.chipID
+            let timer = Timer(timeInterval: 0.7, repeats: false) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          let current = self.windowTitleTooltipRequest,
+                          current.chipID == chipID else { return }
+                    self.windowTitleTooltipTimer = nil
+                    self.presentWindowTitleTooltip(current, animated: true)
+                }
+            }
+            windowTitleTooltipTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+
+        case let .exit(chipID):
+            if windowTitleTooltipSuppressedChipID == chipID {
+                windowTitleTooltipSuppressedChipID = nil
+            }
+            guard windowTitleTooltipRequest?.chipID == chipID else { return }
+            dismissWindowTitleTooltip()
+        }
+    }
+
+    private func presentWindowTitleTooltip(_ request: WindowTitleTooltipRequest, animated: Bool) {
+        guard request.anchorVisibleRect != .zero else { return }
+        let panel: NSPanel
+        if let existing = windowTitleTooltipPanel {
+            panel = existing
+        } else {
+            let created = NonConstrainingPanel(
+                contentRect: .zero,
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered,
+                defer: false
+            )
+            created.level = .floating
+            created.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+            created.isFloatingPanel = true
+            created.isMovable = false
+            created.isOpaque = false
+            created.backgroundColor = .clear
+            created.hasShadow = false
+            created.hidesOnDeactivate = false
+            created.ignoresMouseEvents = true
+            windowTitleTooltipPanel = created
+            panel = created
+        }
+
+        let hosting = NSHostingView(rootView: WindowTitleTooltipView(title: request.title))
+        hosting.wantsLayer = true
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hosting
+        panel.layoutIfNeeded()
+        let size = hosting.fittingSize
+        guard size.width > 0, size.height > 0 else { return }
+
+        let anchorPoint = CGPoint(x: request.anchorVisibleRect.midX, y: request.anchorVisibleRect.midY)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorPoint) })
+            ?? dockPanel.map { panelCurrentScreen(panel: $0) }
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
+        let target = PanelGeometry.windowTitleTooltipTargetFrame(
+            anchorVisibleRect: request.anchorVisibleRect,
+            size: size,
+            on: Self.screenGeometry(screen)
+        )
+        panel.setFrame(target, display: true)
+
+        guard animated, !panel.isVisible else {
+            panel.alphaValue = 1
+            if !panel.isVisible { panel.orderFrontRegardless() }
+            return
+        }
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
+    }
+
+    private func installWindowTitleTooltipMouseMonitors() {
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        windowTitleTooltipLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
+            return event
+        }
+        windowTitleTooltipGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            self?.dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
+        }
+    }
+
+    private func dismissWindowTitleTooltip(suppressCurrentUntilExit: Bool = false) {
+        if suppressCurrentUntilExit, let chipID = windowTitleTooltipRequest?.chipID {
+            windowTitleTooltipSuppressedChipID = chipID
+        }
+        windowTitleTooltipTimer?.invalidate()
+        windowTitleTooltipTimer = nil
+        windowTitleTooltipRequest = nil
+        if let monitor = windowTitleTooltipLocalMonitor {
+            NSEvent.removeMonitor(monitor)
+            windowTitleTooltipLocalMonitor = nil
+        }
+        if let monitor = windowTitleTooltipGlobalMonitor {
+            NSEvent.removeMonitor(monitor)
+            windowTitleTooltipGlobalMonitor = nil
+        }
+        windowTitleTooltipPanel?.alphaValue = 0
+        windowTitleTooltipPanel?.orderOut(nil)
     }
 
     /// 视区命中：目标 frame 取可见内容区 + 6pt 迟滞（防胶囊/任务条交界反复横跳）。
@@ -972,6 +1112,9 @@ final class PanelCoordinator: NSObject {
             onAddFolder: { [weak self] in self?.onAddFolder() },
             onMoveExternalFiles: { [weak self] urls, path in
                 self?.moveExternalFiles(urls, into: path)
+            },
+            onWindowTitleTooltipEvent: { [weak self] event in
+                self?.handleWindowTitleTooltipEvent(event)
             }
         ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(keptAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController))
         hosting.autoresizingMask = [.width, .height]
@@ -1145,7 +1288,10 @@ final class PanelCoordinator: NSObject {
         let dockT = dockTargetFrame(contentWidth: contentWidth, on: screen)
         let capsuleT = capsuleTargetFrame(forDock: dockT, on: screen)
         // 任务条目标帧一变（宽度/切屏）就关弹窗——不追动画中的锚点（与原生 Dock 行为一致,保 target-frame 纯度）。
-        if folderPopupWantsOpen, dockT != lastDockTargetFrame { closeFolderPopup() }
+        if dockT != lastDockTargetFrame {
+            if folderPopupWantsOpen { closeFolderPopup() }
+            dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
+        }
         lastDockTargetFrame = dockT
         lastCapsuleTargetFrame = capsuleT
 
@@ -1186,6 +1332,7 @@ final class PanelCoordinator: NSObject {
         dragController?.cancelDrag()   // 切屏/分辨率变 → 取消进行中的跨面板拖动，免得载体留在旧屏坐标
         cancelHoverSwitch()
         closeFolderPopup()             // 屏幕参数变了,旧锚点坐标作废
+        dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
         guard dockPanel != nil else { return }
         relayout(animated: false)      // 切屏瞬时,不滑
         reconcilePanelVisibility()
@@ -1270,6 +1417,7 @@ final class PanelCoordinator: NSObject {
         if isFullscreen {
             closeDrawer()
             closeFolderPopup()
+            dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
             visibilityState.setFullscreen(true)
         } else {
             visibilityState.setFullscreen(false)
@@ -1445,6 +1593,7 @@ final class PanelCoordinator: NSObject {
             metrics: Self.layoutMetrics
         ).width - Self.shadowPadding * 2
         closeFolderPopup()   // 切屏后旧锚点在旧屏,弹窗收起
+        dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
         layoutPanels(contentWidth: lastDesiredWidth, on: targetScreen, animated: false)
         hoverLogger.info("switch toScreen=\(toIdx, privacy: .public) name=\(targetScreen.localizedName, privacy: .public) actualWidth=\(actualWidth, privacy: .public) fromScreen=\(fromIdx, privacy: .public)")
         armEdgeWakeIfNeeded(on: targetScreen, requiresHotZone: false)
@@ -1607,6 +1756,7 @@ final class PanelCoordinator: NSObject {
         } else {
             if visibilityState.hideReasons.contains(.fullscreen) { closeDrawer() }
             closeFolderPopup()
+            dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
             dockPanel?.orderOut(nil)
             capsulePanel?.orderOut(nil)
         }

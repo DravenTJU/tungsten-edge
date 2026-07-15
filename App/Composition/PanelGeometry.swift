@@ -39,6 +39,10 @@ struct PanelScreenGeometry: Equatable {
 }
 
 enum PanelGeometry {
+    static let windowTitleTooltipGap: CGFloat = 8
+    static let windowTitleTooltipScreenMargin: CGFloat = 8
+    static let windowTitleTooltipShadowPadding: CGFloat = 8
+
     static func dockTargetFrame(
         contentWidth: CGFloat,
         on screen: PanelScreenGeometry,
@@ -107,6 +111,32 @@ enum PanelGeometry {
     ) -> CGFloat {
         let bottom = anchorVisibleRect.maxY + 8
         return max(metrics.minimumDrawerExtent, (screen.topUsableY - bottom) - 2 * metrics.shadowPadding)
+    }
+
+    /// Window-title tooltip panel frame. The panel includes transparent padding for its SwiftUI
+    /// shadow, while the visible bubble stays 8pt above the pill and 8pt inside the screen edges.
+    static func windowTitleTooltipTargetFrame(
+        anchorVisibleRect: CGRect,
+        size: CGSize,
+        on screen: PanelScreenGeometry
+    ) -> CGRect {
+        let inset = windowTitleTooltipShadowPadding
+        let visibleWidth = max(0, size.width - 2 * inset)
+        let visibleHeight = max(0, size.height - 2 * inset)
+        let minVisibleX = screen.frame.minX + windowTitleTooltipScreenMargin
+        let maxVisibleX = screen.frame.maxX - windowTitleTooltipScreenMargin - visibleWidth
+        let desiredVisibleX = anchorVisibleRect.midX - visibleWidth / 2
+        let visibleX = min(max(desiredVisibleX, minVisibleX), maxVisibleX)
+        let desiredVisibleY = anchorVisibleRect.maxY + windowTitleTooltipGap
+        let maxVisibleY = screen.topUsableY - visibleHeight
+        let visibleY = min(desiredVisibleY, maxVisibleY)
+
+        return CGRect(
+            x: visibleX - inset,
+            y: visibleY - inset,
+            width: size.width,
+            height: size.height
+        )
     }
 
     static func drawerTargetFrame(
