@@ -268,6 +268,35 @@ final class PanelCoordinator: NSObject {
         if drawerWantsOpen { closeDrawer() } else { openDrawer() }
     }
 
+    /// 最大化避让只在钨极常驻且真正可见时取得上下文；一次性返回完整几何，避免切屏时撕裂读取。
+    func windowLiftAvoidanceContext() -> WindowLiftAvoidanceContext? {
+        guard !settingsStore.edgeAutoHideEnabled,
+              visibilityState.isVisible,
+              panelsAreVisible,
+              let panel = dockPanel else {
+            return nil
+        }
+
+        let screen = panelCurrentScreen(panel: panel)
+        let primaryScreenHeight = Self.quartzPrimaryScreenHeight
+        let geometry = WindowLiftAvoidance.Geometry(
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame,
+            taskbarTop: screen.frame.minY
+                + Self.layoutMetrics.bottomGap
+                + Self.layoutMetrics.panelHeight
+        )
+        return WindowLiftAvoidanceContext(
+            geometry: geometry,
+            screenCGFrame: Self.toCGRect(screen),
+            visibleCGFrame: WindowLiftAvoidance.quartzFrame(
+                fromAppKit: screen.visibleFrame,
+                primaryScreenHeight: primaryScreenHeight
+            ),
+            primaryScreenHeight: primaryScreenHeight
+        )
+    }
+
     private func openDrawer() {
         guard let mainPanel = dockPanel, capsulePanel != nil else { return }
         drawerActionCloseToken += 1  // 旧点击排队的 delayed close 捕获旧 token，不匹配则丢弃
@@ -1371,25 +1400,17 @@ final class PanelCoordinator: NSObject {
         let screen = panelCurrentScreen(panel: panel)
         let screenCGFrame = Self.toCGRect(screen)
         let ourPID = pid_t(ProcessInfo.processInfo.processIdentifier)
+        guard let candidate = WindowLiftCGWindowProbe.frontmostLargeWindow(
+            on: screenCGFrame,
+            excludingPID: ourPID
+        ) else { return false }
 
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return false }
-
-        for info in list {
-            guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
-            guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != ourPID else { continue }
-            guard let dict = info[kCGWindowBounds as String] as? [String: Any],
-                  let cgBounds = CGRect(dictionaryRepresentation: dict as CFDictionary) else { continue }
-            // Only consider windows on the panel's screen (must overlap significantly)
-            guard cgBounds.intersects(screenCGFrame), cgBounds.width > screenCGFrame.width * 0.7 else { continue }
-            // Frontmost matching window found — check if it fills the screen
-            let t: CGFloat = 8
-            return abs(cgBounds.width  - screenCGFrame.width)  < t
-                && abs(cgBounds.height - screenCGFrame.height) < t
-                && abs(cgBounds.minX   - screenCGFrame.minX)   < t
-                && abs(cgBounds.minY   - screenCGFrame.minY)   < t
-        }
-        return false
+        let cgBounds = candidate.quartzFrame
+        let t: CGFloat = 8
+        return abs(cgBounds.width  - screenCGFrame.width)  < t
+            && abs(cgBounds.height - screenCGFrame.height) < t
+            && abs(cgBounds.minX   - screenCGFrame.minX)   < t
+            && abs(cgBounds.minY   - screenCGFrame.minY)   < t
     }
 
     // MARK: - Async AX fullscreen probe (secondary / fallback)
@@ -1441,9 +1462,19 @@ final class PanelCoordinator: NSObject {
 
     // AppKit frame (bottom-left origin) → CG/Quartz frame (top-left origin of primary screen)
     private static func toCGRect(_ screen: NSScreen) -> CGRect {
-        let primaryH = NSScreen.main?.frame.height ?? 0
         let f = screen.frame
-        return CGRect(x: f.minX, y: primaryH - f.maxY, width: f.width, height: f.height)
+        return CGRect(
+            x: f.minX,
+            y: quartzPrimaryScreenHeight - f.maxY,
+            width: f.width,
+            height: f.height
+        )
+    }
+
+    /// `NSScreen.main` follows the key window and may be a secondary display. Quartz global
+    /// coordinates are anchored to the menu-bar display, which is always the first screen.
+    private static var quartzPrimaryScreenHeight: CGFloat {
+        NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
     }
 
     nonisolated private static func detectFullscreenViaAX(pid: pid_t?, screenCGFrame: CGRect) -> Bool {

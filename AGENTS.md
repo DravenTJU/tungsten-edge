@@ -74,6 +74,16 @@
 - Optimistic state predicts **status only** for show/hide style actions and clears on snapshot confirmation or timeout. Do not re-add predicted `isAppFrontmost`.
 - The chip tap pulse is view-local acknowledgment only. It must not feed planner state or any frontmost decision.
 
+## Window Lift Avoidance (最大化避让)
+
+- Maximized-window avoidance lifts the frontmost visibleFrame-filling window's bottom edge above the taskbar (clearance 2pt). Pure decisions live in `WindowLiftAvoidance` (unit-tested), I/O in `WindowLiftAvoidanceController`; AX geometry writes exist **only** in `AXWindowReader.setSize/setFrame` with settable checks, post-write verification, and rollback — do not simplify or add a second write path.
+- Gating is 常驻 + visible (`!edgeAutoHideEnabled && visibilityState.isVisible`) and must not be loosened. Kill switches: `DOCK_WINDOW_LIFT=0` (feature off), `DOCK_WINDOW_LIFT_ANIM=0` (instant-write fallback), `DOCK_WINDOW_LIFT_TRACE=1` (session diagnostics).
+- `reduce` stays pure; time enters only via event `at` parameters. The time-scale rule — maximized reappearing within `appReassertWindow` of settle = app reassert (one relift then abandon), later = a fresh user session — is the cure for the L↔M zoom-memory deadlock (our lift poisons the system zoom's remembered frame; the window then toggles native↔target and never produces an external frame). Do not remove it; `abandonedAt` must never be refreshed by observations or abandoned never expires.
+- Stall ≠ failure in the write loop: a readback equal to the pre-write frame means the window has not caught up (1x external displays apply late; the first eased frame is ~2pt, right at the verification tolerance) — skip the frame and continue. Intermediate frames use integral sizes and no auto-rollback; the final write retries a bounded number of times. Removing this re-breaks non-Retina displays deterministically.
+- Standoff protection: one relift per session, standoff rounds capped, capped sessions decay to a slow retry cadence (never a permanent lock), and rounds heal after the lift stays stable past the reassert window.
+- Session key `pid + cgWindowID` is per-episode only (cgWindowID reuse); keep the CG full-list prune. Context switch (screen change / leaving 常驻) restores still-lifted unmodified windows to their native frame.
+- Accepted boundaries: inactive with menu-bar auto-hide (window fills screen.frame → classified fullscreen → bar hidden); only the active app's frontmost window lifts; the first zoom click on a lifted window may bounce to full maximize once (system zoom memory, cannot intercept).
+
 ## Drag, Drawer, And Ordering
 
 - Do not use SwiftUI `.onDrag` / `NSItemProvider` or AppKit `beginDraggingSession` for local strip, drawer, or folder chip drags. The visual carrier is owned by `DragController`.

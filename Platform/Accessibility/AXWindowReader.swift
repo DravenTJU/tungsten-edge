@@ -29,6 +29,67 @@ struct AXWindowHandle {
     let element: AXUIElement
 }
 
+enum AXWindowFrameAttribute: Equatable {
+    case position
+    case size
+}
+
+enum AXWindowAttributeSettableStatus: Equatable {
+    case settable
+    case notSettable
+    case unread(AXError)
+
+    var isSettable: Bool {
+        if case .settable = self { return true }
+        return false
+    }
+}
+
+struct AXWindowFrameSettableStatus: Equatable {
+    let position: AXWindowAttributeSettableStatus
+    let size: AXWindowAttributeSettableStatus
+
+    var canSetSize: Bool { size.isSettable }
+    var canSetFrame: Bool { position.isSettable && size.isSettable }
+}
+
+enum AXWindowFrameWriteFailure: Error, Equatable {
+    case invalidGeometry
+    case initialFrameUnavailable
+    case initialFrameMismatch(expected: CGRect, actual: CGRect)
+    case capabilityQueryFailed(attribute: AXWindowFrameAttribute, error: AXError)
+    case attributeNotSettable(AXWindowFrameAttribute)
+    case valueCreationFailed(AXWindowFrameAttribute)
+    case writeFailed(attribute: AXWindowFrameAttribute, error: AXError)
+    case verificationUnavailable
+    case verificationMismatch(expected: CGRect, actual: CGRect)
+
+    fileprivate var mayHaveMutatedWindow: Bool {
+        switch self {
+        case .writeFailed, .verificationUnavailable, .verificationMismatch:
+            return true
+        case .invalidGeometry,
+             .initialFrameUnavailable,
+             .initialFrameMismatch,
+             .capabilityQueryFailed,
+             .attributeNotSettable,
+             .valueCreationFailed:
+            return false
+        }
+    }
+}
+
+enum AXWindowFrameRollbackResult: Equatable {
+    case notRequested
+    case restored(actualFrame: CGRect)
+    case failed(reason: AXWindowFrameWriteFailure, actualFrame: CGRect?)
+}
+
+enum AXWindowFrameWriteResult: Equatable {
+    case success(actualFrame: CGRect)
+    case failure(reason: AXWindowFrameWriteFailure, rollback: AXWindowFrameRollbackResult)
+}
+
 enum AXWindowReadResult {
     case success([AXWindowSnapshot])
     case unread(AXError)
@@ -133,6 +194,80 @@ struct AXWindowReader {
         return nil
     }
 
+    func captureHandle(
+        forPID pid: pid_t,
+        cgWindowID: CGWindowID,
+        messagingTimeout: TimeInterval = 0.1
+    ) -> AXWindowHandle? {
+        guard AXIsProcessTrusted(),
+              cgWindowID != 0,
+              messagingTimeout.isFinite,
+              messagingTimeout > 0 else {
+            return nil
+        }
+
+        let deadline = ProcessInfo.processInfo.systemUptime + messagingTimeout
+        let appElement = AXUIElementCreateApplication(pid)
+
+        func remainingTimeout() -> TimeInterval? {
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            return remaining > 0 ? remaining : nil
+        }
+
+        func matches(_ element: AXUIElement) -> Bool {
+            guard let timeout = remainingTimeout() else { return false }
+            applyMessagingTimeout(timeout, to: element)
+            if let bridgedID = AXWindowIDBridge.cgWindowID(for: element) {
+                return bridgedID == cgWindowID
+            }
+
+            for attribute in AXWindowIDBridge.fallbackAttributeNames {
+                guard let timeout = remainingTimeout() else { return false }
+                applyMessagingTimeout(timeout, to: element)
+                if numericWindowIDAttribute(attribute, from: element, maxAttempts: 1) == cgWindowID {
+                    return true
+                }
+            }
+            return false
+        }
+
+        func elementAttributeWithinDeadline(_ attribute: CFString) -> AXUIElement? {
+            guard let timeout = remainingTimeout() else { return nil }
+            applyMessagingTimeout(timeout, to: appElement)
+            return elementAttribute(attribute, from: appElement, maxAttempts: 1)
+        }
+
+        if let focused = elementAttributeWithinDeadline(kAXFocusedWindowAttribute as CFString),
+           matches(focused) {
+            return AXWindowHandle(pid: pid, title: nil, bounds: nil, element: focused)
+        }
+        if let main = elementAttributeWithinDeadline(kAXMainWindowAttribute as CFString),
+           matches(main) {
+            return AXWindowHandle(pid: pid, title: nil, bounds: nil, element: main)
+        }
+
+        guard let timeout = remainingTimeout() else { return nil }
+        applyMessagingTimeout(timeout, to: appElement)
+        var rawWindows: CFTypeRef?
+        guard copyAttributeValue(
+            kAXWindowsAttribute as CFString,
+            from: appElement,
+            into: &rawWindows,
+            maxAttempts: 1
+        ) == .success,
+              let elements = rawWindows as? [AXUIElement],
+              let element = elements.first(where: matches) else {
+            return nil
+        }
+
+        return AXWindowHandle(
+            pid: pid,
+            title: nil,
+            bounds: nil,
+            element: element
+        )
+    }
+
     func focusedWindow(forPID pid: pid_t) -> AXUIElement? {
         elementAttribute(kAXFocusedWindowAttribute as CFString, from: AXUIElementCreateApplication(pid))
     }
@@ -172,8 +307,13 @@ struct AXWindowReader {
         return nil
     }
 
-    func elementAttribute(_ attribute: CFString, from element: AXUIElement) -> AXUIElement? {
-        guard let value = copyAttributeValue(attribute, from: element) else {
+    func elementAttribute(
+        _ attribute: CFString,
+        from element: AXUIElement,
+        maxAttempts: Int = 2
+    ) -> AXUIElement? {
+        guard let value = copyAttributeValue(attribute, from: element, maxAttempts: maxAttempts),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
             return nil
         }
         return unsafeBitCast(value, to: AXUIElement.self)
@@ -185,8 +325,10 @@ struct AXWindowReader {
             return nil
         }
 
-        let position = positionAX as! AXValue
-        let sizeValueRef = sizeAX as! AXValue
+        guard let position = axValue(from: positionAX),
+              let sizeValueRef = axValue(from: sizeAX) else {
+            return nil
+        }
 
         var point = CGPoint.zero
         var size = CGSize.zero
@@ -198,6 +340,94 @@ struct AXWindowReader {
         }
 
         return CGRect(origin: point, size: size)
+    }
+
+    func frame(of element: AXUIElement, messagingTimeout: TimeInterval) -> CGRect? {
+        applyMessagingTimeout(messagingTimeout, to: element)
+        return frame(of: element, maxAttempts: 1)
+    }
+
+    func frameSettableStatus(
+        of element: AXUIElement,
+        messagingTimeout: TimeInterval = 0.1
+    ) -> AXWindowFrameSettableStatus {
+        applyMessagingTimeout(messagingTimeout, to: element)
+        return AXWindowFrameSettableStatus(
+            position: settableStatus(kAXPositionAttribute as CFString, on: element),
+            size: settableStatus(kAXSizeAttribute as CFString, on: element)
+        )
+    }
+
+    func setSize(
+        _ size: CGSize,
+        for element: AXUIElement,
+        messagingTimeout: TimeInterval = 0.1,
+        verificationTolerance: CGFloat = 1,
+        onlyIfCurrentMatches expectedCurrentFrame: CGRect? = nil,
+        restoreOnFailureTo restoreFrame: CGRect? = nil
+    ) -> AXWindowFrameWriteResult {
+        applyMessagingTimeout(messagingTimeout, to: element)
+        guard isValid(size: size), isValid(tolerance: verificationTolerance),
+              expectedCurrentFrame.map(isValid(frame:)) ?? true,
+              restoreFrame.map(isValid(frame:)) ?? true else {
+            return .failure(reason: .invalidGeometry, rollback: .notRequested)
+        }
+
+        switch writeSize(
+            size,
+            to: element,
+            verificationTolerance: verificationTolerance,
+            onlyIfCurrentMatches: expectedCurrentFrame
+        ) {
+        case let .success(actualFrame):
+            return .success(actualFrame: actualFrame)
+        case let .failure(reason):
+            return .failure(
+                reason: reason,
+                rollback: rollbackResult(
+                    after: reason,
+                    to: restoreFrame,
+                    for: element,
+                    verificationTolerance: verificationTolerance
+                )
+            )
+        }
+    }
+
+    func setFrame(
+        _ frame: CGRect,
+        for element: AXUIElement,
+        messagingTimeout: TimeInterval = 0.1,
+        verificationTolerance: CGFloat = 1,
+        onlyIfCurrentMatches expectedCurrentFrame: CGRect? = nil,
+        restoreOnFailureTo restoreFrame: CGRect? = nil
+    ) -> AXWindowFrameWriteResult {
+        applyMessagingTimeout(messagingTimeout, to: element)
+        guard isValid(frame: frame), isValid(tolerance: verificationTolerance),
+              expectedCurrentFrame.map(isValid(frame:)) ?? true,
+              restoreFrame.map(isValid(frame:)) ?? true else {
+            return .failure(reason: .invalidGeometry, rollback: .notRequested)
+        }
+
+        switch writeFrame(
+            frame,
+            to: element,
+            verificationTolerance: verificationTolerance,
+            onlyIfCurrentMatches: expectedCurrentFrame
+        ) {
+        case let .success(actualFrame):
+            return .success(actualFrame: actualFrame)
+        case let .failure(reason):
+            return .failure(
+                reason: reason,
+                rollback: rollbackResult(
+                    after: reason,
+                    to: restoreFrame,
+                    for: element,
+                    verificationTolerance: verificationTolerance
+                )
+            )
+        }
     }
 
     func setMinimized(_ minimized: Bool, for handle: AXWindowHandle) -> Bool {
@@ -255,6 +485,232 @@ struct AXWindowReader {
             return nil
         }
         return AXWindowIDBridge.cgWindowID(from: value)
+    }
+
+    private func axValue(from value: CFTypeRef) -> AXValue? {
+        guard CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        return unsafeBitCast(value, to: AXValue.self)
+    }
+
+    private func settableStatus(
+        _ attribute: CFString,
+        on element: AXUIElement
+    ) -> AXWindowAttributeSettableStatus {
+        var isSettable = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, attribute, &isSettable)
+        guard result == .success else { return .unread(result) }
+        return isSettable.boolValue ? .settable : .notSettable
+    }
+
+    private func writeSize(
+        _ size: CGSize,
+        to element: AXUIElement,
+        verificationTolerance: CGFloat,
+        onlyIfCurrentMatches expectedCurrentFrame: CGRect? = nil
+    ) -> Result<CGRect, AXWindowFrameWriteFailure> {
+        guard let initialFrame = frame(of: element, maxAttempts: 1) else {
+            return .failure(.initialFrameUnavailable)
+        }
+        if let expectedCurrentFrame,
+           !framesMatch(initialFrame, expectedCurrentFrame, tolerance: verificationTolerance) {
+            return .failure(.initialFrameMismatch(expected: expectedCurrentFrame, actual: initialFrame))
+        }
+
+        let expectedFrame = CGRect(origin: initialFrame.origin, size: size)
+        if framesMatch(initialFrame, expectedFrame, tolerance: verificationTolerance) {
+            return .success(initialFrame)
+        }
+
+        switch settableStatus(kAXSizeAttribute as CFString, on: element) {
+        case .settable:
+            break
+        case .notSettable:
+            return .failure(.attributeNotSettable(.size))
+        case let .unread(error):
+            return .failure(.capabilityQueryFailed(attribute: .size, error: error))
+        }
+
+        var mutableSize = size
+        guard let sizeValue = AXValueCreate(.cgSize, &mutableSize) else {
+            return .failure(.valueCreationFailed(.size))
+        }
+        if let expectedCurrentFrame {
+            guard let currentFrame = frame(of: element, maxAttempts: 1) else {
+                return .failure(.initialFrameUnavailable)
+            }
+            guard framesMatch(currentFrame, expectedCurrentFrame, tolerance: verificationTolerance) else {
+                return .failure(.initialFrameMismatch(expected: expectedCurrentFrame, actual: currentFrame))
+            }
+        }
+
+        let writeResult = AXUIElementSetAttributeValue(
+            element,
+            kAXSizeAttribute as CFString,
+            sizeValue
+        )
+        guard writeResult == .success else {
+            return .failure(.writeFailed(attribute: .size, error: writeResult))
+        }
+
+        guard let actualFrame = frame(of: element, maxAttempts: 1) else {
+            return .failure(.verificationUnavailable)
+        }
+        guard framesMatch(actualFrame, expectedFrame, tolerance: verificationTolerance) else {
+            return .failure(.verificationMismatch(expected: expectedFrame, actual: actualFrame))
+        }
+        return .success(actualFrame)
+    }
+
+    private func writeFrame(
+        _ targetFrame: CGRect,
+        to element: AXUIElement,
+        verificationTolerance: CGFloat,
+        onlyIfCurrentMatches expectedCurrentFrame: CGRect? = nil
+    ) -> Result<CGRect, AXWindowFrameWriteFailure> {
+        guard let initialFrame = frame(of: element, maxAttempts: 1) else {
+            return .failure(.initialFrameUnavailable)
+        }
+        if let expectedCurrentFrame,
+           !framesMatch(initialFrame, expectedCurrentFrame, tolerance: verificationTolerance) {
+            return .failure(.initialFrameMismatch(expected: expectedCurrentFrame, actual: initialFrame))
+        }
+        if framesMatch(initialFrame, targetFrame, tolerance: verificationTolerance) {
+            return .success(initialFrame)
+        }
+
+        let needsSize = !sizesMatch(
+            initialFrame.size,
+            targetFrame.size,
+            tolerance: verificationTolerance
+        )
+        let needsPosition = !pointsMatch(
+            initialFrame.origin,
+            targetFrame.origin,
+            tolerance: verificationTolerance
+        )
+
+        if needsSize {
+            switch settableStatus(kAXSizeAttribute as CFString, on: element) {
+            case .settable:
+                break
+            case .notSettable:
+                return .failure(.attributeNotSettable(.size))
+            case let .unread(error):
+                return .failure(.capabilityQueryFailed(attribute: .size, error: error))
+            }
+        }
+        if needsPosition {
+            switch settableStatus(kAXPositionAttribute as CFString, on: element) {
+            case .settable:
+                break
+            case .notSettable:
+                return .failure(.attributeNotSettable(.position))
+            case let .unread(error):
+                return .failure(.capabilityQueryFailed(attribute: .position, error: error))
+            }
+        }
+
+        var mutableSize = targetFrame.size
+        let sizeValue = needsSize ? AXValueCreate(.cgSize, &mutableSize) : nil
+        if needsSize, sizeValue == nil {
+            return .failure(.valueCreationFailed(.size))
+        }
+
+        var mutablePosition = targetFrame.origin
+        let positionValue = needsPosition ? AXValueCreate(.cgPoint, &mutablePosition) : nil
+        if needsPosition, positionValue == nil {
+            return .failure(.valueCreationFailed(.position))
+        }
+        if let expectedCurrentFrame {
+            guard let currentFrame = frame(of: element, maxAttempts: 1) else {
+                return .failure(.initialFrameUnavailable)
+            }
+            guard framesMatch(currentFrame, expectedCurrentFrame, tolerance: verificationTolerance) else {
+                return .failure(.initialFrameMismatch(expected: expectedCurrentFrame, actual: currentFrame))
+            }
+        }
+
+        if let sizeValue {
+            let result = AXUIElementSetAttributeValue(
+                element,
+                kAXSizeAttribute as CFString,
+                sizeValue
+            )
+            guard result == .success else {
+                return .failure(.writeFailed(attribute: .size, error: result))
+            }
+        }
+
+        if let positionValue {
+            let result = AXUIElementSetAttributeValue(
+                element,
+                kAXPositionAttribute as CFString,
+                positionValue
+            )
+            guard result == .success else {
+                return .failure(.writeFailed(attribute: .position, error: result))
+            }
+        }
+
+        guard let actualFrame = frame(of: element, maxAttempts: 1) else {
+            return .failure(.verificationUnavailable)
+        }
+        guard framesMatch(actualFrame, targetFrame, tolerance: verificationTolerance) else {
+            return .failure(.verificationMismatch(expected: targetFrame, actual: actualFrame))
+        }
+        return .success(actualFrame)
+    }
+
+    private func rollbackResult(
+        after failure: AXWindowFrameWriteFailure,
+        to restoreFrame: CGRect?,
+        for element: AXUIElement,
+        verificationTolerance: CGFloat
+    ) -> AXWindowFrameRollbackResult {
+        guard failure.mayHaveMutatedWindow, let restoreFrame else {
+            return .notRequested
+        }
+
+        switch writeFrame(
+            restoreFrame,
+            to: element,
+            verificationTolerance: verificationTolerance
+        ) {
+        case let .success(actualFrame):
+            return .restored(actualFrame: actualFrame)
+        case let .failure(reason):
+            return .failed(
+                reason: reason,
+                actualFrame: frame(of: element, maxAttempts: 1)
+            )
+        }
+    }
+
+    private func isValid(size: CGSize) -> Bool {
+        size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+    }
+
+    private func isValid(frame: CGRect) -> Bool {
+        frame.origin.x.isFinite
+            && frame.origin.y.isFinite
+            && isValid(size: frame.size)
+    }
+
+    private func isValid(tolerance: CGFloat) -> Bool {
+        tolerance.isFinite && tolerance >= 0
+    }
+
+    private func framesMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
+        pointsMatch(lhs.origin, rhs.origin, tolerance: tolerance)
+            && sizesMatch(lhs.size, rhs.size, tolerance: tolerance)
+    }
+
+    private func pointsMatch(_ lhs: CGPoint, _ rhs: CGPoint, tolerance: CGFloat) -> Bool {
+        abs(lhs.x - rhs.x) <= tolerance && abs(lhs.y - rhs.y) <= tolerance
+    }
+
+    private func sizesMatch(_ lhs: CGSize, _ rhs: CGSize, tolerance: CGFloat) -> Bool {
+        abs(lhs.width - rhs.width) <= tolerance && abs(lhs.height - rhs.height) <= tolerance
     }
 
     private func applyMessagingTimeout(_ timeout: TimeInterval?, to element: AXUIElement) {
