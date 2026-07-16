@@ -28,13 +28,15 @@ enum WindowLiftAvoidance {
     /// 抢顶型应用在 ~450ms 内抢回铺满（Docs/05）；超过这个窗口的铺满重现按用户操作处理。
     /// 这是 L↔M 缩放记忆死锁的解药：缩放记忆被污染后窗口只在 native↔target 间往复、
     /// 永不产生 external 帧，时间尺度是唯一可靠的"应用 vs 用户"区分器。
-    static let appReassertWindow: TimeInterval = 1.5
+    /// 取 ~450ms 的 2.2 倍余量；同时也是 abandoned 超时重开的等待——调大会直接放大
+    /// "连续缩放后要等几秒才抬"的观感（owner 2026-07-16 反馈）。
+    static let appReassertWindow: TimeInterval = 1.0
     /// 连续对峙轮数上限：abandoned 超时重开的次数；达到后降为 `standoffLockBackoff` 慢频重试，
-    /// 防止真正顽固的应用变成每 1.5s 一轮的慢动作拉锯。
+    /// 防止真正顽固的应用变成秒级一轮的慢动作拉锯。
     static let maximumStandoffRounds = 2
     /// 对峙轮数达到上限后的慢频重开间隔。不永久锁死：缩放记忆被污染的窗口可能永远
     /// 等不到 external 帧，永久锁 = 用户手不够慢就再也不抬。
-    static let standoffLockBackoff: TimeInterval = 6.0
+    static let standoffLockBackoff: TimeInterval = 3.0
 
     /// cgWindowID 只在窗口仍存活的本轮会话内使用；控制器必须按 CG 全表定期 prune。
     struct WindowKey: Hashable {

@@ -307,7 +307,7 @@ final class WindowLiftAvoidanceTests: XCTestCase {
     }
 
     func testOneReliftIsAllowedThenThirdMaximizeDetectionAbandons() throws {
-        // 全程都在 appReassertWindow(1.5s) 内：铺满重现按应用抢顶处理。
+        // 全程都在 appReassertWindow(1.0s) 内：铺满重现按应用抢顶处理。
         let target = try XCTUnwrap(geometry.adjustedFrame(for: visibleFrame))
         var transition = completedLift(generation: 1, target: target)
 
@@ -1087,7 +1087,7 @@ final class WindowLiftAvoidanceTests: XCTestCase {
         state = failedSession(from: state, generation: 3, detectedAt: 1005.0, failedAt: 1005.5)
         // rounds 已达上限，abandonedAt 1005.5。
 
-        // 上限后 1.5s~6s 之间：不重开。
+        // 上限后 appReassertWindow~standoffLockBackoff(3s) 之间：不重开。
         let held = WindowLiftAvoidance.reduce(
             state: state,
             event: .maximizedDetected(
@@ -1099,7 +1099,7 @@ final class WindowLiftAvoidanceTests: XCTestCase {
         )
         XCTAssertEqual(held.action, .none)
 
-        // 超过 6s：慢频重开，rounds 停在上限，不永久锁死。
+        // 超过 standoffLockBackoff(3s)：慢频重开，rounds 停在上限，不永久锁死。
         let reopened = WindowLiftAvoidance.reduce(
             state: held.state,
             event: .maximizedDetected(
@@ -1131,7 +1131,7 @@ final class WindowLiftAvoidanceTests: XCTestCase {
 
     func testUserPacedZoomToggleBetweenLiftedAndMaximizedAlwaysRelifts() throws {
         // L↔M 死锁回归测试：缩放记忆被污染后，用户的缩放键只在 target(L) 和 native(M)
-        // 之间往复、永不产生 external 帧。用户节奏（>1.5s）下每次落 M 都必须开新会话。
+        // 之间往复、永不产生 external 帧。用户节奏（超过 appReassertWindow）下每次落 M 都必须开新会话。
         let target = try XCTUnwrap(geometry.adjustedFrame(for: visibleFrame))
         var state = completedLift(generation: 1, target: target).state
         var generation: UInt64 = 1
@@ -1146,7 +1146,7 @@ final class WindowLiftAvoidanceTests: XCTestCase {
             )
             XCTAssertEqual(transition.action, .none, "round \(round): target 观察不应清会话")
 
-            // 用户点缩放 → 窗口回到 M（native），距上次写完 >1.5s。
+            // 用户点缩放 → 窗口回到 M（native），距上次写完超过 appReassertWindow。
             generation += 1
             let reMaximizedAt = settledAt + 2.0
             transition = WindowLiftAvoidance.reduce(

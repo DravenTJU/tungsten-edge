@@ -794,7 +794,6 @@ final class WindowLiftAvoidanceController {
     ) async -> ValidationOutcome {
         let schedule = WindowLiftAvoidance.PollSchedule.standard
         var lastTransientStage: ValidationStage = .handleUnavailable
-        var didObserveCandidateMovement = false
 
         for index in schedule.deadlines.indices {
             guard !Task.isCancelled else { return .transient(lastTransientStage) }
@@ -804,15 +803,8 @@ final class WindowLiftAvoidanceController {
             }
             guard !Task.isCancelled else { return .transient(lastTransientStage) }
             guard let confirmedCGFrame = WindowLiftCGWindowProbe.frame(for: candidate.key) else {
-                didObserveCandidateMovement = true
                 lastTransientStage = .candidateMoved
                 continue
-            }
-            if !WindowLiftAvoidance.samplesAreStable(
-                confirmedCGFrame,
-                comparedTo: candidate.quartzFrame
-            ) {
-                didObserveCandidateMovement = true
             }
             guard let handle = reader.captureHandle(
                 forPID: candidate.key.pid,
@@ -885,13 +877,12 @@ final class WindowLiftAvoidanceController {
             }
 
             // The zero-deadline pass only captures the first synchronized sample. A write may
-            // start after the same window remains stable through the 100ms or 250ms confirmation.
+            // start once a later (≥100ms) confirmation fully agrees with the detected frame.
+            // 早期采样的抖动不再一票否决整轮（旧行为逼出整整一个 0.2s 重扫周期）：
+            // 写循环的停滞/轨迹判定已能安全吸收残余移动。
             guard index > schedule.deadlines.startIndex else {
                 lastTransientStage = .frameMismatch
                 continue
-            }
-            guard !didObserveCandidateMovement else {
-                return .transient(.candidateMoved)
             }
             return .ready(handle)
         }
