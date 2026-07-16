@@ -189,6 +189,7 @@
 - Native Dock slider applies only on commit and remains non-sandbox gated.
 - Tungsten Edge slider controls wake delay, not hide delay. `不唤醒` still allows hide but disables bottom-edge wake.
 - Hidden-state bottom-edge detection must keep probing while the dock panel is hidden.
+- The bottom-edge wake hot zone (`hoverHotZone`, spans the full screen width) and the idle-hide "still interactive" check (dock/capsule panel rect, centered and narrower) are different-sized regions. Resting the mouse in the hot zone but outside the panel rect must count as "still interactive" (`EdgeAutoHideRuntimeRules.bottomHotZoneSuppressesIdleHide`), otherwise wake and idle-hide re-arm each other every cycle and the dock flickers forever (GitHub issue #2, fixed 2026-07-17). This suppression must stay gated to finite wake delays (0.1–3.0s) only — never apply it at `neverWakeDelay` (999, auto-hide without wake) or `neverHideDelay` (-1, always visible), or it silently changes those modes' behavior. Reproduction/regression diagnostic: `DOCK_EDGEHOVER_TRACE=1` prints one `[edgehover] SHOW/HIDE` line per actual visibility flip (mouse position, hot-zone/panel-rect flags, current delay) — default off, plain `print()` not `Logger` (some environments can't read the unified log back).
 - Minimum deployment target is **macOS 12**. Guard newer APIs with availability checks and Monterey-compatible fallbacks.
 - Old single-value `onChange` deprecation warnings are expected back-deployment noise.
 

@@ -1507,6 +1507,11 @@ final class PanelCoordinator: NSObject {
     private static let hoverHotZone: CGFloat = 4.0
     private static let hoverSwitchDwell: TimeInterval = 0.35   // 光标驻留热区 ≥ 350ms 才切换，路过不算
     private static let hoverVerboseLogging = false
+    /// 底边唤醒/自动隐藏的复现诊断（owner 2026-07-16 issue #2 排查）。默认关闭；这里用纯 print()
+    /// 而不是 Logger/os_log——沙箱环境读不了 `log show`/`log stream`，只有落到重定向文件里的
+    /// print() 能直接读回。AppDelegate 已对 stdout 做行缓冲（`setvbuf(stdout, nil, _IOLBF, 0)`），
+    /// 这里不需要额外处理缓冲。
+    private static let edgeHoverTraceEnabled = ProcessInfo.processInfo.environment["DOCK_EDGEHOVER_TRACE"] == "1"
     private var hoverLastScreenIndex: Int? = nil
     private var hoverLastInHotZone: Bool? = nil
     private var hoverSwitchTimer: Timer?
@@ -1780,6 +1785,7 @@ final class PanelCoordinator: NSObject {
         let shouldShow = visibilityState.isVisible
         guard shouldShow != panelsAreVisible else { return }
         panelsAreVisible = shouldShow
+        if Self.edgeHoverTraceEnabled { logEdgeHoverTrace(shouldShow: shouldShow) }
         if shouldShow {
             dockPanel?.orderFrontRegardless()
             capsulePanel?.orderFrontRegardless()
@@ -1791,6 +1797,25 @@ final class PanelCoordinator: NSObject {
             dockPanel?.orderOut(nil)
             capsulePanel?.orderOut(nil)
         }
+    }
+
+    /// `DOCK_EDGEHOVER_TRACE=1` 时每次实际 SHOW/HIDE 切换打一行：单调时钟（`CACurrentMediaTime`，
+    /// 不受墙钟调整影响，用于量切换间隔）+ 鼠标坐标 + 是否在底边热区 + 是否在任务条/胶囊矩形内 +
+    /// 当前唤醒延迟设置——足够从这一行日志本身看出"为什么"切换，而不只是"切换了"。
+    private func logEdgeHoverTrace(shouldShow: Bool) {
+        let mouse = NSEvent.mouseLocation
+        let inHotZone = dockPanel.map { isMouseInBottomHotZone(on: panelCurrentScreen(panel: $0)) } ?? false
+        let inPanelRect = (dockPanel?.frame.contains(mouse) ?? false) || (capsulePanel?.frame.contains(mouse) ?? false)
+        print(String(
+            format: "[edgehover] %@ t=%.4f mouse=(%.1f,%.1f) hotZone=%@ panelRect=%@ delay=%.2f reasons=%@",
+            shouldShow ? "SHOW" : "HIDE",
+            CACurrentMediaTime(),
+            mouse.x, mouse.y,
+            inHotZone ? "1" : "0",
+            inPanelRect ? "1" : "0",
+            settingsStore.edgeAutoHideDelay,
+            "\(visibilityState.hideReasons)"
+        ))
     }
 
     private func screenContainingMouse() -> NSScreen? {
@@ -1810,6 +1835,13 @@ final class PanelCoordinator: NSObject {
         if let capsule = capsulePanel, capsule.frame.contains(mouse) { return false }
         if drawerWantsOpen, let drawer = drawerPanel, drawer.frame.contains(mouse) { return false }
         if folderPopupWantsOpen, let popup = folderPopupPanel, popup.frame.contains(mouse) { return false }
+        // 唤醒热区贯穿整条屏幕底边，比居中的任务条/胶囊窄矩形宽得多；停在热区内但任务条范围外
+        // 若判"已离开"会立刻武装 idle-hide，与刚触发的唤醒反复打架（唤醒→隐藏→唤醒…闪烁）。
+        // 只在有限唤醒延迟下才压住——999/-1 两种模式没有这种打架，不该额外改变行为（见规则注释）。
+        if EdgeAutoHideRuntimeRules.bottomHotZoneSuppressesIdleHide(delay: settingsStore.edgeAutoHideDelay),
+           let dock = dockPanel, isMouseInBottomHotZone(on: panelCurrentScreen(panel: dock)) {
+            return false
+        }
         return true
     }
 

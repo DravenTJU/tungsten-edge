@@ -103,4 +103,13 @@ enum EdgeAutoHideRuntimeRules {
         guard delay > AppSettingsStore.neverHideDelay else { return nil }
         return fixedIdleHideDelay
     }
+
+    /// 底边唤醒热区（贯穿整条屏幕底边）是否应该压住 idle-hide、阻止武装隐藏计时器。
+    /// 只在"有限唤醒延迟"（0.1–3.0s）时成立：这个区间唤醒和 idle-hide 都在跑，鼠标停在热区内、
+    /// 但任务条矩形外时，两者会互相打架（唤醒→隐藏→唤醒…），必须让热区本身也算"没离开"。
+    /// 999（`neverWakeDelay`，自动隐藏但不唤醒）没有唤醒动作，不存在这种打架，隐藏应照常进行；
+    /// -1（`neverHideDelay`，常驻显示）本来就不会隐藏，压不压都一样。
+    static func bottomHotZoneSuppressesIdleHide(delay: Double) -> Bool {
+        delay != AppSettingsStore.neverHideDelay && delay < AppSettingsStore.neverWakeDelay
+    }
 }
