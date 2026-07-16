@@ -5,7 +5,7 @@
 > **What this app is**: Tungsten Edge 钨极 is a window-oriented bottom taskbar for macOS, designed to replace the system Dock. Multi-window apps normally split into separate window chips, with deliberate app-level entries for Finder, messaging apps, kept apps (user-chosen「在程序坞中保留」), and compatibility fallbacks. It also includes a drawer for stashed apps and a pinned-folder zone. Minimum deployment target: macOS 12.
 >
 > Product state and decisions live in the owner's Obsidian vault:
-> `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/`, entry note `00 macos-dock-cc-v2 总览.md`.
+> `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/`, entry note (homepage) `00 当前进度.md` — the checkpoint map with clickable todo nodes; todo cards live in `03 待办与想法/待办/`.
 >
 > This file is only for engineering guardrails that should not be rediscovered or reverted. Active repo-local references live in `Docs/`; historical notes live in `Docs/Archive/`.
 
@@ -14,6 +14,7 @@
 - Product state / decisions: Obsidian entry note.
 - Engineering hard constraints: this file.
 - Platform quirks: `Docs/05-known-platform-quirks.md`.
+- Rollback ledger (executable revert commands + verification state): `Docs/23-rollback-ledger.md`; keep it updated alongside the Obsidian checkpoint map.
 - Trust model history: `Docs/Archive/Engineering/19-taskbar-trust-incident.md`, `Docs/Archive/Engineering/20-inventory-first-taskbar-trust.md`.
 - Focus debug history: `Docs/22-window-focus-flicker-debugging.md`.
 - Finder P0 records: `Docs/Archive/Engineering/17-finder-p0-implementation.md`, `Docs/Archive/Engineering/18-real-sample-finder-findings.md`.
