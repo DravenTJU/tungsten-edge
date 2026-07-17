@@ -12,7 +12,7 @@ struct NativeDockAutohideState: Equatable {
 @MainActor
 protocol NativeDockPreferencesServicing {
     var isAvailable: Bool { get }
-    func apply(delay: Double) throws
+    func setAutohideEnabled(_ enabled: Bool) throws
     /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
     /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
     func currentAutohideState() -> NativeDockAutohideState?
@@ -33,8 +33,6 @@ struct SandboxEnvironment {
 
 @MainActor
 final class NativeDockPreferencesService: NativeDockPreferencesServicing {
-    static let noWakeDelay = 999.0
-
     private let sandbox: SandboxEnvironment
     private let runner: ShellRunner
     private let autohideReader: @MainActor () -> NativeDockAutohideState?
@@ -107,27 +105,16 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         return NativeDockAutohideState(enabled: enabled, delay: delay)
     }
 
-    func apply(delay: Double) throws {
+    func setAutohideEnabled(_ enabled: Bool) throws {
         guard isAvailable else { throw NativeDockPreferencesError.sandboxed }
-        for command in Self.commands(for: delay) {
+        for command in Self.commands(autohideEnabled: enabled) {
             try runner(command.executable, command.arguments)
         }
     }
 
-    static func commands(for delay: Double) -> [(executable: String, arguments: [String])] {
-        if delay <= AppSettingsStore.neverHideDelay {
-            return [
-                ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "false"]),
-                ("/usr/bin/killall", ["Dock"]),
-            ]
-        }
-
-        // 999 seconds is intentionally large enough to behave like "do not wake",
-        // without relying on extreme floating point values that Dock preferences may not parse consistently.
-        let effectiveDelay = delay >= AppSettingsStore.neverWakeDelay ? noWakeDelay : AppSettingsStore.snapDelay(delay)
+    static func commands(autohideEnabled enabled: Bool) -> [(executable: String, arguments: [String])] {
         return [
-            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "true"]),
-            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide-delay", "-float", String(format: "%.1f", effectiveDelay)]),
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", enabled ? "true" : "false"]),
             ("/usr/bin/killall", ["Dock"]),
         ]
     }

@@ -45,7 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
         onQuit: { NSApp.terminate(nil) },
-        onAddPinnedFolder: { [weak self] in self?.presentAddPinnedFolderPanel() },
         toggleHotKeyShortcut: .edgeAutoHideMode,
         isToggleHotKeyRegistered: { [weak self] in self?.edgeToggleHotKey?.isRegistered ?? false }
     )
@@ -197,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 窗口图标固定文件夹」不可行,已按预案砍掉,拖入固定区只走真实文件 URL（系统拖放）。
     }
 
-    /// 「添加固定文件夹…」统一入口（状态菜单 + 文件夹 chip 右键共用）。
+    /// 文件夹 chip / 中转格右键的「添加固定文件夹…」入口。
     /// accessory app 必须先 activate，否则 NSOpenPanel 不上前台。
     func presentAddPinnedFolderPanel() {
         NSApp.activate(ignoringOtherApps: true)

@@ -90,7 +90,7 @@ final class PanelCoordinator: NSObject {
     private let appMembershipController: AppMembershipController
     /// 外部文件移入固定文件夹的唯一执行队列：资格判断与磁盘操作都按投放批次串行。
     private let fileDropQueue = DispatchQueue(label: "com.caye.macosdockcc.v2.folder-drop", qos: .userInitiated)
-    /// 状态菜单/右键「添加文件夹…」的统一入口（AppDelegate 注入,NSOpenPanel 归它管）。
+    /// 文件夹 chip / 中转格右键「添加文件夹…」入口（AppDelegate 注入，NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
     private var drawerPanel: NSPanel?

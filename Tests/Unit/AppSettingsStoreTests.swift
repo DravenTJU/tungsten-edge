@@ -80,23 +80,24 @@ final class AppSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeDockPreferenceCommandsMapNeverHideToAutohideOff() {
-        let commands = NativeDockPreferencesService.commands(for: AppSettingsStore.neverHideDelay)
+    func testNativeDockVisibilityCommandsDisableAutohideWithoutTouchingDelay() {
+        let commands = NativeDockPreferencesService.commands(autohideEnabled: false)
 
         XCTAssertEqual(commands.count, 2)
         XCTAssertEqual(commands[0].executable, "/usr/bin/defaults")
         XCTAssertEqual(commands[0].arguments, ["write", "com.apple.dock", "autohide", "-bool", "false"])
         XCTAssertEqual(commands[1].arguments, ["Dock"])
+        XCTAssertFalse(commands.flatMap(\.arguments).contains("autohide-delay"))
     }
 
     @MainActor
-    func testNativeDockPreferenceCommandsUseNamedNoWakeDelay() {
-        let commands = NativeDockPreferencesService.commands(for: AppSettingsStore.neverWakeDelay)
+    func testNativeDockVisibilityCommandsEnableAutohideWithoutTouchingDelay() {
+        let commands = NativeDockPreferencesService.commands(autohideEnabled: true)
 
-        XCTAssertEqual(commands.count, 3)
+        XCTAssertEqual(commands.count, 2)
         XCTAssertEqual(commands[0].arguments, ["write", "com.apple.dock", "autohide", "-bool", "true"])
-        XCTAssertEqual(commands[1].arguments, ["write", "com.apple.dock", "autohide-delay", "-float", String(format: "%.1f", NativeDockPreferencesService.noWakeDelay)])
-        XCTAssertEqual(commands[2].arguments, ["Dock"])
+        XCTAssertEqual(commands[1].arguments, ["Dock"])
+        XCTAssertFalse(commands.flatMap(\.arguments).contains("autohide-delay"))
     }
 
     @MainActor
@@ -107,7 +108,7 @@ final class AppSettingsStoreTests: XCTestCase {
         }
 
         XCTAssertFalse(service.isAvailable)
-        XCTAssertThrowsError(try service.apply(delay: 1.0))
+        XCTAssertThrowsError(try service.setAutohideEnabled(true))
         XCTAssertFalse(didRun)
     }
 
@@ -118,11 +119,11 @@ final class AppSettingsStoreTests: XCTestCase {
             ranCommands.append((executable, arguments))
         }
 
-        try service.apply(delay: 1.2)
+        try service.setAutohideEnabled(true)
 
         XCTAssertTrue(service.isAvailable)
-        XCTAssertEqual(ranCommands.map(\.0), ["/usr/bin/defaults", "/usr/bin/defaults", "/usr/bin/killall"])
-        XCTAssertEqual(ranCommands[1].1, ["write", "com.apple.dock", "autohide-delay", "-float", "1.2"])
+        XCTAssertEqual(ranCommands.map(\.0), ["/usr/bin/defaults", "/usr/bin/killall"])
+        XCTAssertEqual(ranCommands[0].1, ["write", "com.apple.dock", "autohide", "-bool", "true"])
     }
 
     func testNativeDockStateReadStopsBeforeValueAccessWhenSynchronizeFails() {
@@ -208,31 +209,6 @@ final class AppSettingsStoreTests: XCTestCase {
 
         XCTAssertTrue(store.launchAtLogin)
         XCTAssertFalse(presentation.isChecked)
-    }
-
-    func testPreferenceSliderCommitTrackerDoesNotCommitWithoutChangedDelay() {
-        var tracker = PreferenceSliderCommitTracker()
-
-        tracker.begin(currentDelay: 0.5)
-
-        XCTAssertNil(tracker.commitIfChanged(currentDelay: 0.5))
-    }
-
-    func testPreferenceSliderCommitTrackerCommitsChangedDelayOnce() {
-        var tracker = PreferenceSliderCommitTracker()
-
-        tracker.begin(currentDelay: 0.5)
-
-        XCTAssertEqual(tracker.commitIfChanged(currentDelay: 1.0), 1.0)
-        XCTAssertNil(tracker.commitIfChanged(currentDelay: 1.0))
-    }
-
-    func testPreferenceSliderCommitTrackerDoesNotCommitUnchangedDelay() {
-        var tracker = PreferenceSliderCommitTracker()
-
-        tracker.begin(currentDelay: 1.0)
-
-        XCTAssertNil(tracker.commitIfChanged(currentDelay: 1.0))
     }
 
     func testPanelVisibilityKeepsHiddenUntilAllReasonsAreCleared() {
@@ -462,44 +438,64 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(AppSettingsStore.neverWakeDelay), AppSettingsStore.neverWakeDelay)
     }
 
-    // MARK: - 「自动隐藏」勾选行纯逻辑（两组共用）
+    // MARK: - 动态显隐命令纯逻辑
 
-    func testToggleMenuCheckmarkFollowsAutoHideState() {
-        XCTAssertFalse(AutoHideToggleMenuModel.isChecked(delay: AppSettingsStore.neverHideDelay))
-        XCTAssertTrue(AutoHideToggleMenuModel.isChecked(delay: 0.5))
-        XCTAssertTrue(AutoHideToggleMenuModel.isChecked(delay: AppSettingsStore.neverWakeDelay))
-        XCTAssertEqual(AutoHideToggleMenuModel.title, "自动隐藏")
+    func testEdgeToggleTitleDescribesNextModeAction() {
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.edgeTitle(delay: AppSettingsStore.neverHideDelay),
+            "隐藏 Tungsten Edge 钨极"
+        )
+        XCTAssertEqual(AutoHideToggleMenuModel.edgeTitle(delay: 0.5), "显示 Tungsten Edge 钨极")
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.edgeTitle(delay: AppSettingsStore.neverWakeDelay),
+            "显示 Tungsten Edge 钨极"
+        )
     }
 
-    func testNativeCheckmarkPrefersLiveSystemStateOverStore() {
+    @MainActor
+    func testEdgeSliderIsCompactAndKeepsAccessibilityContext() {
+        let view = PreferenceSliderMenuItemView(accessibilityTitle: "Tungsten Edge 钨极唤醒时间")
+        view.sync(delay: 0.5)
+
+        XCTAssertEqual(view.frame.height, 58)
+        XCTAssertEqual(view.accessibilityLabel(), "Tungsten Edge 钨极唤醒时间，0.5s")
+        XCTAssertEqual(view.accessibilityValue() as? String, "0.5s")
+    }
+
+    func testNativeToggleTitlePrefersLiveSystemStateOverStore() {
         // live 可读：以 live 为准，存值被无视。
-        XCTAssertTrue(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: true, storeDelay: AppSettingsStore.neverHideDelay))
-        XCTAssertFalse(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: false, storeDelay: 1.0))
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeTitle(liveAutohide: true, storeDelay: AppSettingsStore.neverHideDelay),
+            "显示系统 Dock"
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeTitle(liveAutohide: false, storeDelay: 1.0),
+            "隐藏系统 Dock"
+        )
         // live 读不到：回退存值推导。
-        XCTAssertTrue(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: nil, storeDelay: 1.0))
-        XCTAssertFalse(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: nil, storeDelay: AppSettingsStore.neverHideDelay))
+        XCTAssertEqual(AutoHideToggleMenuModel.nativeTitle(liveAutohide: nil, storeDelay: 1.0), "显示系统 Dock")
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeTitle(liveAutohide: nil, storeDelay: AppSettingsStore.neverHideDelay),
+            "隐藏系统 Dock"
+        )
     }
 
     func testNativeToggleTargetDirectionComesFromEffectiveState() {
-        // 实际开着（无论存值说什么）→ 目标是关（常驻）。
-        XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: true, storeDelay: AppSettingsStore.neverHideDelay, remembered: 2.0),
-            AppSettingsStore.neverHideDelay
-        )
-        // 实际关着（存值还停在 1.0 的过期状态）→ 目标是开回 remembered。
-        XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: false, storeDelay: 1.0, remembered: 2.0),
-            2.0
-        )
+        // 实际开着（无论存值说什么）→ 目标是关；实际关着 → 目标是开。
+        XCTAssertFalse(AutoHideToggleMenuModel.nativeToggleTargetEnabled(
+            liveAutohide: true,
+            storeDelay: AppSettingsStore.neverHideDelay
+        ))
+        XCTAssertTrue(AutoHideToggleMenuModel.nativeToggleTargetEnabled(
+            liveAutohide: false,
+            storeDelay: 1.0
+        ))
         // live 读不到 → 按存值方向翻。
-        XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: nil, storeDelay: 1.0, remembered: 2.0),
-            AppSettingsStore.neverHideDelay
-        )
-        XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: nil, storeDelay: AppSettingsStore.neverHideDelay, remembered: 2.0),
-            2.0
-        )
+        XCTAssertFalse(AutoHideToggleMenuModel.nativeToggleTargetEnabled(liveAutohide: nil, storeDelay: 1.0))
+        XCTAssertTrue(AutoHideToggleMenuModel.nativeToggleTargetEnabled(
+            liveAutohide: nil,
+            storeDelay: AppSettingsStore.neverHideDelay
+        ))
     }
 
     func testToggleMenuKeyEquivalentShownOnlyWhenHotKeyRegistered() {
