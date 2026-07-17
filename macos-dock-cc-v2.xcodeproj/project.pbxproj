@@ -162,6 +162,9 @@
 		A00000000000000000009E11 /* WindowInventoryAnomalyLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */; };
 		A00000000000000000009E12 /* WindowInventoryAnomalyLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */; };
 		A00000000000000000009E13 /* AXWindowReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000054 /* AXWindowReader.swift */; };
+		A00000000000000000009F01 /* GlobalHotKeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */; };
+		A00000000000000000009F02 /* GlobalHotKeyMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */; };
+		A00000000000000000009F11 /* GlobalHotKeyMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */; };
 		A00000000000000000009E14 /* AXWindowReaderResultTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E02 /* AXWindowReaderResultTests.swift */; };
 		A00000000000000000009E15 /* AXWindowMatchPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000064 /* AXWindowMatchPolicy.swift */; };
 		A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
@@ -191,6 +194,8 @@
 		A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowInventoryAnomalyLog.swift; sourceTree = "<group>"; };
 		A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowInventoryAnomalyLogTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E02 /* AXWindowReaderResultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXWindowReaderResultTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitor.swift; sourceTree = "<group>"; };
+		A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitorTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A00 /* WindowLiftAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidance.swift; sourceTree = "<group>"; };
 		A00000000000000000009A10 /* WindowLiftAvoidanceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidanceController.swift; sourceTree = "<group>"; };
 		A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidanceTests.swift; sourceTree = "<group>"; };
@@ -375,6 +380,7 @@
 				A00000000000000000009740 /* DragCarrierView.swift */,
 				A00000000000000000007010 /* DrawerOrderStore.swift */,
 				A00000000000000000008010 /* AppSettingsStore.swift */,
+				A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */,
 				A00000000000000000009010 /* LaunchAtLoginService.swift */,
 				A00000000000000000009020 /* NativeDockPreferencesService.swift */,
 				A00000000000000000009C00 /* UpdateChecker.swift */,
@@ -660,6 +666,7 @@
 				A00000000000000000000058 /* FinderP0Tests.swift */,
 				A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
+				A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */,
 				A000000000000000000090A0 /* PanelGeometryTests.swift */,
 				A00000000000000000009D10 /* WindowTitleTooltipTests.swift */,
 				A000000000000000000090B0 /* FullscreenClassificationTests.swift */,
@@ -826,6 +833,7 @@
 					A00000000000000000009751 /* NonConstrainingPanel.swift in Sources */,
 					A00000000000000000007011 /* DrawerOrderStore.swift in Sources */,
 					A00000000000000000008011 /* AppSettingsStore.swift in Sources */,
+					A00000000000000000009F01 /* GlobalHotKeyMonitor.swift in Sources */,
 					A00000000000000000009011 /* LaunchAtLoginService.swift in Sources */,
 					A00000000000000000009021 /* NativeDockPreferencesService.swift in Sources */,
 					A00000000000000000009031 /* PanelVisibilityState.swift in Sources */,
@@ -932,6 +940,8 @@
 				A0000000000000000000101F /* FinderP0Tests.swift in Sources */,
 				A00000000000000000008031 /* AppSettingsStore.swift in Sources */,
 				A00000000000000000008041 /* AppSettingsStoreTests.swift in Sources */,
+				A00000000000000000009F02 /* GlobalHotKeyMonitor.swift in Sources */,
+				A00000000000000000009F11 /* GlobalHotKeyMonitorTests.swift in Sources */,
 				A00000000000000000009071 /* StatusMenuController.swift in Sources */,
 				A00000000000000000009C02 /* UpdateChecker.swift in Sources */,
 				A00000000000000000009C03 /* UpdateCheckerTests.swift in Sources */,

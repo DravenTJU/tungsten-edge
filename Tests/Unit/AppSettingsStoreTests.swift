@@ -1,3 +1,5 @@
+import AppKit
+import Carbon.HIToolbox
 import XCTest
 
 @MainActor
@@ -121,6 +123,54 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertTrue(service.isAvailable)
         XCTAssertEqual(ranCommands.map(\.0), ["/usr/bin/defaults", "/usr/bin/defaults", "/usr/bin/killall"])
         XCTAssertEqual(ranCommands[1].1, ["write", "com.apple.dock", "autohide-delay", "-float", "1.2"])
+    }
+
+    func testNativeDockStateReadStopsBeforeValueAccessWhenSynchronizeFails() {
+        var requestedKeys: [String] = []
+
+        let state = NativeDockPreferencesService.readAutohideState(
+            synchronize: { false },
+            valueForKey: { key in
+                requestedKeys.append(key)
+                return nil
+            }
+        )
+
+        XCTAssertNil(state)
+        XCTAssertTrue(requestedKeys.isEmpty)
+    }
+
+    func testNativeDockStateDecoderDistinguishesMissingKeysFromCorruptValues() {
+        XCTAssertEqual(
+            NativeDockPreferencesService.decodeAutohideState(autohideValue: nil, delayValue: nil),
+            NativeDockAutohideState(enabled: false, delay: nil)
+        )
+        XCTAssertEqual(
+            NativeDockPreferencesService.decodeAutohideState(autohideValue: true, delayValue: 0.2),
+            NativeDockAutohideState(enabled: true, delay: 0.2)
+        )
+        XCTAssertEqual(
+            NativeDockPreferencesService.decodeAutohideState(autohideValue: nil, delayValue: 0.2),
+            NativeDockAutohideState(enabled: false, delay: 0.2)
+        )
+        XCTAssertEqual(
+            NativeDockPreferencesService.decodeAutohideState(autohideValue: false, delayValue: "bad"),
+            NativeDockAutohideState(enabled: false, delay: nil),
+            "系统明确关闭时，坏 delay 不得掩盖可信的 autohide 真值"
+        )
+
+        XCTAssertNil(NativeDockPreferencesService.decodeAutohideState(autohideValue: "true", delayValue: 0.2))
+        XCTAssertNil(NativeDockPreferencesService.decodeAutohideState(autohideValue: NSNumber(value: 1), delayValue: 0.2))
+        XCTAssertNil(NativeDockPreferencesService.decodeAutohideState(autohideValue: true, delayValue: "0.2"))
+        XCTAssertNil(NativeDockPreferencesService.decodeAutohideState(autohideValue: true, delayValue: false))
+        XCTAssertNil(NativeDockPreferencesService.decodeAutohideState(
+            autohideValue: true,
+            delayValue: NSNumber(value: Double.nan)
+        ))
+        XCTAssertNil(NativeDockPreferencesService.decodeAutohideState(
+            autohideValue: true,
+            delayValue: NSNumber(value: Double.infinity)
+        ))
     }
 
     func testLaunchAtLoginMenuPresentationCoversFourStates() {
@@ -261,6 +311,355 @@ final class AppSettingsStoreTests: XCTestCase {
 
         // -1：常驻显示——本来就不会隐藏，压不压都一样，规则仍应返回 false（不代表要生效）。
         XCTAssertFalse(EdgeAutoHideRuntimeRules.bottomHotZoneSuppressesIdleHide(delay: AppSettingsStore.neverHideDelay))
+    }
+
+    // MARK: - 常驻切换（toggleEdgeAutoHideMode）与 remembered 播种
+
+    func testToggleFromFiniteDelayEntersResidentAndRestoresSameDelay() {
+        let defaults = makeDefaults()
+        defaults.set(0.5, forKey: "com.tungsten.edge.autoHide.edge.delay")
+        let store = AppSettingsStore(defaults: defaults)
+
+        store.toggleEdgeAutoHideMode()
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.neverHideDelay)
+        XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, 0.5)
+
+        store.toggleEdgeAutoHideMode()
+        XCTAssertEqual(store.edgeAutoHideDelay, 0.5)
+    }
+
+    func testToggleFromNeverWakeRoundTripsBackToNeverWake() {
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(defaults: defaults)
+        store.setEdgeAutoHideDelay(AppSettingsStore.neverWakeDelay)
+
+        store.toggleEdgeAutoHideMode()
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.neverHideDelay)
+
+        store.toggleEdgeAutoHideMode()
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.neverWakeDelay)
+    }
+
+    func testToggleFromResidentWithoutHistoryFallsBackToDefaultDelay() {
+        let defaults = makeDefaults()
+        defaults.set(AppSettingsStore.neverHideDelay, forKey: "com.tungsten.edge.autoHide.edge.delay")
+        let store = AppSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, AppSettingsStore.defaultEdgeAutoHideDelay)
+
+        store.toggleEdgeAutoHideMode()
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.defaultEdgeAutoHideDelay)
+    }
+
+    func testRememberedSeedsFromCurrentFiniteValueOverStaleStoredValue() {
+        let defaults = makeDefaults()
+        defaults.set(0.5, forKey: "com.tungsten.edge.autoHide.edge.delay")
+        defaults.set(2.0, forKey: "com.tungsten.edge.autoHide.edge.lastEnabledDelay")
+
+        let store = AppSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, 0.5)
+        XCTAssertEqual(defaults.double(forKey: "com.tungsten.edge.autoHide.edge.lastEnabledDelay"), 0.5)
+    }
+
+    func testRememberedIsReadOnlyWhenCurrentIsResident() {
+        let defaults = makeDefaults()
+        defaults.set(AppSettingsStore.neverHideDelay, forKey: "com.tungsten.edge.autoHide.edge.delay")
+        defaults.set(2.0, forKey: "com.tungsten.edge.autoHide.edge.lastEnabledDelay")
+
+        let store = AppSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, 2.0)
+    }
+
+    func testCorruptRememberedValuesFallBackToDefault() {
+        let corruptValues: [Any] = ["字符串", Double.nan, AppSettingsStore.neverHideDelay, -50.0]
+        for corrupt in corruptValues {
+            let defaults = makeDefaults()
+            defaults.set(AppSettingsStore.neverHideDelay, forKey: "com.tungsten.edge.autoHide.edge.delay")
+            defaults.set(corrupt, forKey: "com.tungsten.edge.autoHide.edge.lastEnabledDelay")
+
+            let store = AppSettingsStore(defaults: defaults)
+
+            XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, AppSettingsStore.defaultEdgeAutoHideDelay, "corrupt=\(corrupt)")
+        }
+    }
+
+    func testLegacyDisabledMigrationThenToggleRestoresDefaultDelay() {
+        let defaults = makeDefaults()
+        defaults.set(false, forKey: "com.tungsten.edge.autoHide.edge.enabled")
+        defaults.set(0.7, forKey: "com.tungsten.edge.autoHide.edge.delay")
+
+        let store = AppSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.neverHideDelay)
+        XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, AppSettingsStore.defaultEdgeAutoHideDelay)
+
+        store.toggleEdgeAutoHideMode()
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.defaultEdgeAutoHideDelay)
+    }
+
+    func testCrossStoreRebuildKeepsRememberedDelay() {
+        let defaults = makeDefaults()
+        let first = AppSettingsStore(defaults: defaults)
+        first.setEdgeAutoHideDelay(2.0)
+        first.toggleEdgeAutoHideMode()
+        XCTAssertEqual(first.edgeAutoHideDelay, AppSettingsStore.neverHideDelay)
+
+        let second = AppSettingsStore(defaults: defaults)
+        XCTAssertEqual(second.edgeAutoHideDelay, AppSettingsStore.neverHideDelay)
+        XCTAssertEqual(second.lastEnabledEdgeAutoHideDelay, 2.0)
+
+        second.toggleEdgeAutoHideMode()
+        XCTAssertEqual(second.edgeAutoHideDelay, 2.0)
+    }
+
+    func testNonFiniteSetterInputsAreIgnored() {
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(defaults: defaults)
+        store.setEdgeAutoHideDelay(0.5)
+
+        store.setEdgeAutoHideDelay(.nan)
+        store.setEdgeAutoHideDelay(.infinity)
+        store.setEdgeAutoHideDelay(-.infinity)
+        store.setNativeDockAutoHideDelay(.nan)
+
+        XCTAssertEqual(store.edgeAutoHideDelay, 0.5)
+        XCTAssertEqual(store.lastEnabledEdgeAutoHideDelay, 0.5)
+        XCTAssertEqual(store.nativeDockAutoHideDelay, AppSettingsStore.defaultNativeDockAutoHideDelay)
+    }
+
+    func testSnapDelayReturnsFallbackForNonFiniteInput() {
+        XCTAssertEqual(AppSettingsStore.snapDelay(.nan), AppSettingsStore.defaultEdgeAutoHideDelay)
+        XCTAssertEqual(AppSettingsStore.snapDelay(.infinity, fallbackForNonFinite: 1.0), 1.0)
+        XCTAssertEqual(AppSettingsStore.snapDelay(-.infinity, fallbackForNonFinite: 2.0), 2.0)
+    }
+
+    func testStoredActiveDelayRejectsWrongTypesAndUsesPerGroupFallback() {
+        XCTAssertEqual(AppSettingsStore.sanitizedStoredDelay("bad", fallback: 1.0), 1.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedStoredDelay(true, fallback: 1.0), 1.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedStoredDelay(NSNumber(value: Double.nan), fallback: 1.0), 1.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedStoredDelay(2.04, fallback: 1.0), 2.0)
+
+        let defaults = makeDefaults()
+        defaults.set("bad", forKey: "com.tungsten.edge.autoHide.nativeDock.delay")
+        defaults.set(true, forKey: "com.tungsten.edge.autoHide.edge.delay")
+
+        let store = AppSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.nativeDockAutoHideDelay, AppSettingsStore.defaultNativeDockAutoHideDelay)
+        XCTAssertEqual(store.edgeAutoHideDelay, AppSettingsStore.defaultEdgeAutoHideDelay)
+        XCTAssertEqual(defaults.double(forKey: "com.tungsten.edge.autoHide.nativeDock.delay"), 1.0)
+        XCTAssertEqual(defaults.double(forKey: "com.tungsten.edge.autoHide.edge.delay"), 0.1)
+    }
+
+    func testSanitizedLastEnabledDelayNeverReturnsResident() {
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(nil), AppSettingsStore.defaultEdgeAutoHideDelay)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(.nan), AppSettingsStore.defaultEdgeAutoHideDelay)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(AppSettingsStore.neverHideDelay), AppSettingsStore.defaultEdgeAutoHideDelay)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(-50.0), AppSettingsStore.defaultEdgeAutoHideDelay)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(0.05), AppSettingsStore.finiteDelayMin)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(2.0), 2.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(AppSettingsStore.neverWakeDelay), AppSettingsStore.neverWakeDelay)
+    }
+
+    // MARK: - 「自动隐藏」勾选行纯逻辑（两组共用）
+
+    func testToggleMenuCheckmarkFollowsAutoHideState() {
+        XCTAssertFalse(AutoHideToggleMenuModel.isChecked(delay: AppSettingsStore.neverHideDelay))
+        XCTAssertTrue(AutoHideToggleMenuModel.isChecked(delay: 0.5))
+        XCTAssertTrue(AutoHideToggleMenuModel.isChecked(delay: AppSettingsStore.neverWakeDelay))
+        XCTAssertEqual(AutoHideToggleMenuModel.title, "自动隐藏")
+    }
+
+    func testNativeCheckmarkPrefersLiveSystemStateOverStore() {
+        // live 可读：以 live 为准，存值被无视。
+        XCTAssertTrue(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: true, storeDelay: AppSettingsStore.neverHideDelay))
+        XCTAssertFalse(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: false, storeDelay: 1.0))
+        // live 读不到：回退存值推导。
+        XCTAssertTrue(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: nil, storeDelay: 1.0))
+        XCTAssertFalse(AutoHideToggleMenuModel.nativeIsChecked(liveAutohide: nil, storeDelay: AppSettingsStore.neverHideDelay))
+    }
+
+    func testNativeToggleTargetDirectionComesFromEffectiveState() {
+        // 实际开着（无论存值说什么）→ 目标是关（常驻）。
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: true, storeDelay: AppSettingsStore.neverHideDelay, remembered: 2.0),
+            AppSettingsStore.neverHideDelay
+        )
+        // 实际关着（存值还停在 1.0 的过期状态）→ 目标是开回 remembered。
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: false, storeDelay: 1.0, remembered: 2.0),
+            2.0
+        )
+        // live 读不到 → 按存值方向翻。
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: nil, storeDelay: 1.0, remembered: 2.0),
+            AppSettingsStore.neverHideDelay
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.nativeToggleTarget(liveAutohide: nil, storeDelay: AppSettingsStore.neverHideDelay, remembered: 2.0),
+            2.0
+        )
+    }
+
+    func testToggleMenuKeyEquivalentShownOnlyWhenHotKeyRegistered() {
+        let shortcut = GlobalHotKeyShortcut.edgeAutoHideMode
+
+        let shown = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: true, shortcut: shortcut)
+        XCTAssertEqual(shown.key, "e")
+        XCTAssertEqual(shown.mask, [.option, .command])
+
+        let hidden = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: false, shortcut: shortcut)
+        XCTAssertEqual(hidden.key, "")
+        XCTAssertEqual(hidden.mask, [])
+
+        // 系统 Dock 行：⌥⌘D 恒生效，调用方恒传 true。
+        let native = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: true, shortcut: .nativeDockAutoHide)
+        XCTAssertEqual(native.key, "d")
+        XCTAssertEqual(native.mask, [.option, .command])
+    }
+
+    func testNativeDockMenuActionSkipsOnlyExactSystemShortcut() {
+        let exactMask: NSEvent.ModifierFlags = [.option, .command]
+        let keyE = UInt16(kVK_ANSI_E)
+        let keyD = UInt16(kVK_ANSI_D)
+
+        // 系统 ⌥⌘D 在菜单展开时仍有效：D 的精确 keyDown 跳过 menu action。
+        XCTAssertTrue(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .keyDown, keyCode: keyD, modifierFlags: exactMask,
+            isSystemShortcutAvailable: true
+        ))
+
+        // 鼠标点击、回车、修饰键不同、系统路径不可用——一律照常执行菜单 action。
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .leftMouseUp, keyCode: nil, modifierFlags: [],
+            isSystemShortcutAvailable: true
+        ))
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .keyDown, keyCode: UInt16(kVK_Return), modifierFlags: [],
+            isSystemShortcutAvailable: true
+        ))
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .keyDown, keyCode: keyD, modifierFlags: [.command],
+            isSystemShortcutAvailable: true
+        ))
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .keyDown, keyCode: keyD, modifierFlags: exactMask,
+            isSystemShortcutAvailable: false
+        ))
+
+        // 物理键码而非字符决定系统路径去重，E 键不能误伤 D 行。
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .keyDown, keyCode: keyE, modifierFlags: exactMask,
+            isSystemShortcutAvailable: true
+        ))
+    }
+
+    func testReconciledStoreDelayAlignsStoreWithSystemTruth() {
+        // 系统关着：存值不是常驻就改成常驻；已是常驻则无需改动。
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: false, systemDelay: nil, currentStoreDelay: 1.0),
+            AppSettingsStore.neverHideDelay
+        )
+        XCTAssertNil(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: false, systemDelay: 0.5, currentStoreDelay: AppSettingsStore.neverHideDelay)
+        )
+
+        // 系统开着：对齐到系统延迟（吸附到合法档位）；键不存在用系统默认 0.5。
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: 0.2, currentStoreDelay: AppSettingsStore.neverHideDelay),
+            0.2
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: nil, currentStoreDelay: AppSettingsStore.neverHideDelay),
+            AutoHideToggleMenuModel.systemDefaultAutohideDelay
+        )
+        // 999（不唤醒档）原样往返；0 吸附到最小档 0.1；已一致返回 nil。
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: 999.0, currentStoreDelay: 1.0),
+            AppSettingsStore.neverWakeDelay
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: 0.0, currentStoreDelay: 1.0),
+            AppSettingsStore.finiteDelayMin
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: -1.0, currentStoreDelay: 1.0),
+            AppSettingsStore.finiteDelayMin,
+            "系统开关明确开启时，负 delay 不能被解释成 App 的常驻哨兵"
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: .nan, currentStoreDelay: 0.2),
+            AppSettingsStore.defaultNativeDockAutoHideDelay
+        )
+        XCTAssertNil(
+            AutoHideToggleMenuModel.reconciledStoreDelay(systemEnabled: true, systemDelay: 1.0, currentStoreDelay: 1.0)
+        )
+    }
+
+    @MainActor
+    func testNativeDockAutohideStateReadRespectsSandboxAndInjectedReader() {
+        let sandboxed = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: true),
+            runner: { _, _ in },
+            autohideReader: { NativeDockAutohideState(enabled: true, delay: 0.5) }
+        )
+        XCTAssertNil(sandboxed.currentAutohideState(), "沙箱下读不到，返回 nil 让调用方回退存值")
+
+        let readable = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: false),
+            runner: { _, _ in },
+            autohideReader: { NativeDockAutohideState(enabled: true, delay: 0.2) }
+        )
+        XCTAssertEqual(readable.currentAutohideState(), NativeDockAutohideState(enabled: true, delay: 0.2))
+    }
+
+    // MARK: - 系统 Dock 组 remembered 镜像
+
+    func testNativeRememberedSeedsFromCurrentFiniteValueOverStaleStoredValue() {
+        let defaults = makeDefaults()
+        defaults.set(2.0, forKey: "com.tungsten.edge.autoHide.nativeDock.delay")
+        defaults.set(0.5, forKey: "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay")
+
+        let store = AppSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.lastEnabledNativeDockAutoHideDelay, 2.0)
+        XCTAssertEqual(defaults.double(forKey: "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay"), 2.0)
+    }
+
+    func testNativeRememberedIsReadWhenCurrentIsResidentAndCorruptFallsBackToNativeDefault() {
+        let defaults = makeDefaults()
+        defaults.set(AppSettingsStore.neverHideDelay, forKey: "com.tungsten.edge.autoHide.nativeDock.delay")
+        defaults.set(2.0, forKey: "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay")
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).lastEnabledNativeDockAutoHideDelay, 2.0)
+
+        let corrupted = makeDefaults()
+        corrupted.set(AppSettingsStore.neverHideDelay, forKey: "com.tungsten.edge.autoHide.nativeDock.delay")
+        corrupted.set(AppSettingsStore.neverHideDelay, forKey: "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay")
+        // 回退值是 native 组自己的默认档位 1.0，不是 edge 的 0.1。
+        XCTAssertEqual(AppSettingsStore(defaults: corrupted).lastEnabledNativeDockAutoHideDelay, AppSettingsStore.defaultNativeDockAutoHideDelay)
+    }
+
+    func testNativeSetterSyncsRememberedBeforeActiveDedup() {
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(defaults: defaults)
+
+        store.setNativeDockAutoHideDelay(2.0)
+        XCTAssertEqual(store.lastEnabledNativeDockAutoHideDelay, 2.0)
+
+        store.setNativeDockAutoHideDelay(AppSettingsStore.neverHideDelay)
+        XCTAssertEqual(store.nativeDockAutoHideDelay, AppSettingsStore.neverHideDelay)
+        XCTAssertEqual(store.lastEnabledNativeDockAutoHideDelay, 2.0, "写入常驻不动 remembered")
+
+        let rebuilt = AppSettingsStore(defaults: defaults)
+        XCTAssertEqual(rebuilt.lastEnabledNativeDockAutoHideDelay, 2.0, "跨 Store 重建保留 remembered")
+    }
+
+    func testSanitizedLastEnabledDelayHonorsPerGroupFallback() {
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(nil, fallback: AppSettingsStore.defaultNativeDockAutoHideDelay), 1.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(.nan, fallback: 1.0), 1.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(AppSettingsStore.neverHideDelay, fallback: 1.0), 1.0)
+        XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(2.0, fallback: 1.0), 2.0)
     }
 
     private func makeDefaults() -> UserDefaults {

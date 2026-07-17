@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -26,6 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var panelCoordinator: PanelCoordinator?
     private var windowLiftAvoidanceController: WindowLiftAvoidanceController?
+    /// 常驻切换全局快捷键。回调只切设置（经 settingsStore），不经过 panelCoordinator——
+    /// 后者在权限引导完成前是 nil，settingsStore 从 AppDelegate 构造起即存在。
+    private var edgeToggleHotKey: GlobalHotKeyMonitor?
     private var terminationTask: Task<Void, Never>?
     private var debugWindow: NSWindow?
     private var permissionWindow: NSWindow?
@@ -41,13 +45,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
         onQuit: { NSApp.terminate(nil) },
-        onAddPinnedFolder: { [weak self] in self?.presentAddPinnedFolderPanel() }
+        onAddPinnedFolder: { [weak self] in self?.presentAddPinnedFolderPanel() },
+        toggleHotKeyShortcut: .edgeAutoHideMode,
+        isToggleHotKeyRegistered: { [weak self] in self?.edgeToggleHotKey?.isRegistered ?? false }
     )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 行缓冲 stdout：从命令行/后台启动时，print() 输出到文件默认是块缓冲，
         // 日志要攒满缓冲区才落盘。改成行缓冲后每条 print 立即写出，便于实时读日志。
         setvbuf(stdout, nil, _IOLBF, 0)
+
+        // 先注册热键再建状态菜单：菜单构建时要读注册状态决定是否显示快捷键提示。
+        // Carbon 热键不依赖辅助功能权限，不用等权限引导分支。
+        let hotKey = GlobalHotKeyMonitor(shortcut: .edgeAutoHideMode) { [weak self] in
+            self?.settingsStore.toggleEdgeAutoHideMode()
+        }
+        edgeToggleHotKey = hotKey
+        let hotKeyStatus = hotKey.start()
+        if hotKeyStatus != .registered {
+            Logger(subsystem: "com.caye.macosdockcc.v2", category: "hotkey")
+                .warning("常驻切换全局快捷键注册失败：\(String(describing: hotKeyStatus), privacy: .public)，本次启动不重试")
+        }
+
         _ = statusMenuController
 
         if AXIsProcessTrusted() {
@@ -62,6 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // 收尾等待（stopAndRestore）期间事件循环还在跑：先切断热键输入，避免设置被继续切换。
+        edgeToggleHotKey?.stop()
         guard let controller = windowLiftAvoidanceController else { return .terminateNow }
         guard terminationTask == nil else { return .terminateLater }
 
@@ -74,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        edgeToggleHotKey?.stop()
         windowLiftAvoidanceController?.stop()
         runtime.stop()
     }

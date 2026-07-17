@@ -3,10 +3,19 @@ import Security
 
 typealias ShellRunner = @MainActor (_ executable: String, _ arguments: [String]) throws -> Void
 
+/// 系统 Dock 自动隐藏的实际状态快照。delay 为 nil = autohide-delay 键不存在（系统默认值）。
+struct NativeDockAutohideState: Equatable {
+    var enabled: Bool
+    var delay: Double?
+}
+
 @MainActor
 protocol NativeDockPreferencesServicing {
     var isAvailable: Bool { get }
     func apply(delay: Double) throws
+    /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
+    /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
+    func currentAutohideState() -> NativeDockAutohideState?
 }
 
 struct SandboxEnvironment {
@@ -28,13 +37,75 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
 
     private let sandbox: SandboxEnvironment
     private let runner: ShellRunner
+    private let autohideReader: @MainActor () -> NativeDockAutohideState?
 
-    init(sandbox: SandboxEnvironment = .current, runner: @escaping ShellRunner = NativeDockPreferencesService.runProcess) {
+    init(sandbox: SandboxEnvironment = .current,
+         runner: @escaping ShellRunner = NativeDockPreferencesService.runProcess,
+         autohideReader: @escaping @MainActor () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem) {
         self.sandbox = sandbox
         self.runner = runner
+        self.autohideReader = autohideReader
     }
 
     var isAvailable: Bool { !sandbox.isSandboxed }
+
+    func currentAutohideState() -> NativeDockAutohideState? {
+        guard isAvailable else { return nil }
+        return autohideReader()
+    }
+
+    static func readAutohideStateFromSystem() -> NativeDockAutohideState? {
+        let domain = "com.apple.dock" as CFString
+        // 外部修改（⌥⌘D / 系统设置 / killall Dock）不会自动进入本进程的 CFPreferences 缓存，
+        // 每次读取前必须先同步，否则可能一直拿到旧值。
+        return readAutohideState(
+            synchronize: { CFPreferencesAppSynchronize(domain) },
+            valueForKey: { key in
+                CFPreferencesCopyAppValue(key as CFString, domain)
+            }
+        )
+    }
+
+    /// 注入同步与取值动作，既隔离 CFPreferences I/O，也让同步失败等分支可直接单测。
+    static func readAutohideState(
+        synchronize: () -> Bool,
+        valueForKey: (String) -> Any?
+    ) -> NativeDockAutohideState? {
+        guard synchronize() else { return nil }
+        return decodeAutohideState(
+            autohideValue: valueForKey("autohide"),
+            delayValue: valueForKey("autohide-delay")
+        )
+    }
+
+    /// 纯解码规则：autohide 缺键代表关闭；存在却不是布尔值代表整份快照不可读。
+    /// 开启时，delay 缺键代表系统默认，坏类型代表不可读；关闭时 delay 不影响开关真值。
+    static func decodeAutohideState(
+        autohideValue: Any?,
+        delayValue: Any?
+    ) -> NativeDockAutohideState? {
+        let enabled: Bool
+        if let autohideValue {
+            guard let decoded = strictBooleanValue(autohideValue) else { return nil }
+            enabled = decoded
+        } else {
+            enabled = false
+        }
+
+        if !enabled {
+            let delay = delayValue.flatMap { finiteNumericValue($0) }
+            return NativeDockAutohideState(enabled: false, delay: delay)
+        }
+
+        let delay: Double?
+        if let delayValue {
+            guard let decoded = finiteNumericValue(delayValue) else { return nil }
+            delay = decoded
+        } else {
+            delay = nil
+        }
+        return NativeDockAutohideState(enabled: enabled, delay: delay)
+    }
 
     func apply(delay: Double) throws {
         guard isAvailable else { throw NativeDockPreferencesError.sandboxed }
@@ -70,6 +141,23 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         guard process.terminationStatus == 0 else {
             throw NativeDockPreferencesError.commandFailed(executable: executable, status: process.terminationStatus)
         }
+    }
+
+    private static func strictBooleanValue(_ value: Any) -> Bool? {
+        guard CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID(),
+              let number = value as? NSNumber else {
+            return nil
+        }
+        return number.boolValue
+    }
+
+    private static func finiteNumericValue(_ value: Any) -> Double? {
+        guard CFGetTypeID(value as CFTypeRef) != CFBooleanGetTypeID(),
+              let number = value as? NSNumber else {
+            return nil
+        }
+        let result = number.doubleValue
+        return result.isFinite ? result : nil
     }
 }
 
