@@ -153,6 +153,7 @@ final class PanelCoordinator: NSObject {
     private var drawerStoreWidthSubscription: AnyCancellable?
     private var messagingStoreWidthSubscription: AnyCancellable?
     private var keptAppStoreSubscription: AnyCancellable?
+    private var runningApplicationStoreSubscription: AnyCancellable?
     private var dragSpringSubscription: AnyCancellable?
     private var dragInhibitorSubscription: AnyCancellable?
     private var edgeDelaySubscription: AnyCancellable?
@@ -234,6 +235,7 @@ final class PanelCoordinator: NSObject {
         subscribeDrawerStoreWidth()
         subscribeMessagingStoreWidth()
         subscribeKeptAppStore()
+        subscribeRunningApplicationStore()
         subscribeDragSpringLoad()
         subscribeDragInhibitor()
         subscribeConvertRelease()
@@ -777,7 +779,6 @@ final class PanelCoordinator: NSObject {
     private func setupDragController() {
         dragController = DragController(
             drawerStore: drawerStore,
-            keptAppStore: keptAppStore,
             messagingStore: messagingStore,
             dropZonesProvider: { [weak self] source in self?.dragDropZones(for: source) ?? [] },
             screenProvider: { [weak self] in self?.carrierTargetScreen() ?? (NSScreen.main ?? NSScreen.screens[0]) },
@@ -1185,7 +1186,10 @@ final class PanelCoordinator: NSObject {
             DrawerCapsuleButton { [weak self] in self?.toggleDrawer() }
                 .environmentObject(runtime)
                 .environmentObject(drawerStore)
+                .environmentObject(messagingStore)
                 .environmentObject(keptAppStore)
+                .environmentObject(runningApplicationStore)
+                .environmentObject(drawerOrderStore)
                 .environmentObject(dragController)
         )
         hosting.wantsLayer = true
@@ -1240,13 +1244,10 @@ final class PanelCoordinator: NSObject {
             }
     }
 
-    /// 抽屉显示顺序层按成员全集（收纳 ∪ 启动收藏 − pinned app）收敛。相关名单任一变化都同步一次，
-    /// 即便抽屉没开也要同步——这样新收纳的 app 进来时已在顺序末尾就位，不丢已排好的相对序。
+    /// 抽屉顺序按完整 placement 集合收敛，不按当前可见项裁。即便抽屉没开也同步，
+    /// 让隐藏成员下一次启动时回到原来的相对位置。
     private func syncDrawerOrder() {
-        let members = AppMembershipProjection.drawerMembers(
-            drawerIDs: drawerStore.bundleIDs,
-            keptIDs: keptAppStore.bundleIDs
-        )
+        let members = AppMembershipProjection.drawerMembers(drawerIDs: drawerStore.bundleIDs)
         drawerOrderStore.sync(members: members)
     }
 
@@ -1265,9 +1266,16 @@ final class PanelCoordinator: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 DispatchQueue.main.async { [weak self] in
-                    self?.syncDrawerOrder()
                     self?.relayout(animated: true)
                 }
+            }
+    }
+
+    private func subscribeRunningApplicationStore() {
+        runningApplicationStoreSubscription = runningApplicationStore.$runningBundleIDs
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
             }
     }
 

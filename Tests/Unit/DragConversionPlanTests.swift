@@ -6,36 +6,46 @@ final class DragConversionPlanTests: XCTestCase {
 
     func testFinderAndEmptyBundleIDReject() {
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "com.apple.finder", isMessagingMember: false, isInSnapshot: true, hasRealWindow: true), .reject)
+            bundleID: "com.apple.finder", isMessagingMember: false, isInSnapshot: true, hasRealWindow: true, isKept: true), .reject)
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "", isMessagingMember: false, isInSnapshot: true, hasRealWindow: true), .reject)
+            bundleID: "", isMessagingMember: false, isInSnapshot: true, hasRealWindow: true, isKept: true), .reject)
     }
 
     func testRunningMessagingMemberReleasesToMessaging() {
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "com.example.chat", isMessagingMember: true, isInSnapshot: true, hasRealWindow: false), .releaseToMessaging)
+            bundleID: "com.example.chat", isMessagingMember: true, isInSnapshot: true, hasRealWindow: false, isKept: false), .releaseToMessaging)
     }
 
     /// 消息判定必须先于真窗口判定：运行中的消息应用有主窗口,不能误入 unstash。
     func testMessagingPrecedesRealWindowCheck() {
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "com.example.chat", isMessagingMember: true, isInSnapshot: true, hasRealWindow: true), .releaseToMessaging)
+            bundleID: "com.example.chat", isMessagingMember: true, isInSnapshot: true, hasRealWindow: true, isKept: false), .releaseToMessaging)
     }
 
     /// 未运行的消息应用拒收：消息区只显示运行中的应用,释放会凭空消失。
     func testNotRunningMessagingMemberRejects() {
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "com.example.chat", isMessagingMember: true, isInSnapshot: false, hasRealWindow: false), .reject)
+            bundleID: "com.example.chat", isMessagingMember: true, isInSnapshot: false, hasRealWindow: false, isKept: false), .reject)
     }
 
     func testRealWindowUnstashes() {
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "com.example.app", isMessagingMember: false, isInSnapshot: true, hasRealWindow: true), .unstash)
+            bundleID: "com.example.app", isMessagingMember: false, isInSnapshot: true, hasRealWindow: true, isKept: false), .unstash)
     }
 
-    func testNoRealWindowKeepPlacement() {
+    func testKeptAppWithoutSnapshotUsesKeepPlacement() {
         XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
-            bundleID: "com.example.app", isMessagingMember: false, isInSnapshot: false, hasRealWindow: false), .keepPlacement)
+            bundleID: "com.example.app", isMessagingMember: false, isInSnapshot: false, hasRealWindow: false, isKept: true), .keepPlacement)
+    }
+
+    func testRunningFallbackUsesKeepPlacementWithoutKept() {
+        XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
+            bundleID: "com.example.app", isMessagingMember: false, isInSnapshot: true, hasRealWindow: false, isKept: false), .keepPlacement)
+    }
+
+    func testInactiveUncheckedPlacementRejects() {
+        XCTAssertEqual(DragConversionPlan.drawerDragOutMode(
+            bundleID: "com.example.app", isMessagingMember: false, isInSnapshot: false, hasRealWindow: false, isKept: false), .reject)
     }
 
     // MARK: - endAction

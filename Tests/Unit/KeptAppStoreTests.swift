@@ -11,6 +11,13 @@ final class KeptAppStoreTests: XCTestCase {
         return defaults
     }
 
+    func testFreshInstallPersistsEmptyV2MigrationMarker() {
+        let defaults = makeDefaults()
+        let store = KeptAppStore(defaults: defaults)
+        XCTAssertTrue(store.bundleIDs.isEmpty)
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), [])
+    }
+
     func testLoadsFromDefaultsKey() {
         let defaults = makeDefaults()
         defaults.set(["com.example.app"], forKey: KeptAppStore.defaultsKey)
@@ -32,7 +39,7 @@ final class KeptAppStoreTests: XCTestCase {
         let store = KeptAppStore(defaults: defaults)
         store.add(KeptAppStore.forbiddenBundleID)
         XCTAssertTrue(store.bundleIDs.isEmpty)
-        XCTAssertNil(defaults.stringArray(forKey: KeptAppStore.defaultsKey))
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), [])
     }
 
     func testAddAndContains() {
@@ -69,17 +76,36 @@ final class KeptAppStoreTests: XCTestCase {
 
     // MARK: - Migration
 
-    func testMigratesFromLegacyPinnedKey() {
+    func testMigratesPreviousKeptAndLegacyPinnedIntoV2() {
         let defaults = makeDefaults()
+        defaults.set(["com.example.previous"], forKey: KeptAppStore.previousDefaultsKey)
         defaults.set(["com.example.app1", "com.example.app2"], forKey: "pinnedAppBundleIDs")
         let store = KeptAppStore(defaults: defaults)
         // Migration: old key contents → new key, old key deleted.
-        XCTAssertEqual(store.bundleIDs, ["com.example.app1", "com.example.app2"])
+        XCTAssertEqual(store.bundleIDs, ["com.example.previous", "com.example.app1", "com.example.app2"])
         XCTAssertEqual(
             defaults.stringArray(forKey: KeptAppStore.defaultsKey),
-            ["com.example.app1", "com.example.app2"]
+            ["com.example.previous", "com.example.app1", "com.example.app2"]
         )
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.previousDefaultsKey), ["com.example.previous"])
         XCTAssertNil(defaults.stringArray(forKey: "pinnedAppBundleIDs"))
+    }
+
+    func testMigratesDrawerPlacementsExceptMessagingAndFinder() {
+        let defaults = makeDefaults()
+        defaults.set(["plain", "chat", KeptAppStore.forbiddenBundleID], forKey: "drawerBundleIDs")
+        defaults.set(["chat"], forKey: "messagingBundleIDs")
+        let store = KeptAppStore(defaults: defaults)
+        XCTAssertEqual(store.bundleIDs, ["plain"])
+    }
+
+    func testExistingEmptyV2KeyPreventsRemigration() {
+        let defaults = makeDefaults()
+        defaults.set([String](), forKey: KeptAppStore.defaultsKey)
+        defaults.set(["drawer-app"], forKey: "drawerBundleIDs")
+        let store = KeptAppStore(defaults: defaults)
+        XCTAssertTrue(store.bundleIDs.isEmpty)
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), [])
     }
 
     func testMigrationCleansFinderFromLegacy() {

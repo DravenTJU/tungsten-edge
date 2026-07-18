@@ -5,11 +5,10 @@ import SwiftUI
 /// 抽屉 = **app 视角**：一个 bundleID 一个图标，顺序由 [[DrawerOrderStore]] 统一供给、永久记住
 /// （2026-06-21 重做）。两区仍按"在不在运行"分：
 /// - 运行区：收纳的、且进程在跑的 app（亮图标 + 圆点）。点击 = app 级唤出/收起（`LauncherChip.handleTap`）。
-/// - 启动区：没在跑的 app —— 收纳但已退出的 + 固定到启动台当前关着的（暗图标，点击启动）。
+/// - 启动区：没在跑、但有 kept / messaging 永久身份的 app（暗图标，点击启动）。
 ///
-/// 顺序与成员解耦：显示先后只读 `DrawerOrderStore`（按收纳∪启动收藏全集记），两种身份仍归原两份
-/// 名单（语义不变、支持共存）。拖动两向：抽屉内同区落点 = 排序；拖到任务条 = 移回（仅收纳项，走
-/// `DragController` 整屏自绘载体）。
+/// DrawerStore 只记 placement，KeptAppStore 决定退出后是否继续显示；两者正交。排序始终按完整
+/// placement 集合记，隐藏成员下次启动仍回原位。拖动两向只改 placement，不改 kept。
 struct DrawerView: View {
     /// 抽屉内容区最大高度（胶囊上方锚点 → 屏幕上沿可用高度，PanelCoordinator 开抽屉时算好传入）。
     /// 内容超过它就内部滚动,绝不靠下压底边塞下（防与下方胶囊/任务条重叠）。
@@ -42,16 +41,23 @@ struct DrawerView: View {
 
     // MARK: - 成员与分区（全 bundleID 级）
 
-    /// 成员全集（收纳 − kept app），喂给顺序层记忆——绝不按"当前可见"裁，
-    /// 否则收纳项运行离开抽屉后顺序丢。
+    /// Placement 全集喂给顺序层，绝不按当前可见项裁。
     private var allMembers: [String] {
-        AppMembershipProjection.drawerMembers(
-            drawerIDs: drawerStore.bundleIDs,
-            keptIDs: keptAppStore.bundleIDs
-        )
+        AppMembershipProjection.drawerMembers(drawerIDs: drawerStore.bundleIDs)
     }
 
     private var displayOrder: [String] { drawerOrderStore.reconciled(members: allMembers) }
+
+    /// 唯一可见漏斗：运行中，或有 kept / messaging 永久身份。输入用显示顺序，
+    /// 因此隐藏 placement 再出现时仍回到原来的相对位置。
+    private var visibleMembers: [String] {
+        AppMembershipProjection.visibleDrawerIDs(
+            drawerIDs: displayOrder,
+            keptIDs: keptAppStore.bundleIDs,
+            messagingIDs: messagingStore.bundleIDs,
+            runningIDs: runningApplicationStore.runningBundleIDs
+        )
+    }
 
     /// 有真窗口的 app（用于启动门控判定）。
     private var windowBackedIDs: Set<String> {
@@ -71,15 +77,12 @@ struct DrawerView: View {
 
     /// 运行区 = 收纳 + 在跑 + 不在启动门控期。
     private var runningZoneIDs: [String] {
-        displayOrder.filter { drawerStore.contains($0) && isRunning($0) && !isLaunchingWithoutWindow($0) }
+        visibleMembers.filter { isRunning($0) && !isLaunchingWithoutWindow($0) }
     }
 
-    /// 启动区 = 没在跑（或仍在启动门控期）的收纳项。
+    /// 启动区 = 已 kept / messaging 且没在跑（或仍在启动门控期）的可见项。
     private var launchZoneIDs: [String] {
-        displayOrder.filter { id in
-            let notReady = !isRunning(id) || isLaunchingWithoutWindow(id)
-            return notReady && drawerStore.contains(id)
-        }
+        visibleMembers.filter { !isRunning($0) || isLaunchingWithoutWindow($0) }
     }
 
     // MARK: - Body
@@ -125,7 +128,7 @@ struct DrawerView: View {
         .onPreferenceChange(DrawerContentHeightKey.self) { contentHeight = $0 }
         // 拖动中被拖图标的 app 从成员里消失（外部移除等）→ 取消拖动，免得空位卡死。
         // 例外：转正进任务条（抽屉拖回任务条·精确落点）会**主动**把它移出抽屉，不算异常消失，不取消。
-        .onChange(of: allMembers) { members in
+        .onChange(of: visibleMembers) { members in
             if let p = dragController.draggingPayload, p.source == .drawer,
                !dragController.isConvertedToStrip, !members.contains(p.id) {
                 dragController.cancelDrag()
@@ -177,23 +180,32 @@ struct DrawerView: View {
         return p.source == .drawer && p.id == id
     }
 
+    private func membershipItems(for id: String) -> [LauncherMembershipItem] {
+        if messagingStore.contains(id) {
+            return [LauncherMembershipItem(label: "取消标记消息应用") {
+                messagingStore.unmark(id)
+            }]
+        }
+        let isKept = keptAppStore.contains(id)
+        return [LauncherMembershipItem(
+            label: "在程序坞中保留",
+            isChecked: isKept
+        ) {
+            appMembershipController.setKept(id, enabled: !isKept)
+        }]
+    }
+
     /// `running` 按**区**传（运行区 true / 启动区 false），保证外观、点击与菜单都服从当前显示区。
     /// 启动后的进程在真窗口出现前仍留在启动区；弹跳停止由 `launchReady` 的窗口门控负责，
     /// 不再由进程刚出现这一瞬间提前放行。
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let delay = Double(min(index, 6)) * 0.018
-        // 抽屉即程序坞的一部分：进了抽屉 = 已「在程序坞中保留」（owner 2026-07-11）。「移出抽屉/在程序坞
-        // 中保留」不出现——位置用拖动表达（拖出抽屉 = 搬家）。唯一退出动词「从程序坞中移除」**仅未运行**图标
-        // （下区灰图标）显示（owner 2026-07-12 #1）：运行中（上区）移出靠拖出，避免一点就把窗口甩到任务条。
-        let membership: [LauncherMembershipItem] = running
-            ? []
-            : [LauncherMembershipItem(label: "从程序坞中移除") { appMembershipController.removeFromDock(id) }]
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
                      scale: 0.7,
-                     membershipItems: membership,
+                     membershipItems: membershipItems(for: id),
                      onLaunch: { runtime.beginLaunch(id) },
                      launchReady: !runtime.launchingBundleIDs.contains(id),
                      onPrimaryAction: onPrimaryAction)
@@ -247,7 +259,7 @@ struct DrawerView: View {
         // 按 zone 顺序遍历:dict.first(where:) 顺序不定,外扩后相邻格会重叠 → 必须有序取最左。
         for tid in zone where tid != id {
             guard let f = drawerFrames[tid], f.insetBy(dx: -6, dy: -6).contains(point) else { continue }
-            drawerOrderStore.reorder(draggedID: id, relativeTo: tid, after: point.x > f.midX, members: allMembers)
+            drawerOrderStore.reorder(draggedID: id, relativeTo: tid, after: point.x > f.midX)
             return
         }
     }

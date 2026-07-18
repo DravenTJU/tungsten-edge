@@ -76,6 +76,16 @@ extension View {
 
 enum AppMenuBuilder {
 
+    /// Render one membership descriptor as a native AppKit menu item. AppKit owns
+    /// the checkmark; SwiftUI/store state is captured when the menu is rebuilt.
+    static func membershipItem(_ descriptor: LauncherMembershipItem) -> NSMenuItem {
+        let item = ClosureMenuItem(descriptor.label, handler: descriptor.action)
+        if let isChecked = descriptor.isChecked {
+            item.state = isChecked ? .on : .off
+        }
+        return item
+    }
+
     /// Append「退出 App」plus, for non-self apps, the Option-alternate「强制退出」.
     /// The two are an alternate pair: same (empty) key equivalent, the second
     /// `isAlternate` with the Option modifier → live swap while the menu is open.

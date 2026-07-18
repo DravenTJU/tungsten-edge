@@ -4,9 +4,8 @@ import Foundation
 /// 顺序按 bundleID 永久记住——bundleID 跨重启稳定，不像任务条 cgWindowID 有开机周期顾虑，所以
 /// 抽屉顺序可无条件落盘、永久保留。
 ///
-/// **命门：按"成员全集"记顺序，不按"当前可见图标"裁。** 收纳 app 运行时离开抽屉、退出才回启动区；
-/// 若只同步当前显示的 bundleID，它一运行就被删、退出又当新图标追加末尾 → 顺序记忆丢。
-/// 故 `sync(members:)` 吃的是 `DrawerStore − KeptAppStore` 全集，运行/未运行只在渲染时分区过滤。
+/// **命门：按 placement 全集记顺序，不按当前可见图标裁。** 未 kept 的成员退出时会隐藏，
+/// 但它的 placement 与相对顺序仍保留，下一次启动回到原位。
 ///
 /// 与 `StripOrderStore` 同形但更简单：没有开机周期守卫（bundleID 不复用）、没有缺席 grace
 /// （成员集合稳定、不像窗口会闪断）。
@@ -14,9 +13,11 @@ import Foundation
 final class DrawerOrderStore: ObservableObject {
     @Published private(set) var order: [String] = []
     private let key = "drawerDisplayOrder"
+    private let defaults: UserDefaults
 
-    init() {
-        order = UserDefaults.standard.stringArray(forKey: key) ?? []
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        order = defaults.stringArray(forKey: key) ?? []
     }
 
     /// 显示顺序 = 记住的顺序 ∩ 当前成员全集，新成员追加末尾。纯函数，可在 body 里读。
@@ -34,19 +35,19 @@ final class DrawerOrderStore: ObservableObject {
         if next != order { order = next; persist() }
     }
 
-    /// 拖动落位：把 `draggedID` 落到 `targetID` 左/右。先按成员全集 reconcile 定基线，再插位。
-    /// 调用方负责把 `targetID` 限制在与 `draggedID` 同一显示区内（同区排序，见 DrawerView）。
-    func reorder(draggedID: String, relativeTo targetID: String, after: Bool, members: [String]) {
-        guard draggedID != targetID else { return }
-        var base = reconciled(members: members)
-        guard let from = base.firstIndex(of: draggedID) else { return }
-        base.remove(at: from)
-        guard let t = base.firstIndex(of: targetID) else { return }
-        base.insert(draggedID, at: after ? t + 1 : t)
-        if base != order { order = base; persist() }
+    /// Mirrors MessagingAppStore.reorder: operate on the full persisted order so
+    /// hidden placements keep their relative order while visible peers move.
+    func reorder(draggedID: String, relativeTo targetID: String, after: Bool) {
+        guard draggedID != targetID,
+              let from = order.firstIndex(of: draggedID) else { return }
+        var next = order
+        next.remove(at: from)
+        guard let target = next.firstIndex(of: targetID) else { return }
+        next.insert(draggedID, at: after ? target + 1 : target)
+        if next != order { order = next; persist() }
     }
 
     private func persist() {
-        UserDefaults.standard.set(order, forKey: key)
+        defaults.set(order, forKey: key)
     }
 }

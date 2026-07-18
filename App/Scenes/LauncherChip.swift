@@ -8,12 +8,14 @@ import SwiftUI
 ///
 /// Shared by the drawer (collected apps, scale 0.7) and the main strip (messaging
 /// and kept apps, scale 1.0). Call-site differences are injected via
-/// `membershipItems` (在程序坞中保留 / 从程序坞中移除 / 取消标记消息应用).
+/// `membershipItems` (在程序坞中保留 / 取消标记消息应用).
 
 /// 一条成员 / 管理菜单项（标签 + 动作）。LauncherChip 右键菜单末尾按序渲染，
 /// 可多项——收纳 + 启动收藏共存图标可同时给转换、移出与取消收藏入口。
 struct LauncherMembershipItem {
     let label: String
+    /// nil = ordinary command; non-nil = native check-menu state.
+    var isChecked: Bool? = nil
     let action: () -> Void
 }
 
@@ -25,7 +27,7 @@ struct LauncherChip: View {
     /// Drawer chips dim by run/hidden state; pinned messaging chips on the strip
     /// stay full-opacity (product decision: "always reachable", not degraded).
     var dimsWhenInactive: Bool = true
-    /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「从程序坞中移除」「取消标记消息应用」。
+    /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「取消标记消息应用」。
     /// 空数组 = 无成员项。
     var membershipItems: [LauncherMembershipItem] = []
     /// When set, replaces the default tap behavior (drawer show/hide toggle). Used by
@@ -156,7 +158,7 @@ struct LauncherChip: View {
                 // NSWorkspace 竞态取不到 app、动作被跳过时多出一条空分隔线。
                 if didAppendAppActions && !menu.items.isEmpty { menu.addItem(.separator()) }
                 for item in membershipItems {
-                    menu.addItem(ClosureMenuItem(item.label) { item.action() })
+                    menu.addItem(AppMenuBuilder.membershipItem(item))
                 }
             }
         }

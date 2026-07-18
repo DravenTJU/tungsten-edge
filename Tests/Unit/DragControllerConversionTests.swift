@@ -27,7 +27,6 @@ final class DragControllerConversionTests: XCTestCase {
         messaging = MessagingAppStore(defaults: defaults)
         controller = DragController(
             drawerStore: drawer,
-            keptAppStore: kept,
             messagingStore: messaging,
             dropZonesProvider: { [dropZone] _ in [dropZone] },
             screenProvider: { NSScreen.main ?? NSScreen.screens[0] },
@@ -164,31 +163,39 @@ final class DragControllerConversionTests: XCTestCase {
 
     // MARK: - 既有两向的回归（转换态收敛进 CrossPanelConversion 后行为不变）
 
-    func testStripToDrawerConvertRevertRestoresKept() {
+    func testStripToDrawerConvertRevertPreservesKept() {
         kept.add("app")
         begin(.strip, "app", at: outsideZone)
         controller.convertStripToDrawer()
         XCTAssertTrue(drawer.contains("app"))
-        XCTAssertFalse(kept.contains("app"))
+        XCTAssertTrue(kept.contains("app"))
         XCTAssertTrue(controller.isConvertedFromStrip)
         controller.revertStripFromDrawer()
         XCTAssertFalse(drawer.contains("app"))
-        XCTAssertTrue(kept.contains("app"), "撤销恢复 kept 标志")
+        XCTAssertTrue(kept.contains("app"), "转换和撤销都不修改 kept")
         XCTAssertEqual(controller.draggingPayload?.source, .strip)
     }
 
-    func testDrawerToStripConvertKeepPlacementAndRevert() {
-        drawer.add("app")
+    func testDrawerToStripConvertAndRevertPreservesKept() {
+        drawer.add("app"); kept.add("app")
         begin(.drawer, "app", at: outsideZone)
         controller.convertDrawerToStrip()
         XCTAssertFalse(drawer.contains("app"))
         XCTAssertEqual(controller.convertedDrawerBundleID, "app")
-        controller.markKeepPlacement()
         XCTAssertTrue(kept.contains("app"))
         controller.revertDrawerToStrip()
         XCTAssertTrue(drawer.contains("app"))
-        XCTAssertFalse(kept.contains("app"), "keepPlacement 撤销收回 kept")
+        XCTAssertTrue(kept.contains("app"), "placement 回滚不修改 kept")
         XCTAssertNil(controller.convertedDrawerBundleID)
+    }
+
+    func testUncheckedPlacementConversionsRemainUnchecked() {
+        drawer.add("app")
+        begin(.drawer, "app", at: outsideZone)
+        controller.convertDrawerToStrip()
+        XCTAssertFalse(kept.contains("app"))
+        controller.revertDrawerToStrip()
+        XCTAssertFalse(kept.contains("app"))
     }
 
     func testCancelFromDrawerToStripFiresCancelCallback() {

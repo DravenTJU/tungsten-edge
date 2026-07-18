@@ -29,77 +29,57 @@ final class AppMembershipControllerTests: XCTestCase {
         )
     }
 
-    func testKeepInDockAddsAndRemovesFromDrawer() {
+    func testSetKeptAddsWithoutChangingDrawerPlacement() {
         drawer.add("com.example.app")
-        controller.keepInDock("com.example.app")
+        controller.setKept("com.example.app", enabled: true)
         XCTAssertTrue(kept.contains("com.example.app"))
-        XCTAssertFalse(drawer.contains("com.example.app"))
+        XCTAssertTrue(drawer.contains("com.example.app"))
     }
 
-    func testKeepInDockUnmarksMessaging() {
+    func testSetKeptRejectsMessagingIdentity() {
         messaging.mark("com.example.app")
-        controller.keepInDock("com.example.app")
-        XCTAssertTrue(kept.contains("com.example.app"))
-        XCTAssertFalse(messaging.contains("com.example.app"))
+        controller.setKept("com.example.app", enabled: true)
+        XCTAssertFalse(kept.contains("com.example.app"))
+        XCTAssertTrue(messaging.contains("com.example.app"))
     }
 
-    func testKeepInDockRejectsFinder() {
+    func testSetKeptRejectsFinder() {
         let finder = KeptAppStore.forbiddenBundleID
-        controller.keepInDock(finder)
+        controller.setKept(finder, enabled: true)
         XCTAssertFalse(kept.contains(finder))
     }
 
-    func testRemoveFromDock() {
-        controller.keepInDock("com.example.app")
-        controller.removeFromDock("com.example.app")
-        XCTAssertFalse(kept.contains("com.example.app"))
-    }
-
-    // 「从程序坞中移除」= 通用退出（owner 2026-07-11：抽屉即程序坞的一部分）
-
-    func testRemoveFromDockClearsDrawerMembership() {
+    func testUnsetKeptLeavesDrawerPlacementAndMessagingUntouched() {
+        controller.setKept("com.example.app", enabled: true)
         drawer.add("com.example.app")
-        controller.removeFromDock("com.example.app")
-        XCTAssertFalse(drawer.contains("com.example.app"))
-    }
-
-    /// 抽屉里的消息应用移除时同时 unmark（含 opt-out）：不弹回消息区，autoRegister 也不加回。
-    func testRemoveFromDockUnmarksMessagingWithOptOut() {
-        let wechat = "com.tencent.xinWeChat"   // 内置白名单 id，autoRegister 无需查系统分类
-        messaging.mark(wechat)
-        drawer.add(wechat)
-        controller.removeFromDock(wechat)
-        XCTAssertFalse(drawer.contains(wechat))
-        XCTAssertFalse(messaging.contains(wechat))
-        messaging.autoRegister(runningBundleIDs: [wechat])
-        XCTAssertFalse(messaging.contains(wechat), "opt-out 阻止自动重注册")
-        messaging.mark(wechat)
-        XCTAssertTrue(messaging.contains(wechat), "手动标记可回来")
-    }
-
-    func testMoveToDrawerRemovesKeptAndAddsDrawer() {
-        controller.keepInDock("com.example.app")
-        controller.moveToDrawer("com.example.app")
+        controller.setKept("com.example.app", enabled: false)
         XCTAssertFalse(kept.contains("com.example.app"))
         XCTAssertTrue(drawer.contains("com.example.app"))
     }
 
+    func testMoveToDrawerPreservesKept() {
+        controller.setKept("com.example.app", enabled: true)
+        controller.moveToDrawer("com.example.app")
+        XCTAssertTrue(kept.contains("com.example.app"))
+        XCTAssertTrue(drawer.contains("com.example.app"))
+    }
+
     func testMarkMessagingClearsKept() {
-        controller.keepInDock("com.example.app")
+        controller.setKept("com.example.app", enabled: true)
         controller.markMessaging("com.example.app")
         XCTAssertFalse(kept.contains("com.example.app"))
         XCTAssertTrue(messaging.contains("com.example.app"))
         XCTAssertFalse(drawer.contains("com.example.app"))
     }
 
-    func testReconcileKeptWinsRemovesKeptFromDrawerAndMessaging() {
-        controller.keepInDock("com.example.app")
+    func testReconcileAllowsKeptDrawerOverlapButRemovesMessagingConflict() {
+        controller.setKept("com.example.app", enabled: true)
         // Manually add to drawer and messaging to simulate conflicting persisted state
         drawer.add("com.example.app")
         messaging.mark("com.example.app")
         controller.reconcileKeptWins()
         XCTAssertTrue(kept.contains("com.example.app"))
-        XCTAssertFalse(drawer.contains("com.example.app"))
+        XCTAssertTrue(drawer.contains("com.example.app"))
         XCTAssertFalse(messaging.contains("com.example.app"))
     }
 

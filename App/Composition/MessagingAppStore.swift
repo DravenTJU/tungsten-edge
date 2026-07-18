@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 /// Ordered list of "messaging" apps whose chips pin to the leftmost strip zone and
-/// persist while the app is running, even with all windows closed. Chips disappear
-/// on app quit (the future drawer "待启动区" will take over the not-running role).
+/// persist even after app exit. Drawer placement may hide the chip without clearing
+/// this messaging identity.
 ///
 /// Membership has two tiers with identical behavior:
 /// - Auto: built-in whitelist + `LSApplicationCategoryType == social-networking`,

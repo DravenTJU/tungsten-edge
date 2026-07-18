@@ -15,7 +15,7 @@ enum DrawerDragOutMode: Equatable {
     case reject             // Finder / 未运行的消息应用 → 不接受（留在抽屉）
     case releaseToMessaging // 运行中的消息应用 → 进消息区范围才临时释放回消息区
     case unstash            // 有真窗口 → 现有精确落位路径
-    case keepPlacement      // 未运行/无真窗 → 保留图标落位路径
+    case keepPlacement      // app fallback / kept placeholder → app 级落位，绝不修改 kept
 }
 
 /// 跨面板拖拽转换的纯决策层（Codex 评审 2026-07-11 P2-6）。几何、store、面板都不进来——
@@ -27,12 +27,15 @@ enum DragConversionPlan {
     static func drawerDragOutMode(bundleID: String,
                                   isMessagingMember: Bool,
                                   isInSnapshot: Bool,
-                                  hasRealWindow: Bool) -> DrawerDragOutMode {
+                                  hasRealWindow: Bool,
+                                  isKept: Bool) -> DrawerDragOutMode {
         guard !bundleID.isEmpty, bundleID != "com.apple.finder" else { return .reject }
         if isMessagingMember {
             return isInSnapshot ? .releaseToMessaging : .reject
         }
-        return hasRealWindow ? .unstash : .keepPlacement
+        if hasRealWindow { return .unstash }
+        // app-* fallback while running, or a kept placeholder while stopped.
+        return isInSnapshot || isKept ? .keepPlacement : .reject
     }
 
     /// `endDrag` 松手收尾动作（`.messaging` / `.drawer` 来源；`.strip`/`.folder` 不经这里）。

@@ -8,8 +8,14 @@ import os
 @MainActor
 final class KeptAppStore: ObservableObject {
     static let forbiddenBundleID = "com.apple.finder"
-    static let defaultsKey = "keptAppBundleIDs"
+    /// V2 separates "where the app is placed" (DrawerStore) from "keep an entry
+    /// after the app exits". Key existence is the migration marker, including an
+    /// explicitly persisted empty array on a fresh install.
+    static let defaultsKey = "keptAppBundleIDsV2"
+    static let previousDefaultsKey = "keptAppBundleIDs"
     private static let legacyKey = "pinnedAppBundleIDs"
+    private static let drawerKey = "drawerBundleIDs"
+    private static let messagingKey = "messagingBundleIDs"
 
     @Published private(set) var bundleIDs: [String]
 
@@ -19,21 +25,25 @@ final class KeptAppStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        // 迁移：采纳旧 pinnedAppBundleIDs 后删旧 key（空数组也删，不留残 key）
-        if let legacy = defaults.stringArray(forKey: Self.legacyKey) {
+        if defaults.object(forKey: Self.defaultsKey) != nil {
+            let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
+            bundleIDs = Self.cleaned(stored)
             defaults.removeObject(forKey: Self.legacyKey)
-            if !legacy.isEmpty {
-                bundleIDs = Self.cleaned(legacy)
-                persist()
-                logger.info("migrated \(self.bundleIDs.count) entries from pinnedAppBundleIDs → keptAppBundleIDs: \(self.bundleIDs.joined(separator: ", "))")
-                return
-            }
+            if bundleIDs != stored { persist() }
+            return
         }
-        let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
-        bundleIDs = Self.cleaned(stored)
-        if bundleIDs != stored {
-            persist()
-        }
+
+        // V1 treated every drawer placement as implicitly kept. Preserve that
+        // visible behavior once, while leaving the old kept key untouched so a
+        // code rollback still reads the exact pre-upgrade kept list.
+        let previous = defaults.stringArray(forKey: Self.previousDefaultsKey) ?? []
+        let legacy = defaults.stringArray(forKey: Self.legacyKey) ?? []
+        let drawer = defaults.stringArray(forKey: Self.drawerKey) ?? []
+        let messaging = Set(defaults.stringArray(forKey: Self.messagingKey) ?? [])
+        bundleIDs = Self.cleaned(previous + legacy + drawer.filter { !messaging.contains($0) })
+        defaults.removeObject(forKey: Self.legacyKey)
+        persist() // Empty is intentional: V2 key existence is the migration marker.
+        logger.info("initialized keptAppBundleIDsV2 with \(self.bundleIDs.count) entries")
     }
 
     static func canKeep(_ bundleID: String) -> Bool {

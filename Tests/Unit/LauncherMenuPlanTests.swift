@@ -27,4 +27,5 @@ final class LauncherMenuPlanTests: XCTestCase {
         let kinds = LauncherMenuPlan.itemKinds(isRunning: true, isHidden: false, hasMembership: true)
         XCTAssertEqual(kinds, [.recentDocuments, .hide, .quit, .membership])
     }
+
 }

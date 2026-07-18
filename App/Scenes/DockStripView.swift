@@ -498,7 +498,8 @@ struct DockStripView: View {
             bundleID: bid,
             isMessagingMember: messagingStore.contains(bid),
             isInSnapshot: snapshotBundleIDs.contains(bid),
-            hasRealWindow: hasRealWindow(bundleID: bid)
+            hasRealWindow: hasRealWindow(bundleID: bid),
+            isKept: keptAppStore.contains(bid)
         )
     }
 
@@ -545,7 +546,7 @@ struct DockStripView: View {
 
     /// 进/出任务条区驱动转正/还原（迟滞防边界抖）。
     /// unstash 路径：进 → convertDrawerToStrip + 暂存落点；出 → cancelExternalBlock + revertDrawerToStrip。
-    /// keepPlacement 路径：进 → convertDrawerToStrip + markKeepPlacement + 暂存落点；出 → 同 unstash（revertDrawerToStrip 内含 kept.remove）。
+    /// keepPlacement 路径：无真窗口时用现有 app fallback / kept placeholder 落位；全程不修改 kept。
     private func updateDrawerToStripConvert() {
         let dc = dragController
         guard let p = dc.draggingPayload, p.source == .drawer, p.canExternalDrop,
@@ -563,7 +564,6 @@ struct DockStripView: View {
             // 此刻本组窗口卡还没出现在 live 区，命中目标只在**已有**卡里找（exclude 空集即可）。
             let target = stripPoint(from: g).flatMap { blockTarget(at: $0, excluding: []) }
             dc.convertDrawerToStrip()
-            if mode == .keepPlacement { dc.markKeepPlacement() }
             stripOrderStore.stageExternalBlock(bundleID: bid, relativeTo: target?.id, after: target?.after ?? false)
         } else if clearlyOut {
             stripOrderStore.cancelExternalBlock()
@@ -899,7 +899,7 @@ struct DockStripView: View {
                 isRunning: isRunning,
                 isHidden: runningApplicationStore.isHidden(bid),
                 scale: 1.0,
-                membershipItems: keptAppMembershipItems(bundleID: bid, isRunning: isRunning),
+                membershipItems: keptAppMembershipItems(bundleID: bid),
                 onTap: reopen,
                 onLaunch: { runtime.beginLaunch(bid) },
                 launchReady: !runtime.launchingBundleIDs.contains(bid)
@@ -913,15 +913,15 @@ struct DockStripView: View {
         }
     }
 
-    /// 保留应用图标的成员菜单。「从程序坞中移除」**仅未运行**时出现（owner 2026-07-12 #1）：运行中的
-    /// 保留应用移出靠先退出、变灰后再移除，避免一点就把窗口甩到任务条。「标记为消息应用」两态都给。
-    private func keptAppMembershipItems(bundleID: String, isRunning: Bool) -> [LauncherMembershipItem] {
-        var items: [LauncherMembershipItem] = []
-        if !isRunning {
-            items.append(LauncherMembershipItem(label: "从程序坞中移除") {
-                appMembershipController.removeFromDock(bundleID)
-            })
-        }
+    /// Kept launcher uses the same native check item as live window chips.
+    private func keptAppMembershipItems(bundleID: String) -> [LauncherMembershipItem] {
+        let isKept = keptAppStore.contains(bundleID)
+        var items = [LauncherMembershipItem(
+            label: "在程序坞中保留",
+            isChecked: isKept
+        ) {
+            appMembershipController.setKept(bundleID, enabled: !isKept)
+        }]
         items.append(LauncherMembershipItem(label: "标记为消息应用") {
             appMembershipController.markMessaging(bundleID)
         })
@@ -1332,12 +1332,16 @@ struct ChipView: View {
         guard let bid = item.bundleIdentifier,
               bid != KeptAppStore.forbiddenBundleID else { return }
         menu.addItem(.separator())
-        // 窗口卡必然运行中 → 不出现「从程序坞中移除」（owner 2026-07-12 #1，运行中移出靠拖动）。
-        // 「在程序坞中保留」对消息应用关死（它会 unmark + 转 kept 把消息应用拽出区）。
-        if keptAppStore.canKeep(bid), !keptAppStore.contains(bid), !messagingStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("在程序坞中保留") {
-                appMembershipController.keepInDock(bid)
-            })
+        // Messaging identity is the persistent-state exception and keeps its own
+        // single management command. All other app chips always expose the toggle.
+        if keptAppStore.canKeep(bid), !messagingStore.contains(bid) {
+            let isKept = keptAppStore.contains(bid)
+            menu.addItem(AppMenuBuilder.membershipItem(LauncherMembershipItem(
+                label: "在程序坞中保留",
+                isChecked: isKept
+            ) {
+                appMembershipController.setKept(bid, enabled: !isKept)
+            }))
         }
         if messagingStore.contains(bid) {
             menu.addItem(ClosureMenuItem("取消标记消息应用") { messagingStore.unmark(bid) })
@@ -1366,6 +1370,9 @@ struct ChipView: View {
 struct DrawerCapsuleButton: View {
     @EnvironmentObject var drawerStore: DrawerStore
     @EnvironmentObject var keptAppStore: KeptAppStore
+    @EnvironmentObject var messagingStore: MessagingAppStore
+    @EnvironmentObject var runningApplicationStore: RunningApplicationStore
+    @EnvironmentObject var drawerOrderStore: DrawerOrderStore
     /// 拖卡进抽屉的投放反馈：手指压在投放区时胶囊放大 + 高亮描边。
     @EnvironmentObject var dragController: DragController
     let action: () -> Void
@@ -1374,9 +1381,13 @@ struct DrawerCapsuleButton: View {
     private static let gridSpacing: CGFloat = 5
 
     private var folderIDs: [String] {
-        AppMembershipProjection.drawerPreview(
-            drawerIDs: drawerStore.bundleIDs,
-            keptIDs: keptAppStore.bundleIDs
+        let placements = AppMembershipProjection.drawerMembers(drawerIDs: drawerStore.bundleIDs)
+        let ordered = drawerOrderStore.reconciled(members: placements)
+        return AppMembershipProjection.drawerPreview(
+            drawerIDs: ordered,
+            keptIDs: keptAppStore.bundleIDs,
+            messagingIDs: messagingStore.bundleIDs,
+            runningIDs: runningApplicationStore.runningBundleIDs
         )
     }
 
