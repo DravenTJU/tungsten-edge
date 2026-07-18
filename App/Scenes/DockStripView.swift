@@ -1377,8 +1377,12 @@ struct DrawerCapsuleButton: View {
     @EnvironmentObject var dragController: DragController
     let action: () -> Void
 
-    private static let iconSize: CGFloat = 10
-    private static let gridSpacing: CGFloat = 5
+    @State private var isHovering = false
+    /// 点击确认脉冲：按压回弹，纯视图层信号，不喂 planner/frontmost（照搬 ChipView）。
+    @State private var isTapPressed = false
+
+    private static let iconSize: CGFloat = 9
+    private static let gridSpacing: CGFloat = 4
 
     private var folderIDs: [String] {
         let placements = AppMembershipProjection.drawerMembers(drawerIDs: drawerStore.bundleIDs)
@@ -1391,37 +1395,57 @@ struct DrawerCapsuleButton: View {
         )
     }
 
+    /// 短促按压(0.93)后由 spring 回弹;90ms 后复位状态,动画由 value 变化声明式触发（ChipView 同款）。
+    private func fireTapPulse() {
+        isTapPressed = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { isTapPressed = false }
+    }
+
     var body: some View {
-        ZStack {
+        // 拖动时 hover 让位给拖入反馈：draggingPayload 非空则不弹（drag 优先）。
+        let showsHover = isHovering && dragController.draggingPayload == nil
+        return ZStack {
             DockVisualEffectView()
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()
 
-            if folderIDs.isEmpty {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.72))
-            } else {
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.fixed(Self.iconSize), spacing: Self.gridSpacing), count: 3),
-                    spacing: Self.gridSpacing
-                ) {
-                    ForEach(folderIDs, id: \.self) { id in
-                        Image(nsImage: AppIconResolver.icon(for: id))
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: Self.iconSize, height: Self.iconSize)
-                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            // 悬停 + 点击反馈只作用在内层预览内容（九宫格 / 空态符号）上，外框（毛玻璃 + 描边）不动。
+            // 围绕胶囊中心原地缩放，动画结束精确归位、不留持久位移。
+            Group {
+                if folderIDs.isEmpty {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.72))
+                } else {
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.fixed(Self.iconSize), spacing: Self.gridSpacing), count: 3),
+                        spacing: Self.gridSpacing
+                    ) {
+                        ForEach(folderIDs, id: \.self) { id in
+                            Image(nsImage: AppIconResolver.icon(for: id))
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: Self.iconSize, height: Self.iconSize)
+                                .clipShape(RoundedRectangle(cornerRadius: Self.iconSize / 4, style: .continuous))
+                        }
                     }
+                    .padding(6)
                 }
-                .padding(6)
             }
+            .scaleEffect(showsHover ? 1.07 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: showsHover)
+            .scaleEffect(isTapPressed ? 0.93 : 1.0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
         }
         .overlay {
             RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
                 .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
         }
+        // 反馈仅作用于内层预览内容（见上方 Group）；这里的 52pt 可见层只负责 hover 命中——
+        // 鼠标移到胶囊任意处都触发，动的是里面的九宫格，外框保持静止。
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
         // 拖卡悬到胶囊上：**微微发光 + 极轻微放大**（去掉原来生硬的白圈描边,owner 2026-06-21）。
         .scaleEffect(dragController.isOverStashZone ? 1.04 : 1.0)
         .shadow(color: .white.opacity(dragController.isOverStashZone ? 0.18 : 0),
@@ -1430,7 +1454,7 @@ struct DrawerCapsuleButton: View {
         .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
         .padding(PanelCoordinator.shadowPadding)
         .contentShape(Rectangle())
-        .onTapGesture { action() }
+        .onTapGesture { fireTapPulse(); action() }
     }
 }
 
