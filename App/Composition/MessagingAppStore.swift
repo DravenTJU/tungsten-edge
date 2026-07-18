@@ -21,8 +21,10 @@ import Foundation
 final class MessagingAppStore: ObservableObject {
     @Published private(set) var bundleIDs: [String] = []
     private var optOutIDs: Set<String> = []
-    private let key = "messagingBundleIDs"
-    private let optOutKey = "messagingOptOutBundleIDs"
+    private let key = "messagingBundleIDsV2"
+    private let optOutKey = "messagingOptOutBundleIDsV2"
+    private let legacyKey = "messagingBundleIDs"
+    private let legacyOptOutKey = "messagingOptOutBundleIDs"
     private let defaults: UserDefaults
 
     /// Built-in messaging app whitelist. Wrong/stale IDs are harmless (they never
@@ -55,19 +57,35 @@ final class MessagingAppStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        bundleIDs = defaults.stringArray(forKey: key) ?? []
-        optOutIDs = Set(defaults.stringArray(forKey: optOutKey) ?? [])
+        // Name list V2: migrate from the frozen legacy key once, then own V2.
+        // Empty is also persisted — key existence is the migration marker.
+        if defaults.object(forKey: key) != nil {
+            bundleIDs = defaults.stringArray(forKey: key) ?? []
+        } else {
+            bundleIDs = defaults.stringArray(forKey: legacyKey) ?? []
+            defaults.set(bundleIDs, forKey: key)
+        }
+        // Opt-out V2 migrates independently (supports a one-migrated-one-not state).
+        if defaults.object(forKey: optOutKey) != nil {
+            optOutIDs = Set(defaults.stringArray(forKey: optOutKey) ?? [])
+        } else {
+            optOutIDs = Set(defaults.stringArray(forKey: legacyOptOutKey) ?? [])
+            defaults.set(Array(optOutIDs), forKey: optOutKey)
+        }
     }
 
     func contains(_ id: String) -> Bool { bundleIDs.contains(id) }
 
-    /// Manual mark: pins the app and clears any earlier opt-out.
-    func mark(_ id: String) {
-        guard !id.isEmpty else { return }
+    /// Manual mark: pins the app and clears any earlier opt-out. Returns whether
+    /// this was the first join, so the caller seeds kept on first join only.
+    @discardableResult
+    func mark(_ id: String) -> Bool {
+        guard !id.isEmpty else { return false }
         if optOutIDs.remove(id) != nil { persistOptOut() }
-        guard !bundleIDs.contains(id) else { return }
+        guard !bundleIDs.contains(id) else { return false }
         bundleIDs.append(id)
         persist()
+        return true
     }
 
     /// Unmark: unpins and opts the app out of auto re-registration.
@@ -97,16 +115,19 @@ final class MessagingAppStore: ObservableObject {
 
     /// Auto tier: register any running app that looks like a messenger (whitelist or
     /// App Store category) unless the user has opted it out. Called on every snapshot
-    /// update; first sight appends to the end of the ordered list.
-    func autoRegister(runningBundleIDs: Set<String>) {
-        var changed = false
+    /// update; first sight appends to the end of the ordered list. Returns the ids
+    /// newly added this round so the caller seeds kept on first registration only.
+    @discardableResult
+    func autoRegister(runningBundleIDs: Set<String>) -> [String] {
+        var added: [String] = []
         for id in runningBundleIDs {
             guard !id.isEmpty, !bundleIDs.contains(id), !optOutIDs.contains(id) else { continue }
             guard Self.builtinMessagingIDs.contains(id) || Self.isSocialCategory(id) else { continue }
             bundleIDs.append(id)
-            changed = true
+            added.append(id)
         }
-        if changed { persist() }
+        if !added.isEmpty { persist() }
+        return added
     }
 
     private func persist() {

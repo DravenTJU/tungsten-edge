@@ -151,21 +151,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startApp() {
-        appMembershipController.reconcileKeptWins()
+        appMembershipController.reconcileInvalidMemberships()
         runningApplicationStore.start()
         runtime.start()
 
-        // Auto tier of the messaging list: whenever the snapshot updates, register any
-        // running app that matches the whitelist / social-networking category.
-        // Kept apps are explicit memberships. Auto detection must not pull them
-        // into the messaging zone.
-        messagingAutoRegisterSubscription = runtime.$snapshot
+        // Auto tier of the messaging list: whenever the running set changes, register
+        // any app matching the whitelist / social-networking category and seed kept on
+        // first registration (default-keep). Kept no longer excludes messaging, so
+        // there is no kept filter; the running source is the process store, not window
+        // snapshots.
+        messagingAutoRegisterSubscription = runningApplicationStore.$runningBundleIDs
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] snapshot in
-                guard let self else { return }
-                let running = Set(snapshot.windows.values.compactMap(\.bundleIdentifier))
-                    .filter { !self.keptAppStore.contains($0) }
-                self.messagingStore.autoRegister(runningBundleIDs: running)
+            .sink { [weak self] running in
+                self?.appMembershipController.autoRegisterMessaging(runningBundleIDs: running)
             }
 
         let coordinator = PanelCoordinator(

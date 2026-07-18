@@ -11,22 +11,18 @@ final class KeptAppStoreTests: XCTestCase {
         return defaults
     }
 
-    func testFreshInstallPersistsEmptyV2MigrationMarker() {
+    func testFreshInstallPersistsEmptyV3MigrationMarker() {
         let defaults = makeDefaults()
         let store = KeptAppStore(defaults: defaults)
         XCTAssertTrue(store.bundleIDs.isEmpty)
         XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), [])
     }
 
-    func testLoadsFromDefaultsKey() {
+    func testLoadsFromV3Key() {
         let defaults = makeDefaults()
         defaults.set(["com.example.app"], forKey: KeptAppStore.defaultsKey)
         let store = KeptAppStore(defaults: defaults)
         XCTAssertEqual(store.bundleIDs, ["com.example.app"])
-        XCTAssertEqual(
-            defaults.stringArray(forKey: KeptAppStore.defaultsKey),
-            ["com.example.app"]
-        )
     }
 
     func testCanKeepRejectsFinder() {
@@ -39,7 +35,6 @@ final class KeptAppStoreTests: XCTestCase {
         let store = KeptAppStore(defaults: defaults)
         store.add(KeptAppStore.forbiddenBundleID)
         XCTAssertTrue(store.bundleIDs.isEmpty)
-        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), [])
     }
 
     func testAddAndContains() {
@@ -47,10 +42,7 @@ final class KeptAppStoreTests: XCTestCase {
         let store = KeptAppStore(defaults: defaults)
         store.add("com.example.app")
         XCTAssertTrue(store.contains("com.example.app"))
-        XCTAssertEqual(
-            defaults.stringArray(forKey: KeptAppStore.defaultsKey),
-            ["com.example.app"]
-        )
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), ["com.example.app"])
     }
 
     func testRemove() {
@@ -59,77 +51,67 @@ final class KeptAppStoreTests: XCTestCase {
         let store = KeptAppStore(defaults: defaults)
         store.remove("com.example.first")
         XCTAssertFalse(store.contains("com.example.first"))
-        XCTAssertEqual(
-            defaults.stringArray(forKey: KeptAppStore.defaultsKey),
-            ["com.example.second"]
-        )
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), ["com.example.second"])
     }
 
-    func testReorderIsNoOp() {
+    // MARK: - V3 migration
+
+    func testMigratesFromV2PlusMessaging() {
         let defaults = makeDefaults()
-        defaults.set(["a", "b", "c"], forKey: KeptAppStore.defaultsKey)
+        defaults.set(["com.example.kept"], forKey: KeptAppStore.previousDefaultsKey) // kept V2
+        defaults.set(["com.chat.app"], forKey: "messagingBundleIDsV2")               // 权威消息名单
+        defaults.set(["com.ignored.pinned"], forKey: "pinnedAppBundleIDs")           // 有 V2 时 pinned/drawer 被忽略
         let store = KeptAppStore(defaults: defaults)
-        // KeptAppStore has no reorder method — order is managed by StripOrderStore.
-        // Verify the store keeps insertion/persistence order as-is.
-        XCTAssertEqual(store.bundleIDs, ["a", "b", "c"])
+        XCTAssertEqual(store.bundleIDs, ["com.example.kept", "com.chat.app"])
+        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey),
+                       ["com.example.kept", "com.chat.app"])
     }
 
-    // MARK: - Migration
-
-    func testMigratesPreviousKeptAndLegacyPinnedIntoV2() {
+    func testMessagingV2KeyIsAuthoritativeEvenWhenEmpty() {
+        // messaging V2 存在但空 → 权威为空，禁止回退旧 messaging 键求并集。
         let defaults = makeDefaults()
-        defaults.set(["com.example.previous"], forKey: KeptAppStore.previousDefaultsKey)
-        defaults.set(["com.example.app1", "com.example.app2"], forKey: "pinnedAppBundleIDs")
+        defaults.set(["com.example.kept"], forKey: KeptAppStore.previousDefaultsKey)
+        defaults.set([String](), forKey: "messagingBundleIDsV2")
+        defaults.set(["com.legacy.chat"], forKey: "messagingBundleIDs")
         let store = KeptAppStore(defaults: defaults)
-        // Migration: old key contents → new key, old key deleted.
-        XCTAssertEqual(store.bundleIDs, ["com.example.previous", "com.example.app1", "com.example.app2"])
-        XCTAssertEqual(
-            defaults.stringArray(forKey: KeptAppStore.defaultsKey),
-            ["com.example.previous", "com.example.app1", "com.example.app2"]
-        )
-        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.previousDefaultsKey), ["com.example.previous"])
-        XCTAssertNil(defaults.stringArray(forKey: "pinnedAppBundleIDs"))
+        XCTAssertEqual(store.bundleIDs, ["com.example.kept"])
     }
 
-    func testMigratesDrawerPlacementsExceptMessagingAndFinder() {
+    func testMigratesStraightPastV2FoldsV1PinnedDrawerMessaging() {
+        // 无 kept V2 → 折叠 V1 + pinned + drawer + messaging（messaging 现在并入）。
         let defaults = makeDefaults()
-        defaults.set(["plain", "chat", KeptAppStore.forbiddenBundleID], forKey: "drawerBundleIDs")
-        defaults.set(["chat"], forKey: "messagingBundleIDs")
+        defaults.set(["com.v1.kept"], forKey: "keptAppBundleIDs")     // V1
+        defaults.set(["com.pin.app"], forKey: "pinnedAppBundleIDs")
+        defaults.set(["com.drawer.app", "com.chat.app"], forKey: "drawerBundleIDs")
+        defaults.set(["com.chat.app"], forKey: "messagingBundleIDs")  // 无 V2，旧 messaging 键权威
         let store = KeptAppStore(defaults: defaults)
-        XCTAssertEqual(store.bundleIDs, ["plain"])
+        XCTAssertEqual(store.bundleIDs,
+                       ["com.v1.kept", "com.pin.app", "com.drawer.app", "com.chat.app"])
     }
 
-    func testExistingEmptyV2KeyPreventsRemigration() {
+    func testMigrationExcludesFinderAndDeduplicates() {
+        let defaults = makeDefaults()
+        defaults.set(["com.dup", "com.dup", KeptAppStore.forbiddenBundleID], forKey: "keptAppBundleIDs")
+        let store = KeptAppStore(defaults: defaults)
+        XCTAssertEqual(store.bundleIDs, ["com.dup"])
+    }
+
+    func testExistingEmptyV3KeyPreventsRemigration() {
         let defaults = makeDefaults()
         defaults.set([String](), forKey: KeptAppStore.defaultsKey)
-        defaults.set(["drawer-app"], forKey: "drawerBundleIDs")
+        defaults.set(["com.example.kept"], forKey: KeptAppStore.previousDefaultsKey)
+        defaults.set(["com.chat.app"], forKey: "messagingBundleIDsV2")
         let store = KeptAppStore(defaults: defaults)
         XCTAssertTrue(store.bundleIDs.isEmpty)
-        XCTAssertEqual(defaults.stringArray(forKey: KeptAppStore.defaultsKey), [])
     }
 
-    func testMigrationCleansFinderFromLegacy() {
+    func testMigrationFreezesLegacyKeysReadOnly() {
+        // V3 迁移不得删除/覆写冻结旧键（干净回滚）。
         let defaults = makeDefaults()
-        defaults.set(["com.example.app", "com.apple.finder"], forKey: "pinnedAppBundleIDs")
-        let store = KeptAppStore(defaults: defaults)
-        XCTAssertEqual(store.bundleIDs, ["com.example.app"])
-        XCTAssertNil(defaults.stringArray(forKey: "pinnedAppBundleIDs"))
-    }
-
-    func testNoMigrationWhenLegacyEmpty() {
-        let defaults = makeDefaults()
-        defaults.set(["com.example.existing"], forKey: KeptAppStore.defaultsKey)
-        let store = KeptAppStore(defaults: defaults)
-        XCTAssertEqual(store.bundleIDs, ["com.example.existing"])
-    }
-
-    func testEmptyLegacyKeyIsRemovedWithoutOverwritingNewKey() {
-        let defaults = makeDefaults()
-        defaults.set([String](), forKey: "pinnedAppBundleIDs")
-        defaults.set(["com.example.existing"], forKey: KeptAppStore.defaultsKey)
-        let store = KeptAppStore(defaults: defaults)
-        // 空的旧 key 也要删掉（不留残 key），且不得覆盖新 key 已有数据。
-        XCTAssertNil(defaults.stringArray(forKey: "pinnedAppBundleIDs"))
-        XCTAssertEqual(store.bundleIDs, ["com.example.existing"])
+        defaults.set(["com.v1.kept"], forKey: "keptAppBundleIDs")
+        defaults.set(["com.pin.app"], forKey: "pinnedAppBundleIDs")
+        _ = KeptAppStore(defaults: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: "keptAppBundleIDs"), ["com.v1.kept"])
+        XCTAssertEqual(defaults.stringArray(forKey: "pinnedAppBundleIDs"), ["com.pin.app"])
     }
 }

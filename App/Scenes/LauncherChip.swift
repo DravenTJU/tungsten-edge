@@ -19,6 +19,41 @@ struct LauncherMembershipItem {
     let action: () -> Void
 }
 
+extension LauncherMembershipItem {
+    /// 从纯 `AppMembershipMenuPlan` 生成成员项并接线到 controller。四条菜单构造路径
+    /// （strip 窗口卡 / kept 图标 / 消息 chip / drawer 图标）统一消费，保证矩阵一致。
+    @MainActor
+    static func items(
+        surface: AppMembershipMenuPlan.Surface,
+        bundleID: String,
+        isKept: Bool,
+        isMessaging: Bool,
+        controller: AppMembershipController
+    ) -> [LauncherMembershipItem] {
+        AppMembershipMenuPlan.items(
+            surface: surface,
+            isFinder: bundleID == KeptAppStore.forbiddenBundleID,
+            isKept: isKept,
+            isMessaging: isMessaging
+        ).map { item in
+            switch item {
+            case let .keep(isChecked):
+                return LauncherMembershipItem(label: "在程序坞中保留", isChecked: isChecked) {
+                    controller.setKept(bundleID, enabled: !isChecked)
+                }
+            case .markMessaging:
+                return LauncherMembershipItem(label: "标记为消息应用") {
+                    controller.markMessaging(bundleID)
+                }
+            case .unmarkMessaging:
+                return LauncherMembershipItem(label: "取消标记消息应用") {
+                    controller.unmarkMessaging(bundleID)
+                }
+            }
+        }
+    }
+}
+
 struct LauncherChip: View {
     let bundleID: String
     let isRunning: Bool   // supplied by the displayed zone's runtime/process projection

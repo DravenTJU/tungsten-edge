@@ -69,4 +69,57 @@ final class MessagingAppStoreTests: XCTestCase {
         let reloaded = MessagingAppStore(defaults: defaults)
         XCTAssertEqual(reloaded.bundleIDs, ["c", "a", "b"])
     }
+
+    // MARK: - V2 key migration
+
+    func testNameListMigratesFromLegacyKeyToV2AndFreezesLegacy() {
+        let defaults = makeDefaults()
+        defaults.set(["com.chat.legacy"], forKey: "messagingBundleIDs")
+        let store = MessagingAppStore(defaults: defaults)
+        XCTAssertTrue(store.contains("com.chat.legacy"))
+        XCTAssertEqual(defaults.stringArray(forKey: "messagingBundleIDsV2"), ["com.chat.legacy"])
+        // 旧键冻结、不动（回滚可读）。
+        XCTAssertEqual(defaults.stringArray(forKey: "messagingBundleIDs"), ["com.chat.legacy"])
+    }
+
+    func testFreshInstallPersistsEmptyV2Markers() {
+        let defaults = makeDefaults()
+        _ = MessagingAppStore(defaults: defaults)
+        XCTAssertEqual(defaults.stringArray(forKey: "messagingBundleIDsV2"), [])
+        XCTAssertEqual(defaults.stringArray(forKey: "messagingOptOutBundleIDsV2"), [])
+    }
+
+    func testExistingV2KeyPreventsRemigrationFromLegacy() {
+        let defaults = makeDefaults()
+        defaults.set(["com.v2.only"], forKey: "messagingBundleIDsV2")
+        defaults.set(["com.legacy.ignored"], forKey: "messagingBundleIDs")
+        let store = MessagingAppStore(defaults: defaults)
+        XCTAssertTrue(store.contains("com.v2.only"))
+        XCTAssertFalse(store.contains("com.legacy.ignored"))
+    }
+
+    func testOptOutMigratesIndependentlyOfNameList() {
+        // 名单已有 V2、opt-out 只有旧键 → opt-out 独立迁移（部分迁移状态）。
+        let defaults = makeDefaults()
+        defaults.set([String](), forKey: "messagingBundleIDsV2")
+        defaults.set(["com.tencent.qq"], forKey: "messagingOptOutBundleIDs") // builtin，被 opt-out
+        let store = MessagingAppStore(defaults: defaults)
+        let added = store.autoRegister(runningBundleIDs: ["com.tencent.qq"])
+        XCTAssertTrue(added.isEmpty) // opt-out 迁移生效，不重新注册
+        XCTAssertEqual(defaults.stringArray(forKey: "messagingOptOutBundleIDsV2"), ["com.tencent.qq"])
+    }
+
+    func testMarkReturnsTrueOnFirstJoinFalseAfter() {
+        let store = MessagingAppStore(defaults: makeDefaults())
+        XCTAssertTrue(store.mark("com.chat.app"))
+        XCTAssertFalse(store.mark("com.chat.app"))
+    }
+
+    func testAutoRegisterReturnsNewlyAddedIDs() {
+        let store = MessagingAppStore(defaults: makeDefaults())
+        let chat = "com.tencent.xinWeChat" // builtin whitelist
+        let added = store.autoRegister(runningBundleIDs: [chat, "com.not.messaging"])
+        XCTAssertEqual(added, [chat])
+        XCTAssertTrue(store.autoRegister(runningBundleIDs: [chat]).isEmpty) // 第二轮无新增
+    }
 }

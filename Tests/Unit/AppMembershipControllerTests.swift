@@ -29,6 +29,8 @@ final class AppMembershipControllerTests: XCTestCase {
         )
     }
 
+    // MARK: - setKept (kept只改 kept，可与 messaging 共存)
+
     func testSetKeptAddsWithoutChangingDrawerPlacement() {
         drawer.add("com.example.app")
         controller.setKept("com.example.app", enabled: true)
@@ -36,10 +38,10 @@ final class AppMembershipControllerTests: XCTestCase {
         XCTAssertTrue(drawer.contains("com.example.app"))
     }
 
-    func testSetKeptRejectsMessagingIdentity() {
+    func testSetKeptCoexistsWithMessagingIdentity() {
         messaging.mark("com.example.app")
         controller.setKept("com.example.app", enabled: true)
-        XCTAssertFalse(kept.contains("com.example.app"))
+        XCTAssertTrue(kept.contains("com.example.app"))
         XCTAssertTrue(messaging.contains("com.example.app"))
     }
 
@@ -52,9 +54,11 @@ final class AppMembershipControllerTests: XCTestCase {
     func testUnsetKeptLeavesDrawerPlacementAndMessagingUntouched() {
         controller.setKept("com.example.app", enabled: true)
         drawer.add("com.example.app")
+        messaging.mark("com.example.app")
         controller.setKept("com.example.app", enabled: false)
         XCTAssertFalse(kept.contains("com.example.app"))
         XCTAssertTrue(drawer.contains("com.example.app"))
+        XCTAssertTrue(messaging.contains("com.example.app"))
     }
 
     func testMoveToDrawerPreservesKept() {
@@ -64,32 +68,77 @@ final class AppMembershipControllerTests: XCTestCase {
         XCTAssertTrue(drawer.contains("com.example.app"))
     }
 
-    func testMarkMessagingClearsKept() {
-        controller.setKept("com.example.app", enabled: true)
+    // MARK: - markMessaging (首次加入补 kept，永不改 drawer)
+
+    func testMarkMessagingFirstJoinSeedsKeptAndKeepsDrawer() {
+        drawer.add("com.example.app")
         controller.markMessaging("com.example.app")
-        XCTAssertFalse(kept.contains("com.example.app"))
         XCTAssertTrue(messaging.contains("com.example.app"))
-        XCTAssertFalse(drawer.contains("com.example.app"))
+        XCTAssertTrue(kept.contains("com.example.app"))     // 首次加入补 kept
+        XCTAssertTrue(drawer.contains("com.example.app"))   // placement 不动
     }
 
-    func testReconcileAllowsKeptDrawerOverlapButRemovesMessagingConflict() {
-        controller.setKept("com.example.app", enabled: true)
-        // Manually add to drawer and messaging to simulate conflicting persisted state
+    func testMarkMessagingAgainDoesNotReopenUserRemovedKept() {
+        controller.markMessaging("com.example.app")            // 首次 → 补 kept
+        controller.setKept("com.example.app", enabled: false)  // 用户取消保留
+        controller.markMessaging("com.example.app")            // 已是成员 → 不重补
+        XCTAssertTrue(messaging.contains("com.example.app"))
+        XCTAssertFalse(kept.contains("com.example.app"))
+    }
+
+    func testMarkMessagingRejectsFinder() {
+        let finder = KeptAppStore.forbiddenBundleID
+        controller.markMessaging(finder)
+        XCTAssertFalse(messaging.contains(finder))
+        XCTAssertFalse(kept.contains(finder))
+    }
+
+    // MARK: - autoRegisterMessaging (首次识别补 kept，扫描不重开)
+
+    func testAutoRegisterMessagingSeedsKeptForNewMembers() {
+        let chat = "com.tencent.xinWeChat"   // builtin whitelist
+        controller.autoRegisterMessaging(runningBundleIDs: [chat])
+        XCTAssertTrue(messaging.contains(chat))
+        XCTAssertTrue(kept.contains(chat))
+    }
+
+    func testAutoRegisterMessagingDoesNotReopenUserRemovedKept() {
+        let chat = "com.tencent.xinWeChat"
+        controller.autoRegisterMessaging(runningBundleIDs: [chat]) // 首见 → 补 kept
+        controller.setKept(chat, enabled: false)                   // 用户取消保留
+        controller.autoRegisterMessaging(runningBundleIDs: [chat]) // 再扫描 → 已是成员
+        XCTAssertTrue(messaging.contains(chat))
+        XCTAssertFalse(kept.contains(chat))
+    }
+
+    // MARK: - unmarkMessaging (只清消息身份，保留 kept + drawer)
+
+    func testUnmarkMessagingKeepsKeptAndDrawer() {
+        controller.markMessaging("com.example.app") // messaging + kept
         drawer.add("com.example.app")
-        messaging.mark("com.example.app")
-        controller.reconcileKeptWins()
+        controller.unmarkMessaging("com.example.app")
+        XCTAssertFalse(messaging.contains("com.example.app"))
         XCTAssertTrue(kept.contains("com.example.app"))
         XCTAssertTrue(drawer.contains("com.example.app"))
-        XCTAssertFalse(messaging.contains("com.example.app"))
     }
 
-    func testReconcileKeptWinsRemovesFinderFromDrawerAndMessaging() {
+    // MARK: - reconcileInvalidMemberships (只清 Finder)
+
+    func testReconcileClearsFinderFromDrawerAndMessaging() {
         let finder = KeptAppStore.forbiddenBundleID
         drawer.add(finder)
         messaging.mark(finder)
-        controller.reconcileKeptWins()
+        controller.reconcileInvalidMemberships()
         XCTAssertFalse(drawer.contains(finder))
         XCTAssertFalse(messaging.contains(finder))
+    }
+
+    func testReconcilePreservesKeptMessagingOverlap() {
+        controller.setKept("com.example.app", enabled: true)
+        messaging.mark("com.example.app")
+        controller.reconcileInvalidMemberships()
+        XCTAssertTrue(kept.contains("com.example.app"))
+        XCTAssertTrue(messaging.contains("com.example.app"))
     }
 
     // MARK: - DrawerStore migration
@@ -99,7 +148,6 @@ final class AppMembershipControllerTests: XCTestCase {
         defaults.set(["com.example.fav1", "com.example.fav2"], forKey: "launchFavoriteBundleIDs")
         defaults.set(["com.example.existing"], forKey: "drawerBundleIDs")
         let migrated = DrawerStore(defaults: defaults)
-        // Favorites should be merged into drawer, old key deleted.
         XCTAssertTrue(migrated.contains("com.example.fav1"))
         XCTAssertTrue(migrated.contains("com.example.fav2"))
         XCTAssertTrue(migrated.contains("com.example.existing"))

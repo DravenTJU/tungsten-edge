@@ -3,7 +3,8 @@ import Foundation
 /// Single mutation boundary for app membership conversions.
 ///
 /// Drawer membership is placement; kept membership means an entry survives app
-/// exit. They may coexist. Messaging remains an alternative persistent identity.
+/// exit. Kept, drawer, and messaging identity may all coexist; only Finder is
+/// excluded from every membership.
 @MainActor
 final class AppMembershipController: ObservableObject {
     private let keptAppStore: KeptAppStore
@@ -20,12 +21,11 @@ final class AppMembershipController: ObservableObject {
         self.messagingStore = messagingStore
     }
 
-    /// Native check-menu toggle. It never changes placement. Messaging apps use
-    /// their own persistent identity and therefore cannot also become kept.
+    /// Native check-menu toggle. It never changes placement. Kept may coexist with
+    /// messaging identity under the unified model.
     func setKept(_ bundleID: String, enabled: Bool) {
         guard keptAppStore.canKeep(bundleID) else { return }
         if enabled {
-            guard !messagingStore.contains(bundleID) else { return }
             keptAppStore.add(bundleID)
         } else {
             keptAppStore.remove(bundleID)
@@ -38,31 +38,38 @@ final class AppMembershipController: ObservableObject {
         drawerStore.add(bundleID)
     }
 
-    /// 「标记为消息应用」：清 kept + messaging.mark + drawer.remove。
+    /// 「标记为消息应用」：mark + 首次加入补 kept（默认保留）。不改 drawer——位置只能拖动改。
     func markMessaging(_ bundleID: String) {
         guard canChangeMembership(bundleID) else { return }
-        keptAppStore.remove(bundleID)
-        messagingStore.mark(bundleID)
-        if drawerStore.contains(bundleID) {
-            drawerStore.remove(bundleID)
+        if messagingStore.mark(bundleID) {
+            keptAppStore.add(bundleID)
         }
     }
 
-    /// Startup repair. Finder keeps its dedicated slot. Kept wins only over the
-    /// alternative messaging identity; drawer placement is deliberately preserved.
-    func reconcileKeptWins() {
+    /// Auto-tier registration: seed kept for each newly auto-detected messaging app
+    /// (first registration only, so a later user un-check is not reopened). Does not
+    /// change drawer placement.
+    func autoRegisterMessaging(runningBundleIDs: Set<String>) {
+        for bundleID in messagingStore.autoRegister(runningBundleIDs: runningBundleIDs) {
+            keptAppStore.add(bundleID)
+        }
+    }
+
+    /// 「取消标记消息应用」：只清消息身份 + 记 opt-out；kept 与 drawer 保持不变。
+    func unmarkMessaging(_ bundleID: String) {
+        messagingStore.unmark(bundleID)
+    }
+
+    /// Startup repair. Only Finder's illegal memberships are cleared — Finder keeps
+    /// its dedicated slot and must never sit in drawer/messaging. Kept and messaging
+    /// deliberately coexist now, so there is no kept/messaging reconciliation.
+    func reconcileInvalidMemberships() {
         let finder = KeptAppStore.forbiddenBundleID
         if drawerStore.contains(finder) {
             drawerStore.remove(finder)
         }
         if messagingStore.contains(finder) {
             messagingStore.unmark(finder)
-        }
-
-        for bundleID in keptAppStore.bundleIDs {
-            if messagingStore.contains(bundleID) {
-                messagingStore.unmark(bundleID)
-            }
         }
     }
 
@@ -80,37 +87,40 @@ enum AppMembershipProjection {
     }
 
     /// Core drawer visibility rule: placement is durable, but a chip is rendered
-    /// only while the app runs or another persistent identity keeps it reachable.
+    /// only while the app runs or kept keeps it reachable. Messaging identity is no
+    /// longer an independent retention condition — kept alone decides.
     static func visibleDrawerIDs(
         drawerIDs: [String],
         keptIDs: [String],
-        messagingIDs: [String],
         runningIDs: Set<String>
     ) -> [String] {
-        let retained = Set(keptIDs).union(messagingIDs).union(runningIDs)
+        let retained = Set(keptIDs).union(runningIDs)
         return filteredUnique(drawerIDs, excluding: []).filter { retained.contains($0) }
+    }
+
+    /// Messaging-zone visibility: a messaging app not stashed in the drawer, shown
+    /// only while running or kept. Order-preserving, deduped.
+    static func visibleMessagingIDs(
+        messagingIDs: [String],
+        drawerIDs: [String],
+        keptIDs: [String],
+        runningIDs: Set<String>
+    ) -> [String] {
+        let retained = Set(keptIDs).union(runningIDs)
+        return filteredUnique(messagingIDs, excluding: Set(drawerIDs)).filter { retained.contains($0) }
     }
 
     static func drawerPreview(
         drawerIDs: [String],
         keptIDs: [String],
-        messagingIDs: [String],
         runningIDs: Set<String>,
         limit: Int = 9
     ) -> [String] {
         Array(visibleDrawerIDs(
             drawerIDs: drawerIDs,
             keptIDs: keptIDs,
-            messagingIDs: messagingIDs,
             runningIDs: runningIDs
         ).prefix(max(0, limit)))
-    }
-
-    static func messagingIDs(
-        _ messagingIDs: [String],
-        excludingKeptIDs keptIDs: [String]
-    ) -> [String] {
-        filteredUnique(messagingIDs, excluding: Set(keptIDs))
     }
 
     private static func filteredUnique(_ bundleIDs: [String], excluding excluded: Set<String>) -> [String] {

@@ -148,13 +148,15 @@ struct DockStripView: View {
     /// the two zones never cross (拖动分区内进行).
     private func partitioned() -> (messaging: [StripEntry], liveNatural: [StripEntry]) {
         let keptIDs = keptAppStore.bundleIDs
-        let msg = AppMembershipProjection.messagingIDs(
-            messagingStore.bundleIDs,
-            excludingKeptIDs: keptIDs
-        )                                             // ordered → drag-reorder friendly
-            // 消息身份常驻（owner 2026-07-12 #2）：不再要求运行中——未运行消息应用也进消息区（变灰、
-            // 点击启动）。抽屉例外：被收进抽屉的消息应用仍隐藏（显示在抽屉，抽屉是"不想钉在区里"的逃生舱）。
-            .filter { !drawerStore.contains($0) }
+        let runningIDs = runningApplicationStore.runningBundleIDs
+        // 统一模型：消息区可见 = (messaging − drawer) ∩ (running ∪ kept)。消息身份不再独立保活，
+        // 由 kept 决定退出后留不留（首次标记即补 kept，默认观感不变）；抽屉例外仍隐藏（抽屉优先级更高）。
+        let msg = AppMembershipProjection.visibleMessagingIDs(
+            messagingIDs: messagingStore.bundleIDs,
+            drawerIDs: drawerStore.bundleIDs,
+            keptIDs: keptIDs,
+            runningIDs: runningIDs
+        )
         let msgSet = Set(msg)
         let items = allNonDrawerItems
 
@@ -865,20 +867,21 @@ struct DockStripView: View {
                     // 定宽图标行，运行点标记它是 app 入口。
                     ChipView(item: main, iconOnly: true, showRunningDot: true)
                 } else {
-                    // 无主窗两态（owner 2026-07-12 #2，消息身份常驻）：运行中（关窗/常驻）→ 亮图标、点击
-                    // reopen 主窗；未运行 → 灰图标、点击启动（不能 reopen 一个没运行的进程）。菜单不再给
-                    // 「在程序坞中保留」（那会 unmark + 转 kept 把消息应用拽出区，正是 owner 撞到的 bug）。
+                    // 无主窗两态：运行中（关窗/常驻）→ 亮图标、点击 reopen 主窗；未运行 → 灰图标、点击启动。
+                    // 统一模型下消息应用也有「在程序坞中保留」勾选（与「取消标记」并存），由纯投影决定。
                     let running = runningApplicationStore.isRunning(bid)
                     LauncherChip(bundleID: bid,
                                  isRunning: running,
                                  isHidden: running && isHiddenInSnapshot(bundleID: bid),
                                  scale: 1.0,
                                  dimsWhenInactive: false,
-                                 membershipItems: [
-                                    LauncherMembershipItem(label: "取消标记消息应用") {
-                                        messagingStore.unmark(bid)
-                                    }
-                                 ],
+                                 membershipItems: LauncherMembershipItem.items(
+                                    surface: .strip,
+                                    bundleID: bid,
+                                    isKept: keptAppStore.contains(bid),
+                                    isMessaging: true,
+                                    controller: appMembershipController
+                                 ),
                                  onTap: running ? { Self.reopenMainWindow(bundleID: bid) } : nil,
                                  onLaunch: { runtime.beginLaunch(bid) },
                                  launchReady: !runtime.launchingBundleIDs.contains(bid))
@@ -913,19 +916,15 @@ struct DockStripView: View {
         }
     }
 
-    /// Kept launcher uses the same native check item as live window chips.
+    /// Kept launcher uses the same shared membership projection (strip surface).
     private func keptAppMembershipItems(bundleID: String) -> [LauncherMembershipItem] {
-        let isKept = keptAppStore.contains(bundleID)
-        var items = [LauncherMembershipItem(
-            label: "在程序坞中保留",
-            isChecked: isKept
-        ) {
-            appMembershipController.setKept(bundleID, enabled: !isKept)
-        }]
-        items.append(LauncherMembershipItem(label: "标记为消息应用") {
-            appMembershipController.markMessaging(bundleID)
-        })
-        return items
+        LauncherMembershipItem.items(
+            surface: .strip,
+            bundleID: bundleID,
+            isKept: keptAppStore.contains(bundleID),
+            isMessaging: messagingStore.contains(bundleID),
+            controller: appMembershipController
+        )
     }
 
     /// 固定文件夹左键唯一入口：按 `FolderInteraction.primaryAction` 分派（现固定 = 内容预览）。
@@ -1329,26 +1328,18 @@ struct ChipView: View {
     /// mutually exclusive with kept membership. 收纳（进抽屉）不给菜单入口——
     /// 唯一路径是拖拽到胶囊/抽屉（owner 2026-07-10：右键只留「在程序坞中保留」与消息标记）。
     private func appendMembershipItems(to menu: NSMenu) {
-        guard let bid = item.bundleIdentifier,
-              bid != KeptAppStore.forbiddenBundleID else { return }
+        guard let bid = item.bundleIdentifier else { return }
+        let items = LauncherMembershipItem.items(
+            surface: .strip,
+            bundleID: bid,
+            isKept: keptAppStore.contains(bid),
+            isMessaging: messagingStore.contains(bid),
+            controller: appMembershipController
+        )
+        guard !items.isEmpty else { return }
         menu.addItem(.separator())
-        // Messaging identity is the persistent-state exception and keeps its own
-        // single management command. All other app chips always expose the toggle.
-        if keptAppStore.canKeep(bid), !messagingStore.contains(bid) {
-            let isKept = keptAppStore.contains(bid)
-            menu.addItem(AppMenuBuilder.membershipItem(LauncherMembershipItem(
-                label: "在程序坞中保留",
-                isChecked: isKept
-            ) {
-                appMembershipController.setKept(bid, enabled: !isKept)
-            }))
-        }
-        if messagingStore.contains(bid) {
-            menu.addItem(ClosureMenuItem("取消标记消息应用") { messagingStore.unmark(bid) })
-        } else {
-            menu.addItem(ClosureMenuItem("标记为消息应用") {
-                appMembershipController.markMessaging(bid)
-            })
+        for descriptor in items {
+            menu.addItem(AppMenuBuilder.membershipItem(descriptor))
         }
     }
 
@@ -1390,7 +1381,6 @@ struct DrawerCapsuleButton: View {
         return AppMembershipProjection.drawerPreview(
             drawerIDs: ordered,
             keptIDs: keptAppStore.bundleIDs,
-            messagingIDs: messagingStore.bundleIDs,
             runningIDs: runningApplicationStore.runningBundleIDs
         )
     }

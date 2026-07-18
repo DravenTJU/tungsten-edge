@@ -54,7 +54,6 @@ struct DrawerView: View {
         AppMembershipProjection.visibleDrawerIDs(
             drawerIDs: displayOrder,
             keptIDs: keptAppStore.bundleIDs,
-            messagingIDs: messagingStore.bundleIDs,
             runningIDs: runningApplicationStore.runningBundleIDs
         )
     }
@@ -181,18 +180,13 @@ struct DrawerView: View {
     }
 
     private func membershipItems(for id: String) -> [LauncherMembershipItem] {
-        if messagingStore.contains(id) {
-            return [LauncherMembershipItem(label: "取消标记消息应用") {
-                messagingStore.unmark(id)
-            }]
-        }
-        let isKept = keptAppStore.contains(id)
-        return [LauncherMembershipItem(
-            label: "在程序坞中保留",
-            isChecked: isKept
-        ) {
-            appMembershipController.setKept(id, enabled: !isKept)
-        }]
+        LauncherMembershipItem.items(
+            surface: .drawer,
+            bundleID: id,
+            isKept: keptAppStore.contains(id),
+            isMessaging: messagingStore.contains(id),
+            controller: appMembershipController
+        )
     }
 
     /// `running` 按**区**传（运行区 true / 启动区 false），保证外观、点击与菜单都服从当前显示区。

@@ -8,14 +8,17 @@ import os
 @MainActor
 final class KeptAppStore: ObservableObject {
     static let forbiddenBundleID = "com.apple.finder"
-    /// V2 separates "where the app is placed" (DrawerStore) from "keep an entry
-    /// after the app exits". Key existence is the migration marker, including an
-    /// explicitly persisted empty array on a fresh install.
-    static let defaultsKey = "keptAppBundleIDsV2"
-    static let previousDefaultsKey = "keptAppBundleIDs"
+    /// V3 lets a messaging app also be kept (kept alone now decides post-exit
+    /// visibility). Key existence is the migration marker, including an explicitly
+    /// persisted empty array on a fresh install. Older kept keys stay frozen
+    /// read-only so a code rollback still reads the exact pre-upgrade list.
+    static let defaultsKey = "keptAppBundleIDsV3"
+    static let previousDefaultsKey = "keptAppBundleIDsV2"
+    private static let v1Key = "keptAppBundleIDs"
     private static let legacyKey = "pinnedAppBundleIDs"
     private static let drawerKey = "drawerBundleIDs"
-    private static let messagingKey = "messagingBundleIDs"
+    private static let messagingV2Key = "messagingBundleIDsV2"
+    private static let messagingV1Key = "messagingBundleIDs"
 
     @Published private(set) var bundleIDs: [String]
 
@@ -25,25 +28,43 @@ final class KeptAppStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
+        // Already on V3.
         if defaults.object(forKey: Self.defaultsKey) != nil {
             let stored = defaults.stringArray(forKey: Self.defaultsKey) ?? []
             bundleIDs = Self.cleaned(stored)
-            defaults.removeObject(forKey: Self.legacyKey)
             if bundleIDs != stored { persist() }
             return
         }
 
-        // V1 treated every drawer placement as implicitly kept. Preserve that
-        // visible behavior once, while leaving the old kept key untouched so a
-        // code rollback still reads the exact pre-upgrade kept list.
-        let previous = defaults.stringArray(forKey: Self.previousDefaultsKey) ?? []
-        let legacy = defaults.stringArray(forKey: Self.legacyKey) ?? []
-        let drawer = defaults.stringArray(forKey: Self.drawerKey) ?? []
-        let messaging = Set(defaults.stringArray(forKey: Self.messagingKey) ?? [])
-        bundleIDs = Self.cleaned(previous + legacy + drawer.filter { !messaging.contains($0) })
-        defaults.removeObject(forKey: Self.legacyKey)
-        persist() // Empty is intentional: V2 key existence is the migration marker.
-        logger.info("initialized keptAppBundleIDsV2 with \(self.bundleIDs.count) entries")
+        // First migration to V3. Messaging apps now join kept so they stay visible
+        // after exit under the unified model. Frozen legacy keys (V2 / V1 / pinned)
+        // are left untouched for a clean code rollback.
+        let messaging = Self.authoritativeMessagingNames(defaults)
+        let seed: [String]
+        if defaults.object(forKey: Self.previousDefaultsKey) != nil {
+            // Kept V2 exists: keep its order first, messaging appended.
+            let v2 = defaults.stringArray(forKey: Self.previousDefaultsKey) ?? []
+            seed = v2 + messaging
+        } else {
+            // No kept V2 (upgrading straight past it): fold V1 + pinned + drawer + messaging.
+            let v1 = defaults.stringArray(forKey: Self.v1Key) ?? []
+            let legacy = defaults.stringArray(forKey: Self.legacyKey) ?? []
+            let drawer = defaults.stringArray(forKey: Self.drawerKey) ?? []
+            seed = v1 + legacy + drawer + messaging
+        }
+        bundleIDs = Self.cleaned(seed)
+        persist() // Empty is intentional: V3 key existence is the migration marker.
+        logger.info("initialized keptAppBundleIDsV3 with \(self.bundleIDs.count) entries")
+    }
+
+    /// Authoritative messaging names for the kept-V3 seed, independent of store
+    /// init order: if the messaging V2 key exists (even an explicit empty array)
+    /// read only it; otherwise fall back to the legacy messaging key. Never union.
+    private static func authoritativeMessagingNames(_ defaults: UserDefaults) -> [String] {
+        if defaults.object(forKey: messagingV2Key) != nil {
+            return defaults.stringArray(forKey: messagingV2Key) ?? []
+        }
+        return defaults.stringArray(forKey: messagingV1Key) ?? []
     }
 
     static func canKeep(_ bundleID: String) -> Bool {

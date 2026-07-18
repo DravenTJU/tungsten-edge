@@ -13,21 +13,22 @@ final class AppMembershipProjectionTests: XCTestCase {
         XCTAssertEqual(result, ["c", "a", "b"])
     }
 
-    func testVisibleDrawerIDsUsesRunningKeptOrMessagingUnion() {
+    // MARK: - visibleDrawerIDs = drawer ∩ (running ∪ kept)
+
+    func testVisibleDrawerIDsUsesRunningKeptUnion() {
         let result = AppMembershipProjection.visibleDrawerIDs(
-            drawerIDs: ["running", "kept", "messaging", "hidden"],
+            drawerIDs: ["running", "kept", "messagingOnly", "hidden"],
             keptIDs: ["kept"],
-            messagingIDs: ["messaging"],
             runningIDs: ["running"]
         )
-        XCTAssertEqual(result, ["running", "kept", "messaging"])
+        // messagingOnly 既不 running 也不 kept → 现在隐藏（messaging 不再独立保活）。
+        XCTAssertEqual(result, ["running", "kept"])
     }
 
     func testVisibleDrawerIDsPreservesInputOrderAndDeduplicates() {
         let result = AppMembershipProjection.visibleDrawerIDs(
             drawerIDs: ["b", "a", "b", "c"],
             keptIDs: ["a", "b", "c"],
-            messagingIDs: [],
             runningIDs: []
         )
         XCTAssertEqual(result, ["b", "a", "c"])
@@ -38,7 +39,6 @@ final class AppMembershipProjectionTests: XCTestCase {
         let result = AppMembershipProjection.drawerPreview(
             drawerIDs: drawerIDs,
             keptIDs: drawerIDs,
-            messagingIDs: [],
             runningIDs: []
         )
         XCTAssertEqual(result.count, 9)
@@ -49,18 +49,32 @@ final class AppMembershipProjectionTests: XCTestCase {
         let result = AppMembershipProjection.drawerPreview(
             drawerIDs: ["a", "b", "c"],
             keptIDs: ["b"],
-            messagingIDs: [],
             runningIDs: ["c"],
             limit: 9
         )
         XCTAssertEqual(result, ["b", "c"])
     }
 
-    func testMessagingIDsExcludesKept() {
-        let result = AppMembershipProjection.messagingIDs(
-            ["a", "b", "c"],
-            excludingKeptIDs: ["b"]
+    // MARK: - visibleMessagingIDs = (messaging − drawer) ∩ (running ∪ kept)
+
+    func testVisibleMessagingIDsExcludesDrawerAndRequiresRunningOrKept() {
+        let result = AppMembershipProjection.visibleMessagingIDs(
+            messagingIDs: ["running", "kept", "stashed", "gone"],
+            drawerIDs: ["stashed"],
+            keptIDs: ["kept"],
+            runningIDs: ["running"]
         )
-        XCTAssertEqual(result, ["a", "c"])
+        // stashed → 抽屉里隐藏；gone → 既不 running 也不 kept，隐藏。
+        XCTAssertEqual(result, ["running", "kept"])
+    }
+
+    func testVisibleMessagingIDsPreservesOrderAndDeduplicates() {
+        let result = AppMembershipProjection.visibleMessagingIDs(
+            messagingIDs: ["c", "a", "c", "b"],
+            drawerIDs: [],
+            keptIDs: ["a", "b", "c"],
+            runningIDs: []
+        )
+        XCTAssertEqual(result, ["c", "a", "b"])
     }
 }
