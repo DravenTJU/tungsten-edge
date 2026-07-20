@@ -13,6 +13,7 @@ enum LauncherMenuItemKind: Equatable {
     case recentDocuments
     case show
     case hide
+    /// 退出（含 Option 替身 强制退出）——**恒定末项**，成员项一律排在它之前。
     case quit
     /// 成员 / 管理项区（可勾选的在程序坞中保留 / 取消标记消息应用；1 或多项由调用方决定）。
     case membership
@@ -26,14 +27,14 @@ enum LauncherMenuPlan {
     static func itemKinds(isRunning: Bool,
                           isHidden: Bool,
                           hasMembership: Bool) -> [LauncherMenuItemKind] {
+        // 次序对齐 DockStripView 的窗口卡片分支：动作项 → 成员项 → 退出。
+        // 退出必须恒为末项——成员项夹在退出之后会让「退出」落到倒数第三，与用户预期相悖。
         var kinds: [LauncherMenuItemKind] = []
         if !isRunning { kinds.append(.open) }
         if isRunning || hasMembership { kinds.append(.recentDocuments) }
-        if isRunning {
-            kinds.append(isHidden ? .show : .hide)
-            kinds.append(.quit)
-        }
+        if isRunning { kinds.append(isHidden ? .show : .hide) }
         if hasMembership { kinds.append(.membership) }
+        if isRunning { kinds.append(.quit) }
         return kinds
     }
 }

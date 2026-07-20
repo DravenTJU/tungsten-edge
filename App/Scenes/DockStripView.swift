@@ -1292,11 +1292,12 @@ struct ChipView: View {
             } else {
                 menu.addItem(ClosureMenuItem("隐藏") { runtime.hide(windowID: item.actionWindowID) })
             }
+            // 成员项在前、退出恒为末项——与下面的窗口卡片分支保持一致。
+            appendMembershipItems(to: menu)
             menu.addItem(.separator())
             AppMenuBuilder.appendQuitItems(to: menu, bundleID: bid) {
                 runtime.quit(windowID: item.actionWindowID)
             }
-            appendMembershipItems(to: menu)
         } else {
             if isFinderChip { AppMenuBuilder.appendFinderItems(to: menu) }
             menu.addItem(ClosureMenuItem("新建窗口") { runtime.newWindow(windowID: item.actionWindowID) })

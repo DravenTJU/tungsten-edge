@@ -184,6 +184,11 @@ struct LauncherChip: View {
                 }
             case .quit:
                 if !runningApps.isEmpty {
+                    // 退出恒为末项，所以前置分隔线由本分支自己补（成员区已排在前面）；
+                    // 守卫同 .membership：菜单为空或末项已是分隔线时不补，避免双线。
+                    if !menu.items.isEmpty, menu.items.last?.isSeparatorItem == false {
+                        menu.addItem(.separator())
+                    }
                     AppMenuBuilder.appendQuitItems(
                         to: menu,
                         bundleID: bundleID,
