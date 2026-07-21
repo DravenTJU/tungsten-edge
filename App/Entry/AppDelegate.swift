@@ -155,15 +155,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runningApplicationStore.start()
         runtime.start()
 
-        // Auto tier of the messaging list: whenever the running set changes, register
-        // any app matching the whitelist / social-networking category and seed kept on
-        // first registration (default-keep). Kept no longer excludes messaging, so
-        // there is no kept filter; the running source is the process store, not window
-        // snapshots.
+        // Auto tier of the messaging list: register an app only when it both matches the
+        // whitelist / social-networking category **and** currently has an identifiable main
+        // window, then seed kept on first registration (default-keep). Kept no longer excludes
+        // messaging, so there is no kept filter.
+        //
+        // The window snapshot is combined in because the capability gate needs titles — the
+        // process store alone cannot tell whether the zone can represent the app. Registration
+        // is once-and-for-all (see `MessagingAppStore.autoRegister`), so the "identifiable right
+        // now" reading is only ever consumed for apps not yet in the list; existing members are
+        // never re-tested and therefore never flap out of the zone.
         messagingAutoRegisterSubscription = runningApplicationStore.$runningBundleIDs
+            .combineLatest(runtime.$snapshot)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] running in
-                self?.appMembershipController.autoRegisterMessaging(runningBundleIDs: running)
+            .sink { [weak self] running, snapshot in
+                guard let self else { return }
+                let identifiable = MessagingZoneAdmission.mainWindowIdentifiableBundleIDs(
+                    windows: StripItem.items(from: snapshot).map {
+                        .init(bundleID: $0.bundleIdentifier ?? "",
+                              title: $0.title,
+                              isAppLevelFallback: $0.isAppLevelFallback)
+                    },
+                    titleMatchesAppName: { title, bundleID in
+                        AppDisplayNameResolver.titleMatchesAppName(title, bundleID: bundleID)
+                    }
+                )
+                self.appMembershipController.autoRegisterMessaging(
+                    runningBundleIDs: running,
+                    mainWindowIdentifiableBundleIDs: identifiable
+                )
             }
 
         let coordinator = PanelCoordinator(

@@ -49,8 +49,13 @@ final class AppMembershipController: ObservableObject {
     /// Auto-tier registration: seed kept for each newly auto-detected messaging app
     /// (first registration only, so a later user un-check is not reopened). Does not
     /// change drawer placement.
-    func autoRegisterMessaging(runningBundleIDs: Set<String>) {
-        for bundleID in messagingStore.autoRegister(runningBundleIDs: runningBundleIDs) {
+    func autoRegisterMessaging(runningBundleIDs: Set<String>,
+                               mainWindowIdentifiableBundleIDs: Set<String>) {
+        let added = messagingStore.autoRegister(
+            runningBundleIDs: runningBundleIDs,
+            mainWindowIdentifiableBundleIDs: mainWindowIdentifiableBundleIDs
+        )
+        for bundleID in added {
             keptAppStore.add(bundleID)
         }
     }

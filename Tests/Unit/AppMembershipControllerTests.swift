@@ -97,18 +97,32 @@ final class AppMembershipControllerTests: XCTestCase {
 
     func testAutoRegisterMessagingSeedsKeptForNewMembers() {
         let chat = "com.tencent.xinWeChat"   // builtin whitelist
-        controller.autoRegisterMessaging(runningBundleIDs: [chat])
+        controller.autoRegisterMessaging(runningBundleIDs: [chat],
+                                         mainWindowIdentifiableBundleIDs: [chat])
         XCTAssertTrue(messaging.contains(chat))
         XCTAssertTrue(kept.contains(chat))
     }
 
     func testAutoRegisterMessagingDoesNotReopenUserRemovedKept() {
         let chat = "com.tencent.xinWeChat"
-        controller.autoRegisterMessaging(runningBundleIDs: [chat]) // 首见 → 补 kept
+        // 首见 → 补 kept
+        controller.autoRegisterMessaging(runningBundleIDs: [chat],
+                                         mainWindowIdentifiableBundleIDs: [chat])
         controller.setKept(chat, enabled: false)                   // 用户取消保留
-        controller.autoRegisterMessaging(runningBundleIDs: [chat]) // 再扫描 → 已是成员
+        // 再扫描 → 已是成员
+        controller.autoRegisterMessaging(runningBundleIDs: [chat],
+                                         mainWindowIdentifiableBundleIDs: [chat])
         XCTAssertTrue(messaging.contains(chat))
         XCTAssertFalse(kept.contains(chat))
+    }
+
+    func testAutoRegisterMessagingSkipsAppWithoutIdentifiableMainWindow() {
+        // 「信息」这类主窗口永远认不出的应用不进消息区,也就不会被补 kept。
+        let messages = "com.apple.MobileSMS"  // builtin whitelist
+        controller.autoRegisterMessaging(runningBundleIDs: [messages],
+                                         mainWindowIdentifiableBundleIDs: [])
+        XCTAssertFalse(messaging.contains(messages))
+        XCTAssertFalse(kept.contains(messages))
     }
 
     // MARK: - unmarkMessaging (只清消息身份，保留 kept + drawer)

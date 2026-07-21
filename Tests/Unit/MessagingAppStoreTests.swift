@@ -104,7 +104,8 @@ final class MessagingAppStoreTests: XCTestCase {
         defaults.set([String](), forKey: "messagingBundleIDsV2")
         defaults.set(["com.tencent.qq"], forKey: "messagingOptOutBundleIDs") // builtin，被 opt-out
         let store = MessagingAppStore(defaults: defaults)
-        let added = store.autoRegister(runningBundleIDs: ["com.tencent.qq"])
+        let added = store.autoRegister(runningBundleIDs: ["com.tencent.qq"],
+                                       mainWindowIdentifiableBundleIDs: ["com.tencent.qq"])
         XCTAssertTrue(added.isEmpty) // opt-out 迁移生效，不重新注册
         XCTAssertEqual(defaults.stringArray(forKey: "messagingOptOutBundleIDsV2"), ["com.tencent.qq"])
     }
@@ -118,8 +119,49 @@ final class MessagingAppStoreTests: XCTestCase {
     func testAutoRegisterReturnsNewlyAddedIDs() {
         let store = MessagingAppStore(defaults: makeDefaults())
         let chat = "com.tencent.xinWeChat" // builtin whitelist
-        let added = store.autoRegister(runningBundleIDs: [chat, "com.not.messaging"])
+        let added = store.autoRegister(runningBundleIDs: [chat, "com.not.messaging"],
+                                       mainWindowIdentifiableBundleIDs: [chat])
         XCTAssertEqual(added, [chat])
-        XCTAssertTrue(store.autoRegister(runningBundleIDs: [chat]).isEmpty) // 第二轮无新增
+        // 第二轮无新增
+        XCTAssertTrue(store.autoRegister(runningBundleIDs: [chat],
+                                         mainWindowIdentifiableBundleIDs: [chat]).isEmpty)
+    }
+
+    // MARK: - 准入能力门槛（认不出主窗口就不进消息区）
+
+    func testAutoRegisterSkipsWhitelistedAppWithoutIdentifiableMainWindow() {
+        // Apple「信息」在内置名单里，但 Catalyst 编号标题永远认不出主窗口 → 不得注册。
+        let store = MessagingAppStore(defaults: makeDefaults())
+        let messages = "com.apple.MobileSMS"
+        XCTAssertTrue(store.autoRegister(runningBundleIDs: [messages],
+                                         mainWindowIdentifiableBundleIDs: []).isEmpty)
+        XCTAssertFalse(store.contains(messages))
+    }
+
+    func testAutoRegisterAdmitsOnceMainWindowBecomesIdentifiable() {
+        // 主窗关闭时不注册；主窗出现那一轮才进名单。
+        let store = MessagingAppStore(defaults: makeDefaults())
+        let chat = "com.tencent.xinWeChat"
+        XCTAssertTrue(store.autoRegister(runningBundleIDs: [chat],
+                                         mainWindowIdentifiableBundleIDs: []).isEmpty)
+        XCTAssertEqual(store.autoRegister(runningBundleIDs: [chat],
+                                          mainWindowIdentifiableBundleIDs: [chat]), [chat])
+    }
+
+    func testMemberIsNeverReTestedSoItCannotFlapOutOfTheZone() {
+        // 一次通过即永久落名单：微信主窗关闭（此刻认不出）不得把它踢出消息区。
+        let store = MessagingAppStore(defaults: makeDefaults())
+        let chat = "com.tencent.xinWeChat"
+        XCTAssertEqual(store.autoRegister(runningBundleIDs: [chat],
+                                          mainWindowIdentifiableBundleIDs: [chat]), [chat])
+        _ = store.autoRegister(runningBundleIDs: [chat], mainWindowIdentifiableBundleIDs: [])
+        XCTAssertTrue(store.contains(chat), "已注册成员不因当前认不出主窗口而被移除")
+    }
+
+    func testManualMarkBypassesTheCapabilityGate() {
+        // owner 2026-07-21：手动标记不受准入门槛限制。
+        let store = MessagingAppStore(defaults: makeDefaults())
+        XCTAssertTrue(store.mark("com.apple.MobileSMS"))
+        XCTAssertTrue(store.contains("com.apple.MobileSMS"))
     }
 }

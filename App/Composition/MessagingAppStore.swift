@@ -113,16 +113,30 @@ final class MessagingAppStore: ObservableObject {
         }
     }
 
-    /// Auto tier: register any running app that looks like a messenger (whitelist or
-    /// App Store category) unless the user has opted it out. Called on every snapshot
-    /// update; first sight appends to the end of the ordered list. Returns the ids
-    /// newly added this round so the caller seeds kept on first registration only.
+    /// Auto tier: register a running app that both **looks like** a messenger (whitelist or
+    /// App Store category) and **can be represented** in the zone — i.e. we can currently
+    /// identify its main window. Called on every snapshot update; first sight appends to the
+    /// end of the ordered list. Returns the ids newly added this round so the caller seeds
+    /// kept on first registration only.
+    ///
+    /// The capability gate is what keeps Apple 信息 out: it is a Mac Catalyst app whose window
+    /// title is a UIScene session id, so it can **never** title-match and the zone chip would
+    /// be a launcher that only wakes and never collapses. Same for terminals like Ghostty that
+    /// trip the social-networking category.
+    ///
+    /// Registration is **once-and-for-all**: the persisted list itself is the "has qualified"
+    /// record, so a member is never re-tested after joining. Re-testing every round would drop
+    /// 微信 out of the zone whenever its main window is closed (only 「笔记」 left → no title
+    /// match) and put it back on reopen — zone flapping that would also break the owner's daily
+    /// "main window closed → click the zone icon to wake it" flow.
     @discardableResult
-    func autoRegister(runningBundleIDs: Set<String>) -> [String] {
+    func autoRegister(runningBundleIDs: Set<String>,
+                      mainWindowIdentifiableBundleIDs: Set<String>) -> [String] {
         var added: [String] = []
         for id in runningBundleIDs {
             guard !id.isEmpty, !bundleIDs.contains(id), !optOutIDs.contains(id) else { continue }
             guard Self.builtinMessagingIDs.contains(id) || Self.isSocialCategory(id) else { continue }
+            guard mainWindowIdentifiableBundleIDs.contains(id) else { continue }
             bundleIDs.append(id)
             added.append(id)
         }
