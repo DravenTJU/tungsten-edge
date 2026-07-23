@@ -6,9 +6,11 @@
 
 以下结论以 **2026-07-18 的 `a25add5`**（`finder-folder-preview` 最新功能检查点：消息应用纳入统一保留勾选模型）为起点；其下的三键数据边界见下方专节，更早的抽屉位置 / 保留拆分数据边界仍适用于 `5f5efa0`。旧提交即使产品上是独立能力，也可能因为后来改过同一文件而无法直接 `git revert`；“人工”表示要解决冲突并重新验证，不表示功能不能移除。
 
-## 稳定重建基线（codex/v065-stable-rebuild）
+## 当前本地主线（master）
 
-以官方 `v0.6.5@9b4b5d0` 为起点，在独立 worktree `/Users/caye/Projects/macos-dock-cc-v2-v065-stable` 分支 `codex/v065-stable-rebuild` 上逐项恢复功能。每项恢复独立提交、独立验证回滚。该分支的回滚条目在下表首部，与旧开发线条目分开维护。
+以官方 `v0.6.5@9b4b5d0` 为起点的稳定重建线已于 2026-07-24 提升为本地 `master`，当前 worktree 为 `/Users/caye/Projects/macos-dock-cc-v2-v065-stable`。`codex/v065-stable-rebuild@3fb0df4` 冻结保留为 4.1 提升前检查点；旧本地 `master@d83b433` 保存在 `archive/master-before-stable-rebuild-20260724`；旧脏开发线 `codex/release-v0.6.6@5082100` 及其 worktree 原样保留。
+
+远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。本地 4.2 及后续稳定重建只从 `master` 推进，不得误从旧开发线或远端 master 接续。
 
 安装回退：若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名 `macos-dock-cc-v2`）。
 
@@ -65,4 +67,4 @@
 ## 相关历史
 
 - 主线撤销避让试验：`9ff1aec → 299748a → 63f7ee8`（07-13）。撤销 `229a6a5` 时与 `4b58365` 冲突：AppDelegate 里只调用两个避让控制器 `stop()` 的收尾方法一并删除，已人工解决。完整试验封存在 `experiment/avoid-scale-hover @ 4b58365`。
-- 远端 `origin/master @ 3f8f3dc` 从 `v0.4.5` 分出，只多一份 release notes，不是当前开发线的祖先。
+- 远端 `origin/master@121724d` 保留旧 v0.5.0 发布合并历史，相对当前本地稳定主线有 3 个远端独有提交；2026-07-24 提升本地 `master` 时未 fetch、未 push、未改 `origin/HEAD`。
