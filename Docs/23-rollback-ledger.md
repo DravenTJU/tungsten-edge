@@ -6,6 +6,15 @@
 
 以下结论以 **2026-07-18 的 `a25add5`**（`finder-folder-preview` 最新功能检查点：消息应用纳入统一保留勾选模型）为起点；其下的三键数据边界见下方专节，更早的抽屉位置 / 保留拆分数据边界仍适用于 `5f5efa0`。旧提交即使产品上是独立能力，也可能因为后来改过同一文件而无法直接 `git revert`；“人工”表示要解决冲突并重新验证，不表示功能不能移除。
 
+## 稳定重建基线（codex/v065-stable-rebuild）
+
+以官方 `v0.6.5@9b4b5d0` 为起点，在独立 worktree `/Users/caye/Projects/macos-dock-cc-v2-v065-stable` 分支 `codex/v065-stable-rebuild` 上逐项恢复功能。每项恢复独立提交、独立验证回滚。该分支的回滚条目在下表首部，与旧开发线条目分开维护。
+
+安装回退：若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名 `macos-dock-cc-v2`）。
+
+- 候选（4.1 已安装）hash: `0b92d6d2f90fb3602bbc010987760971df89444cb7c459cf1f4a0f37c5756334`
+- 官方 v0.6.5 备份 hash: `a9da38bf2f98f7ebe432d83e5cb9ac798d58297bc93b1422b03a69053e3ebb3f`
+
 ## 数据边界：抽屉位置与退出后保留拆分
 
 - 代码回滚命令为 `git revert 5f5efa0`；这不会自动回滚 `UserDefaults` 数据。
@@ -22,6 +31,7 @@
 
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
+| **撤销稳定重建的启停/重开首帧影子滑动修复** | `git revert 8af961c` | 恢复到 v0.6.5 稳定基线的排序行为，其余功能不变 | **↩ 单点，已验证 revert**：从 `0b74fa6`（原 `0a70130`）恢复 absent rank-anchor；功能 + AGENTS 护栏 + 测试同一提交；定向测试 23/23、Debug 全量测试 437/437、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-23 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后四文件与 `v0.6.5@9b4b5d0` 完全一致。安装回退见上方稳定重建基线节 |
 | **撤销消息应用纳入统一保留勾选** | `git revert a25add5` | 抽屉图标反馈、抽屉/保留拆分及此前全部功能；恢复消息应用永久身份、消息与 kept 互斥、消息只显示取消标记的旧语义 | **↩ 单点，带三键数据边界**：功能 + 纯投影 + 纯菜单投影 + 迁移 + 测试 + AGENTS 护栏同一提交；431 项单元测试、macOS 12 通用构建（arm64 + x86_64）、`git diff --check`、owner 真机验收（消息应用保留勾选、取消勾选后退出消失、迁移观感不变）通过；未单独验证 revert |
 | **撤销抽屉图标悬停/点击反馈与九宫格缩小** | `git revert 8e2b851` | 抽屉位置与保留状态拆分及此前全部功能 | **↩ 单点**：独立视觉优化提交；仅 `DrawerCapsuleButton` 内层九宫格 scaleEffect 反馈（悬停 1.07 / 点击 0.93 回弹）+ 网格常量（icon 9 / 间距 4 / 圆角 iconSize÷4），macOS 12 Debug 通用构建与 owner 实机验收通过，未单独验证 revert |
 | **撤销抽屉位置与程序坞保留状态拆分** | `git revert 5f5efa0` | 精简状态栏菜单与此前全部功能；恢复抽屉成员即保留成员、动态“在程序坞中保留 / 从程序坞中移除”菜单和拖拽时同步改 kept 的旧语义 | **↩ 单点，带上述数据边界**：功能、纯投影与排序决策、迁移、测试、工程护栏同一提交；413 项单元测试、macOS 12 Debug 通用构建（arm64 + x86_64）与 `git diff --check` 通过。新产物已启动，原生菜单与迁移行为仍待 owner 完整实测验收；未单独验证 revert |
