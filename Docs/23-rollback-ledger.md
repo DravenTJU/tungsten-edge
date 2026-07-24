@@ -10,11 +10,12 @@
 
 以官方 `v0.6.5@9b4b5d0` 为起点的稳定重建线已于 2026-07-24 提升为本地 `master`，当前 worktree 为 `/Users/caye/Projects/macos-dock-cc-v2-v065-stable`。`codex/v065-stable-rebuild@3fb0df4` 冻结保留为 4.1 提升前检查点；旧本地 `master@d83b433` 保存在 `archive/master-before-stable-rebuild-20260724`；旧脏开发线 `codex/release-v0.6.6@5082100` 及其 worktree 原样保留。
 
-远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。本地 4.2 及后续稳定重建只从 `master` 推进，不得误从旧开发线或远端 master 接续。
+远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。本地 4.3 及后续稳定重建只从 `master` 推进，不得误从旧开发线或远端 master 接续。
 
-安装回退：若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名 `macos-dock-cc-v2`）。
+安装回退：若需恢复上一稳定安装版 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
-- 候选（4.1 已安装）hash: `0b92d6d2f90fb3602bbc010987760971df89444cb7c459cf1f4a0f37c5756334`
+- 当前稳定安装版（4.2）hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
+- 上一稳定安装版（4.1）备份 hash: `0b92d6d2f90fb3602bbc010987760971df89444cb7c459cf1f4a0f37c5756334`
 - 官方 v0.6.5 备份 hash: `a9da38bf2f98f7ebe432d83e5cb9ac798d58297bc93b1422b03a69053e3ebb3f`
 
 ## 数据边界：抽屉位置与退出后保留拆分
@@ -33,6 +34,7 @@
 
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
+| **撤销稳定重建的未启动应用「打开」+ 消息区退出态灰显** | `git revert d226e80` | 保留启停首帧影子滑动修复及此前全部功能；恢复未启动图标右键无「打开」、消息区退出态常亮的旧观感 | **↩ 单点，无数据边界，已验证 revert**：从旧实现 `a18c8aa` 恢复纯 UI / 菜单层改动，新增纯 `LauncherMenuPlan.open` + `LauncherChipVisualPlan`（均有单测），并收窄 `dimsWhenHidden` 与启动动作分流；定向测试 9/9、Debug 全量测试 441/441、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-24 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后 7 个文件与父提交 `5be8013` 完全一致。安装回退见上方当前本地主线节 |
 | **撤销稳定重建的启停/重开首帧影子滑动修复** | `git revert 8af961c` | 恢复到 v0.6.5 稳定基线的排序行为，其余功能不变 | **↩ 单点，已验证 revert**：从 `0b74fa6`（原 `0a70130`）恢复 absent rank-anchor；功能 + AGENTS 护栏 + 测试同一提交；定向测试 23/23、Debug 全量测试 437/437、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-23 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后四文件与 `v0.6.5@9b4b5d0` 完全一致。安装回退见上方稳定重建基线节 |
 | **撤销消息应用纳入统一保留勾选** | `git revert a25add5` | 抽屉图标反馈、抽屉/保留拆分及此前全部功能；恢复消息应用永久身份、消息与 kept 互斥、消息只显示取消标记的旧语义 | **↩ 单点，带三键数据边界**：功能 + 纯投影 + 纯菜单投影 + 迁移 + 测试 + AGENTS 护栏同一提交；431 项单元测试、macOS 12 通用构建（arm64 + x86_64）、`git diff --check`、owner 真机验收（消息应用保留勾选、取消勾选后退出消失、迁移观感不变）通过；未单独验证 revert |
 | **撤销抽屉图标悬停/点击反馈与九宫格缩小** | `git revert 8e2b851` | 抽屉位置与保留状态拆分及此前全部功能 | **↩ 单点**：独立视觉优化提交；仅 `DrawerCapsuleButton` 内层九宫格 scaleEffect 反馈（悬停 1.07 / 点击 0.93 回弹）+ 网格常量（icon 9 / 间距 4 / 圆角 iconSize÷4），macOS 12 Debug 通用构建与 owner 实机验收通过，未单独验证 revert |
