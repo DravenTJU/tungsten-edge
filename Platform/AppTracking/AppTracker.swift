@@ -1021,15 +1021,39 @@ final class AppTracker: ObservableObject {
         // tracked pid's app entry stays indefinitely.
         var deadPIDs: [pid_t] = []
         for pid in appOrder {
-            if NSRunningApplication(processIdentifier: pid) == nil {
+            if !ProcessLiveness.isAlive(pid: pid) {
                 // Finder's entry is intentionally kept alive across quit/relaunch cycles
                 // (handleAppTerminated clears windows but preserves the slot).
                 if FinderWindowRules.isFinder(bundleIdentifier: apps[pid]?.bundleIdentifier) { continue }
                 deadPIDs.append(pid)
-                logger.info("reconcile: pid=\(pid) no longer exists, removing stale entry")
+                logger.info("reconcile: pid=\(pid) no longer exists (POSIX kill(0) == ESRCH), removing stale entry")
             }
         }
         for pid in deadPIDs {
+            // 批量删除 AppEntry 前，按 windowOrder 为每个 seat 写一条 seatReleased(.processGone)。
+            // 该路径没有本轮 AX/CG 采样，也没有 InventoryReconcileContext——只有内存中已有的座位状态，
+            // 绝不伪造未采样字段为 0/false。日志身份用稳定的 pid + seatToken。
+            if let app = apps[pid] {
+                let releaseSnapshot = InventorySeatReleaseSnapshot(
+                    pid: pid,
+                    bundleID: app.bundleIdentifier,
+                    appHidden: app.isHidden,
+                    seats: app.windowOrder.compactMap { wid in
+                        guard let entry = app.windowsByID[wid] else { return nil }
+                        return InventorySeatReleaseSnapshot.Seat(
+                            seatToken: entry.token,
+                            activeCgID: entry.cgWindowID,
+                            isMinimized: entry.isMinimized,
+                            isFocused: entry.isFocused,
+                            everSeenVisible: entry.everSeenVisible,
+                            bounds: entry.bounds
+                        )
+                    }
+                )
+                for payload in InventorySeatReleasePlan.processGonePayloads(for: releaseSnapshot) {
+                    inventoryLog.record(.seatReleased(payload))
+                }
+            }
             observers[pid]?.stop()
             observers.removeValue(forKey: pid)
             apps.removeValue(forKey: pid)

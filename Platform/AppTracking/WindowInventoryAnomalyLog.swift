@@ -161,6 +161,67 @@ struct InventoryPhantomHealedPayload: Codable, Equatable {
     let ownerCandidateCount: Int
 }
 
+/// 座位释放原因。4.5 只补 `reconcile()` 批量删除路径的 `processGone`；
+/// 其他逐座位释放路径（absentBeyondGrace / leftCGList / phantom heal 等）暂不扩展。
+enum InventorySeatReleasedReason: String, Codable {
+    case processGone
+}
+
+/// 座位释放日志载荷。批量 `processGone` 路径发生在 `reconcileSeats` 之外，没有本轮 AX/CG 采样，
+/// 也没有 `InventoryReconcileContext`——因此这些字段一律省略或为 nil，绝不伪造为 0/false。
+/// 身份字段用稳定的 `pid + seatToken`；附带内存中已有的 bundleID、当前 activeCgID 与座位状态。
+struct InventorySeatReleasedPayload: Codable, Equatable {
+    let reason: InventorySeatReleasedReason
+    let pid: Int32
+    let bundleID: String?
+    let seatToken: String
+    let activeCgID: CGWindowID
+    let isMinimized: Bool
+    let isFocused: Bool
+    let appHidden: Bool
+    let everSeenVisible: Bool
+    let bounds: InventoryLogRect?
+}
+
+/// 批量座位释放的内存快照（不采样 AX/CG）。从 `AppEntry` 投影出纯值，供
+/// `InventorySeatReleasePlan` 转成 `processGone` 载荷。独立于 `AppEntry`/`WindowEntry`，
+/// 使「N 个座位按原顺序产生 N 条；空 entry 0 条」可在不引入 AppTracker 依赖的情况下单测。
+struct InventorySeatReleaseSnapshot {
+    let pid: pid_t
+    let bundleID: String?
+    let appHidden: Bool
+    let seats: [Seat]
+
+    struct Seat {
+        let seatToken: String
+        let activeCgID: CGWindowID
+        let isMinimized: Bool
+        let isFocused: Bool
+        let everSeenVisible: Bool
+        let bounds: CGRect?
+    }
+}
+
+/// 纯函数：把内存座位快照按原顺序转成 `processGone` 载荷。供单测验证顺序与数量。
+enum InventorySeatReleasePlan {
+    static func processGonePayloads(for snapshot: InventorySeatReleaseSnapshot) -> [InventorySeatReleasedPayload] {
+        snapshot.seats.map { seat in
+            InventorySeatReleasedPayload(
+                reason: .processGone,
+                pid: snapshot.pid,
+                bundleID: snapshot.bundleID,
+                seatToken: seat.seatToken,
+                activeCgID: seat.activeCgID,
+                isMinimized: seat.isMinimized,
+                isFocused: seat.isFocused,
+                appHidden: snapshot.appHidden,
+                everSeenVisible: seat.everSeenVisible,
+                bounds: seat.bounds.map(InventoryLogRect.init)
+            )
+        }
+    }
+}
+
 enum InventoryShadowPoolStatus: String, Codable {
     case initialized
     case changed
@@ -188,6 +249,7 @@ enum WindowInventoryLogEvent: Encodable {
     case phantomHeld(InventoryPhantomHeldPayload)
     case phantomHealed(InventoryPhantomHealedPayload)
     case shadowPoolState(InventoryShadowPoolPayload)
+    case seatReleased(InventorySeatReleasedPayload)
 
     var name: String {
         switch self {
@@ -196,6 +258,7 @@ enum WindowInventoryLogEvent: Encodable {
         case .phantomHeld: return "phantomHeld"
         case .phantomHealed: return "phantomHealed"
         case .shadowPoolState: return "shadowPoolState"
+        case .seatReleased: return "seatReleased"
         }
     }
 
@@ -206,6 +269,7 @@ enum WindowInventoryLogEvent: Encodable {
         case .phantomHeld(let payload): try payload.encode(to: encoder)
         case .phantomHealed(let payload): try payload.encode(to: encoder)
         case .shadowPoolState(let payload): try payload.encode(to: encoder)
+        case .seatReleased(let payload): try payload.encode(to: encoder)
         }
     }
 }

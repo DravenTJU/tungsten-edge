@@ -65,3 +65,13 @@
 - **抢顶型 App（Ghostty、Chromium 系：Chrome/Dia）在自己仍是活跃 App 期间，若别的窗口被 AXRaise 盖到它上面，会在 ~+450ms 把自己的窗口浮回顶层**；良性 App（Finder/Safari/微信/飞书/PS/AI…）不会。这就是为什么"闪不闪取决于从哪个 App 切走"。
 - **对仍最小化的窗口发 SkyLight make-key 事件，App 会把键盘焦点落到它的可见兄弟窗口上**（Chrome/访达实测）。最小化恢复后必须对目标窗口 `kAXMainAttribute=true` 纠正 App 内部焦点，否则输入焦点和 AX `kAXFocusedWindow` 都停在兄弟窗口。
 - **App 被切成前台进程时若没有 key 窗口（目标窗口仍 order-out/最小化），AppKit 会自动把该 App 最上面的可见窗口提为 key 并持久抬到旧前台之上**（2026-07-05 探针，访达/微信/Dia 一致）。裸 psn 切换（不发 make-key）拦不住，`kCPSNoWindows (0x400)` 也拦不住——提拔发生在 App 侧而非 WindowServer 侧。要恢复最小化窗口且不带起兄弟：**先 unminimize、后切前台，两步微秒级相邻、中间零 AX 问询**（wid 用快照值）；对刚 unminimize 的窗口立即发 make-key 会正确落在它身上，不再错落兄弟。见 `Docs/22` §13。
+
+## NSRunningApplication(processIdentifier:) 对活进程瞬时返回 nil（2026-07-21 实机确认；2026-07-25 稳定线恢复）
+
+> 4.5 阶段修复 `AppTracker.reconcile()` 批量误删时沉淀的平台事实。
+
+- **`NSRunningApplication(processIdentifier: pid)` 会对活进程瞬时返回 `nil`**：该 API 解析自 LaunchServices，不是直接查询进程表。实测飞书、Obsidian 等应用在正常运行期间会触发此现象——进程明明活着，`NSRunningApplication` 却返回 `nil`，`.isTerminated` 也无法读取。
+- **误判后果是整批删除**：`reconcile()` 的批量路径据此判死 pid 后，会一次性删掉整个 `AppEntry` 连同其下所有座位（`WindowEntry`），绕过逐座位对账的宽限期（`closedReapGrace`）、幽灵保护（`PhantomSeatDecision` 五门槛）和逐座位释放日志。
+- **之后 `scanNonAdmittedApps()` 把同一 pid 以全新座位 token 重新准入**，叠加 `StripOrderStore` 的 5s 缺席宽限，导致旧 token 和新 token 同时渲染——一扇窗出现两张卡（历史实测：微信 ×35、Telegram ×26 的重复爆发均由此引起）。
+- **正确判活用 POSIX `kill(pid, 0)`**：返回 0 = 进程存活；返回 -1 且 `errno == ESRCH` = 进程已死；`EPERM`（进程存在但无权限发信号）及 `EINTR`/`EINVAL`/`EAGAIN` 等所有其他 errno = 保守判活。实现见 `Platform/AppTracking/ProcessLiveness.swift`，只依赖 Darwin，不回退任何 LaunchServices API。
+- 此修复曾在旧管线以 `5f57a75` 提交过一次，在 `ef50008` 重写中丢失。4.5 阶段在稳定线重新实现为共享类型，不再内联到 `AppTracker` 中。

@@ -258,6 +258,86 @@ final class WindowInventoryAnomalyLogTests: XCTestCase {
         XCTAssertNil(InventoryPhantomOwnerResolution.uniqueOwner(from: [first, second]))
     }
 
+    // MARK: - processGone 批量座位释放日志
+
+    func testProcessGonePayloadsPreserveOrderAndCount() {
+        let snapshot = InventorySeatReleaseSnapshot(
+            pid: 1234,
+            bundleID: "com.test.app",
+            appHidden: false,
+            seats: [
+                .init(seatToken: "tabgrp-1234-s0", activeCgID: 100, isMinimized: false, isFocused: true, everSeenVisible: true, bounds: CGRect(x: 0, y: 0, width: 800, height: 600)),
+                .init(seatToken: "tabgrp-1234-s1", activeCgID: 200, isMinimized: true, isFocused: false, everSeenVisible: true, bounds: CGRect(x: 10, y: 10, width: 400, height: 300)),
+                .init(seatToken: "tabgrp-1234-s2", activeCgID: 300, isMinimized: false, isFocused: false, everSeenVisible: false, bounds: nil),
+            ]
+        )
+
+        let payloads = InventorySeatReleasePlan.processGonePayloads(for: snapshot)
+        XCTAssertEqual(payloads.count, 3)
+        XCTAssertEqual(payloads.map { $0.seatToken }, ["tabgrp-1234-s0", "tabgrp-1234-s1", "tabgrp-1234-s2"])
+        XCTAssertEqual(payloads.map { $0.activeCgID }, [100, 200, 300])
+        for payload in payloads {
+            XCTAssertEqual(payload.reason, .processGone)
+            XCTAssertEqual(payload.pid, 1234)
+            XCTAssertEqual(payload.bundleID, "com.test.app")
+            XCTAssertEqual(payload.appHidden, false)
+        }
+        XCTAssertEqual(payloads[0].isFocused, true)
+        XCTAssertEqual(payloads[1].isMinimized, true)
+        XCTAssertNil(payloads[2].bounds)
+        XCTAssertEqual(payloads[2].everSeenVisible, false)
+    }
+
+    func testProcessGonePayloadsEmptyEntryProducesZero() {
+        let snapshot = InventorySeatReleaseSnapshot(
+            pid: 9999,
+            bundleID: nil,
+            appHidden: false,
+            seats: []
+        )
+        XCTAssertTrue(InventorySeatReleasePlan.processGonePayloads(for: snapshot).isEmpty)
+    }
+
+    func testSeatReleasedJSONLDecodesCorrectly() throws {
+        let directory = makeRoot().appendingPathComponent("logs")
+        let log = makeLogger(directory: directory)
+
+        let snapshot = InventorySeatReleaseSnapshot(
+            pid: 5555,
+            bundleID: "com.example.app",
+            appHidden: true,
+            seats: [
+                .init(seatToken: "tabgrp-5555-s0", activeCgID: 42, isMinimized: false, isFocused: false, everSeenVisible: true, bounds: CGRect(x: 1, y: 2, width: 3, height: 4)),
+            ]
+        )
+        for payload in InventorySeatReleasePlan.processGonePayloads(for: snapshot) {
+            log.record(.seatReleased(payload))
+        }
+        log.flush()
+
+        let records = try jsonRecords(at: log.currentFileURL)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0]["event"] as? String, "seatReleased")
+
+        // 验证 payload 字段
+        let payload = try XCTUnwrap(records[0]["payload"] as? [String: Any])
+        XCTAssertEqual(payload["reason"] as? String, "processGone")
+        XCTAssertEqual(payload["pid"] as? Int, 5555)
+        XCTAssertEqual(payload["bundleID"] as? String, "com.example.app")
+        XCTAssertEqual(payload["seatToken"] as? String, "tabgrp-5555-s0")
+        XCTAssertEqual(payload["activeCgID"] as? Int, 42)
+        XCTAssertEqual(payload["isMinimized"] as? Bool, false)
+        XCTAssertEqual(payload["isFocused"] as? Bool, false)
+        XCTAssertEqual(payload["appHidden"] as? Bool, true)
+        XCTAssertEqual(payload["everSeenVisible"] as? Bool, true)
+
+        let bounds = try XCTUnwrap(payload["bounds"] as? [String: Any])
+        XCTAssertEqual(bounds["x"] as? Double, 1.0)
+        XCTAssertEqual(bounds["y"] as? Double, 2.0)
+        XCTAssertEqual(bounds["width"] as? Double, 3.0)
+        XCTAssertEqual(bounds["height"] as? Double, 4.0)
+    }
+
     private func makeLogger(
         directory: URL,
         enabled: Bool = true,
