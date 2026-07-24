@@ -10,12 +10,13 @@
 
 以官方 `v0.6.5@9b4b5d0` 为起点的稳定重建线已于 2026-07-24 提升为本地 `master`，当前 worktree 为 `/Users/caye/Projects/macos-dock-cc-v2-v065-stable`。`codex/v065-stable-rebuild@3fb0df4` 冻结保留为 4.1 提升前检查点；旧本地 `master@d83b433` 保存在 `archive/master-before-stable-rebuild-20260724`；旧脏开发线 `codex/release-v0.6.6@5082100` 及其 worktree 原样保留。
 
-远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。本地 4.4 及后续稳定重建只从 `master` 推进，不得误从旧开发线或远端 master 接续。
+远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。本地 4.5 及后续稳定重建只从 `master` 推进，不得误从旧开发线或远端 master 接续。
 
-安装回退：若需恢复上一稳定安装版 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
+安装回退：若需恢复上一稳定安装版 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
-- 当前稳定安装版（4.3）hash: `ed98039e4139d2e50ff3f4e7cf6938d5ad2ef1586fb5b82e5494a76bedd4a5ca`
-- 上一稳定安装版（4.2）备份 hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
+- 当前稳定安装版（4.4）hash: `9b1bc1d19ca3c1ccbaade0fdf2b80a64dd0a0f59dd2805ca8279aa47e91befb6`
+- 上一稳定安装版（4.3）备份 hash: `ed98039e4139d2e50ff3f4e7cf6938d5ad2ef1586fb5b82e5494a76bedd4a5ca`
+- 4.2 备份 hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
 - 4.1 备份 hash: `0b92d6d2f90fb3602bbc010987760971df89444cb7c459cf1f4a0f37c5756334`
 - 官方 v0.6.5 备份 hash: `a9da38bf2f98f7ebe432d83e5cb9ac798d58297bc93b1422b03a69053e3ebb3f`
 
@@ -35,6 +36,7 @@
 
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
+| **撤销稳定重建的消息区主窗口能力准入门槛** | `git revert aad543d` | 保留「退出 App」菜单末项及此前全部功能；恢复仅凭白名单 / 社交类别自动注册消息应用、不检查主窗口标题的旧规则 | **↩ 单点，无 schema 迁移，已验证 revert**：从旧实现 `5e2e82e` 恢复纯 `MessagingZoneAdmission`、自动注册参数与 snapshot 标题输入，并同步新增两条能力护栏、删除一条 kept 冲突旧护栏；既有 persisted messaging / opt-out 数据不由回滚改写，回滚只影响后续自动准入；定向测试 41/41、Debug 全量测试 456/456、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-24 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后 9 个文件与父提交 `fc2eeee` 完全一致。安装回退见上方当前本地主线节 |
 | **撤销稳定重建的「退出 App」菜单末项修复** | `git revert 3bd1fef` | 保留未启动应用「打开」、消息区退出态灰显及此前全部功能；恢复部分运行态 chip 菜单把成员项排在退出之后的旧顺序 | **↩ 单点，无数据边界，已验证 revert**：从旧实现 `5535657` 恢复纯菜单排序改动与 AGENTS 护栏；`LauncherMenuPlan`、app-level fallback 和具体窗口菜单统一为动作项 → 成员项 → 退出，分隔线由退出分支自补；定向测试 6/6、Debug 全量测试 442/442、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-24 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后 5 个文件与父提交 `aedfb37` 完全一致。安装回退见上方当前本地主线节 |
 | **撤销稳定重建的未启动应用「打开」+ 消息区退出态灰显** | `git revert d226e80` | 保留启停首帧影子滑动修复及此前全部功能；恢复未启动图标右键无「打开」、消息区退出态常亮的旧观感 | **↩ 单点，无数据边界，已验证 revert**：从旧实现 `a18c8aa` 恢复纯 UI / 菜单层改动，新增纯 `LauncherMenuPlan.open` + `LauncherChipVisualPlan`（均有单测），并收窄 `dimsWhenHidden` 与启动动作分流；定向测试 9/9、Debug 全量测试 441/441、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-24 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后 7 个文件与父提交 `5be8013` 完全一致。安装回退见上方当前本地主线节 |
 | **撤销稳定重建的启停/重开首帧影子滑动修复** | `git revert 8af961c` | 恢复到 v0.6.5 稳定基线的排序行为，其余功能不变 | **↩ 单点，已验证 revert**：从 `0b74fa6`（原 `0a70130`）恢复 absent rank-anchor；功能 + AGENTS 护栏 + 测试同一提交；定向测试 23/23、Debug 全量测试 437/437、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-23 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后四文件与 `v0.6.5@9b4b5d0` 完全一致。安装回退见上方稳定重建基线节 |
