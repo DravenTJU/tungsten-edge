@@ -136,6 +136,39 @@ final class AppMembershipControllerTests: XCTestCase {
         XCTAssertTrue(drawer.contains("com.example.app"))
     }
 
+    func testMessagingMenuDescriptorRoundTripPreservesAsymmetricSemantics() throws {
+        let bundleID = "com.example.app"
+        drawer.add(bundleID)
+
+        let unchecked = try XCTUnwrap(LauncherMembershipItem.items(
+            surface: .strip,
+            bundleID: bundleID,
+            isKept: false,
+            isMessaging: false,
+            controller: controller
+        ).last)
+        XCTAssertEqual(unchecked.label, "标记为消息应用")
+        XCTAssertEqual(unchecked.isChecked, false)
+        unchecked.action()
+        XCTAssertTrue(messaging.contains(bundleID))
+        XCTAssertTrue(kept.contains(bundleID), "首次标记仍应补 kept")
+        XCTAssertTrue(drawer.contains(bundleID), "标记不改变 drawer placement")
+
+        let checked = try XCTUnwrap(LauncherMembershipItem.items(
+            surface: .drawer,
+            bundleID: bundleID,
+            isKept: true,
+            isMessaging: true,
+            controller: controller
+        ).last)
+        XCTAssertEqual(checked.label, "标记为消息应用")
+        XCTAssertEqual(checked.isChecked, true)
+        checked.action()
+        XCTAssertFalse(messaging.contains(bundleID))
+        XCTAssertTrue(kept.contains(bundleID), "取消标记不改变 kept")
+        XCTAssertTrue(drawer.contains(bundleID), "取消标记不改变 drawer placement")
+    }
+
     // MARK: - reconcileInvalidMemberships (只清 Finder)
 
     func testReconcileClearsFinderFromDrawerAndMessaging() {

@@ -8,51 +8,7 @@ import SwiftUI
 ///
 /// Shared by the drawer (collected apps, scale 0.7) and the main strip (messaging
 /// and kept apps, scale 1.0). Call-site differences are injected via
-/// `membershipItems` (在程序坞中保留 / 取消标记消息应用).
-
-/// 一条成员 / 管理菜单项（标签 + 动作）。LauncherChip 右键菜单末尾按序渲染，
-/// 可多项——收纳 + 启动收藏共存图标可同时给转换、移出与取消收藏入口。
-struct LauncherMembershipItem {
-    let label: String
-    /// nil = ordinary command; non-nil = native check-menu state.
-    var isChecked: Bool? = nil
-    let action: () -> Void
-}
-
-extension LauncherMembershipItem {
-    /// 从纯 `AppMembershipMenuPlan` 生成成员项并接线到 controller。四条菜单构造路径
-    /// （strip 窗口卡 / kept 图标 / 消息 chip / drawer 图标）统一消费，保证矩阵一致。
-    @MainActor
-    static func items(
-        surface: AppMembershipMenuPlan.Surface,
-        bundleID: String,
-        isKept: Bool,
-        isMessaging: Bool,
-        controller: AppMembershipController
-    ) -> [LauncherMembershipItem] {
-        AppMembershipMenuPlan.items(
-            surface: surface,
-            isFinder: bundleID == KeptAppStore.forbiddenBundleID,
-            isKept: isKept,
-            isMessaging: isMessaging
-        ).map { item in
-            switch item {
-            case let .keep(isChecked):
-                return LauncherMembershipItem(label: "在程序坞中保留", isChecked: isChecked) {
-                    controller.setKept(bundleID, enabled: !isChecked)
-                }
-            case .markMessaging:
-                return LauncherMembershipItem(label: "标记为消息应用") {
-                    controller.markMessaging(bundleID)
-                }
-            case .unmarkMessaging:
-                return LauncherMembershipItem(label: "取消标记消息应用") {
-                    controller.unmarkMessaging(bundleID)
-                }
-            }
-        }
-    }
-}
+/// `membershipItems` (在程序坞中保留 / 标记为消息应用).
 
 struct LauncherChip: View {
     let bundleID: String
@@ -63,7 +19,7 @@ struct LauncherChip: View {
     /// **未运行恒定灰显（0.35）与本标志无关**——消息区退出态因此也会变灰，与所有退出应用统一
     /// （owner 2026-07-19，反转了旧的「消息图标常亮、随时可点」决策）。决策见 `LauncherChipVisualPlan`。
     var dimsWhenHidden: Bool = true
-    /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「取消标记消息应用」。
+    /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「标记为消息应用」。
     /// 空数组 = 无成员项。
     var membershipItems: [LauncherMembershipItem] = []
     /// When set, replaces the default tap behavior (drawer show/hide toggle). Used by

@@ -78,6 +78,8 @@
 		A000000000000000000019A1 /* LauncherChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019B1 /* LauncherChip.swift */; };
 		A000000000000000000019D1 /* AppMenuFragments.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019C1 /* AppMenuFragments.swift */; };
 		A000000000000000000019D2 /* RecentDocumentsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019C2 /* RecentDocumentsReader.swift */; };
+		A000000000000000000019D4 /* LauncherMembershipItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019D3 /* LauncherMembershipItem.swift */; };
+		A000000000000000000019D5 /* LauncherMembershipItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019D3 /* LauncherMembershipItem.swift */; };
 		A000000000000000000019A2 /* BadgeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019B2 /* BadgeStore.swift */; };
 		A000000000000000000019A3 /* DockBadgeReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000000000000000000019B3 /* DockBadgeReader.swift */; };
 		A00000000000000000009501 /* KeptAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009500 /* KeptAppStore.swift */; };
@@ -243,6 +245,7 @@
 		A000000000000000000019B1 /* LauncherChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherChip.swift; sourceTree = "<group>"; };
 		A000000000000000000019C1 /* AppMenuFragments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMenuFragments.swift; sourceTree = "<group>"; };
 		A000000000000000000019C2 /* RecentDocumentsReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentDocumentsReader.swift; sourceTree = "<group>"; };
+		A000000000000000000019D3 /* LauncherMembershipItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherMembershipItem.swift; sourceTree = "<group>"; };
 		A000000000000000000019B2 /* BadgeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BadgeStore.swift; sourceTree = "<group>"; };
 		A000000000000000000019B3 /* DockBadgeReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockBadgeReader.swift; sourceTree = "<group>"; };
 		A00000000000000000000001 /* MacOSDockCCV2App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSDockCCV2App.swift; sourceTree = "<group>"; };
@@ -452,6 +455,7 @@
 				A00000000000000000009D00 /* WindowTitleTooltip.swift */,
 				A0000000000000000000006A /* DrawerView.swift */,
 				A000000000000000000019B1 /* LauncherChip.swift */,
+				A000000000000000000019D3 /* LauncherMembershipItem.swift */,
 				A000000000000000000019C1 /* AppMenuFragments.swift */,
 				A00000000000000000009240 /* FolderGridPopupView.swift */,
 				A00000000000000000009250 /* PinnedFolderChip.swift */,
@@ -875,6 +879,7 @@
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
 					A00000000000000000009C01 /* UpdateChecker.swift in Sources */,
 					A000000000000000000019A1 /* LauncherChip.swift in Sources */,
+					A000000000000000000019D4 /* LauncherMembershipItem.swift in Sources */,
 					A000000000000000000019D1 /* AppMenuFragments.swift in Sources */,
 					A000000000000000000019D2 /* RecentDocumentsReader.swift in Sources */,
 					A00000000000000000009201 /* PinnedFolderStore.swift in Sources */,
@@ -1059,6 +1064,7 @@
 					A00000000000000000001033 /* ObservationAdmissionGate.swift in Sources */,
 					A0000000000000000000103B /* AppFallbackRetentionPolicy.swift in Sources */,
 					A0000000000000000000103D /* StripItem.swift in Sources */,
+					A000000000000000000019D5 /* LauncherMembershipItem.swift in Sources */,
 				);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

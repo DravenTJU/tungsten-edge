@@ -3,14 +3,14 @@ import XCTest
 
 final class AppMembershipMenuPlanTests: XCTestCase {
 
-    func testStripPlainAppShowsKeepAndMark() {
+    func testStripPlainAppShowsKeepAndUncheckedMessaging() {
         let items = AppMembershipMenuPlan.items(surface: .strip, isFinder: false, isKept: false, isMessaging: false)
-        XCTAssertEqual(items, [.keep(isChecked: false), .markMessaging])
+        XCTAssertEqual(items, [.keep(isChecked: false), .messaging(isChecked: false)])
     }
 
-    func testStripMessagingAppShowsKeepAndUnmark() {
+    func testStripMessagingAppShowsKeepAndCheckedMessaging() {
         let items = AppMembershipMenuPlan.items(surface: .strip, isFinder: false, isKept: true, isMessaging: true)
-        XCTAssertEqual(items, [.keep(isChecked: true), .unmarkMessaging])
+        XCTAssertEqual(items, [.keep(isChecked: true), .messaging(isChecked: true)])
     }
 
     func testDrawerPlainAppShowsOnlyKeep() {
@@ -18,9 +18,9 @@ final class AppMembershipMenuPlanTests: XCTestCase {
         XCTAssertEqual(items, [.keep(isChecked: false)])
     }
 
-    func testDrawerMessagingAppShowsKeepAndUnmark() {
+    func testDrawerMessagingAppShowsKeepAndCheckedMessaging() {
         let items = AppMembershipMenuPlan.items(surface: .drawer, isFinder: false, isKept: true, isMessaging: true)
-        XCTAssertEqual(items, [.keep(isChecked: true), .unmarkMessaging])
+        XCTAssertEqual(items, [.keep(isChecked: true), .messaging(isChecked: true)])
     }
 
     func testFinderShowsNothing() {
@@ -38,6 +38,17 @@ final class AppMembershipMenuPlanTests: XCTestCase {
     func testKeepAlwaysPrecedesMessagingCommand() {
         let items = AppMembershipMenuPlan.items(surface: .strip, isFinder: false, isKept: false, isMessaging: true)
         XCTAssertEqual(items.first, .keep(isChecked: false))
-        XCTAssertEqual(items.last, .unmarkMessaging)
+        XCTAssertEqual(items.last, .messaging(isChecked: true))
+    }
+
+    func testMessagingCheckStateReflectsMembership() {
+        XCTAssertEqual(
+            AppMembershipMenuPlan.items(surface: .strip, isFinder: false, isKept: false, isMessaging: false).last,
+            .messaging(isChecked: false)
+        )
+        XCTAssertEqual(
+            AppMembershipMenuPlan.items(surface: .strip, isFinder: false, isKept: false, isMessaging: true).last,
+            .messaging(isChecked: true)
+        )
     }
 }

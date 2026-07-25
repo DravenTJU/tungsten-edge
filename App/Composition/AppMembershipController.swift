@@ -60,7 +60,7 @@ final class AppMembershipController: ObservableObject {
         }
     }
 
-    /// 「取消标记消息应用」：只清消息身份 + 记 opt-out；kept 与 drawer 保持不变。
+    /// 取消「标记为消息应用」勾选：只清消息身份 + 记 opt-out；kept 与 drawer 保持不变。
     func unmarkMessaging(_ bundleID: String) {
         messagingStore.unmark(bundleID)
     }

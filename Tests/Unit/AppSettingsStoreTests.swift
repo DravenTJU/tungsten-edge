@@ -502,8 +502,8 @@ final class AppSettingsStoreTests: XCTestCase {
         let shortcut = GlobalHotKeyShortcut.edgeAutoHideMode
 
         let shown = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: true, shortcut: shortcut)
-        XCTAssertEqual(shown.key, "e")
-        XCTAssertEqual(shown.mask, [.option, .command])
+        XCTAssertEqual(shown.key, "d")
+        XCTAssertEqual(shown.mask, [.option, .shift, .command])
 
         let hidden = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: false, shortcut: shortcut)
         XCTAssertEqual(hidden.key, "")
@@ -547,6 +547,14 @@ final class AppSettingsStoreTests: XCTestCase {
         // 物理键码而非字符决定系统路径去重，E 键不能误伤 D 行。
         XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
             eventType: .keyDown, keyCode: keyE, modifierFlags: exactMask,
+            isSystemShortcutAvailable: true
+        ))
+
+        // 钨极的 ⌥⇧⌘D 比系统 ⌥⌘D 多 Shift，不能被系统 Dock 菜单去重逻辑吞掉。
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: .keyDown,
+            keyCode: keyD,
+            modifierFlags: [.option, .shift, .command],
             isSystemShortcutAvailable: true
         ))
     }
@@ -608,6 +616,68 @@ final class AppSettingsStoreTests: XCTestCase {
             autohideReader: { NativeDockAutohideState(enabled: true, delay: 0.2) }
         )
         XCTAssertEqual(readable.currentAutohideState(), NativeDockAutohideState(enabled: true, delay: 0.2))
+    }
+
+    func testOpenSystemDockSettingsUsesDeepLinkFirst() {
+        var openedURLs: [URL] = []
+        let service = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: false),
+            runner: { _, _ in },
+            autohideReader: { nil },
+            urlOpener: { url in
+                openedURLs.append(url)
+                return true
+            }
+        )
+
+        XCTAssertTrue(service.openSystemSettings())
+        XCTAssertEqual(openedURLs.map(\.absoluteString), ["x-apple.systempreferences:com.apple.preference.dock"])
+    }
+
+    func testOpenSystemDockSettingsFallsBackToPreferencePane() {
+        var openedURLs: [URL] = []
+        let service = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: false),
+            runner: { _, _ in },
+            autohideReader: { nil },
+            urlOpener: { url in
+                openedURLs.append(url)
+                return url.isFileURL
+            }
+        )
+
+        XCTAssertTrue(service.openSystemSettings())
+        XCTAssertEqual(openedURLs.count, 2)
+        XCTAssertEqual(openedURLs[0].absoluteString, "x-apple.systempreferences:com.apple.preference.dock")
+        XCTAssertEqual(openedURLs[1].path, "/System/Library/PreferencePanes/Dock.prefPane")
+    }
+
+    func testOpenSystemDockSettingsReportsFailureAfterBothAttempts() {
+        let service = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: false),
+            runner: { _, _ in },
+            autohideReader: { nil },
+            urlOpener: { _ in false }
+        )
+
+        XCTAssertFalse(service.openSystemSettings())
+    }
+
+    func testOpenSystemDockSettingsIsNotBlockedBySandboxWriteGate() {
+        var openedURLs: [URL] = []
+        let service = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: true),
+            runner: { _, _ in },
+            autohideReader: { nil },
+            urlOpener: { url in
+                openedURLs.append(url)
+                return true
+            }
+        )
+
+        XCTAssertFalse(service.isAvailable)
+        XCTAssertTrue(service.openSystemSettings())
+        XCTAssertEqual(openedURLs.count, 1)
     }
 
     // MARK: - 系统 Dock 组 remembered 镜像

@@ -12,14 +12,14 @@ struct GlobalHotKeyShortcut {
 
     var hotKeyID: EventHotKeyID { EventHotKeyID(signature: signature, id: id) }
 
-    /// ⌥⌘E：镜像系统 Dock 的 ⌥⌘D（同一对修饰键，E 与 D 键盘相邻），左手单手可按。
-    /// 组合不能含 Control+Option（VoiceOver 的 VO 修饰键区间），也不能是纯 Option/Option+Shift
-    /// （macOS 15 已知失效 bug，FB15168205）——⌥⌘ 两条都避开。
+    /// ⌥⇧⌘D：系统 Dock 的 ⌥⌘D 加 Shift，释放原 ⌥⌘E 给 Safari / Finder。
+    /// 四键略重，但这是低频模式切换；组合仍避开 VoiceOver 的 Control+Option，
+    /// 也避开 macOS 15 已知失效的纯 Option / Option+Shift（FB15168205）。
     static let edgeAutoHideMode = GlobalHotKeyShortcut(
-        keyCode: UInt32(kVK_ANSI_E),
-        carbonModifiers: UInt32(optionKey | cmdKey),
-        keyEquivalent: "e",
-        keyEquivalentModifierMask: [.option, .command],
+        keyCode: UInt32(kVK_ANSI_D),
+        carbonModifiers: UInt32(optionKey | shiftKey | cmdKey),
+        keyEquivalent: "d",
+        keyEquivalentModifierMask: [.option, .shift, .command],
         signature: 0x5467_4567, // 'TgEg'
         id: 1
     )
