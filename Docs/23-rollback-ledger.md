@@ -10,11 +10,16 @@
 
 以官方 `v0.6.5@9b4b5d0` 为起点的稳定重建线已于 2026-07-24 提升为本地 `master`，当前 worktree 为 `/Users/caye/Projects/macos-dock-cc-v2-v065-stable`。`codex/v065-stable-rebuild@3fb0df4` 冻结保留为 4.1 提升前检查点；旧本地 `master@d83b433` 保存在 `archive/master-before-stable-rebuild-20260724`；旧脏开发线 `codex/release-v0.6.6@5082100` 及其 worktree 原样保留。
 
-远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。本地 4.6 及后续稳定重建只从 `master` 推进，不得误从旧开发线或远端 master 接续。
+Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回归暂停。4.5 稳定产品以发布提交 `dd85d86` 打包为正式 `v0.6.6`，标签固定在该提交。若未来恢复重建，只从本地 `master` 继续，不得误从旧开发线或远端 master 接续。
+
+远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。GitHub 已新增 `codex/release-v0.6.6-stable` 发布分支与 `v0.6.6` 标签，未覆盖远端 master。
 
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
 - 当前稳定安装版（4.5）hash: `db4a18e2d4d8bdd4db13fab44e5fee101d1eb0aff6642d66945d250c68417a11`
+- GitHub `v0.6.6` DMG hash: `10a53b8903f5b19238272f6ad154b449b962a224ba47db63aae51f7fda65c04e`
+- GitHub `v0.6.6` ZIP hash: `3ebe3f6758ec8804e78503e5b441b3a071162b83f421b3727132a40eb1475bad`
+- 公开包边界：ad-hoc 签名、未公证；版本 `0.6.6 (7)`，arm64 + x86_64，上传后重新下载并通过 `SHA256SUMS.txt` 校验
 - 上一稳定安装版（4.4）备份 hash: `9b1bc1d19ca3c1ccbaade0fdf2b80a64dd0a0f59dd2805ca8279aa47e91befb6`
 - 4.3 备份 hash: `ed98039e4139d2e50ff3f4e7cf6938d5ad2ef1586fb5b82e5494a76bedd4a5ca`
 - 4.2 备份 hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
