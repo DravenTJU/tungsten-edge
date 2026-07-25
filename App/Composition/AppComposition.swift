@@ -337,7 +337,7 @@ private struct TaskbarDebugCard: Codable {
         let axTitleFrameMatches = axFrameMatches.filter { Self.titleMatches(record.title, $0.title) }
         let cgFrameMatches = Self.frameMatches(record: record, liveWindows: matchingLiveWindows, source: "cg")
         let cgTitleFrameMatches = cgFrameMatches.filter { Self.titleMatches(record.title, $0.title) }
-        let processAlive = Self.isProcessAlive(pid: record.pid)
+        let processAlive = ProcessLiveness.isAlive(pid: record.pid)
 
         self.order = order
         self.id = record.id.rawValue
@@ -428,13 +428,6 @@ private struct TaskbarDebugCard: Codable {
         return String(String.UnicodeScalarView(scalars))
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-    }
-
-    private static func isProcessAlive(pid: pid_t) -> Bool {
-        errno = 0
-        let result = kill(pid, 0)
-        if result == 0 || errno == EPERM { return true }
-        return errno != ESRCH && NSRunningApplication(processIdentifier: pid)?.isTerminated == false
     }
 }
 

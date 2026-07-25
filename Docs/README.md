@@ -2,7 +2,7 @@
 
 This directory is not the live project status source.
 
-- Current product state, roadmap, and decisions: owner's Obsidian vault, entry `00 macos-dock-cc-v2 总览.md`.
+- Current product state, roadmap, and decisions: owner's Obsidian vault, entry `00 当前进度.md`.
 - Engineering guardrails for agents: `../AGENTS.md`.
 - Active repo-local references kept here:
   - `05-known-platform-quirks.md` — platform behavior that still affects implementation.
