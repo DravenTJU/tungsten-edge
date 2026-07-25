@@ -12,7 +12,32 @@
 
 Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回归暂停。4.5 稳定产品以发布提交 `dd85d86` 打包为正式 `v0.6.6`，标签固定在该提交。若未来恢复重建，只从本地 `master` 继续，不得误从旧开发线或远端 master 接续。
 
-远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。GitHub 已新增 `codex/release-v0.6.6-stable` 发布分支与 `v0.6.6` 标签，未覆盖远端 master。
+### 分支收拢（2026-07-25）
+
+本地分支由 18 个收拢到 5 个，worktree 由 4 个收拢到 1 个（只剩主目录）。**删除前逐个用 `git merge-base --is-ancestor` 验证过提交仍可达，零丢失。**
+
+保留的 5 个：
+
+| 分支 | 用途 |
+| --- | --- |
+| `master` | 唯一主线，检出在主目录 |
+| `codex/release-v0.6.6@5082100` | 旧脏开发线，**不得删除**——封存资产还在上面（见下方专节） |
+| `codex/v065-stable-rebuild@3fb0df4` | 4.1 提升为 master 前的检查点 |
+| `experiment/avoid-scale-hover@4b58365` | 避让方案对照试验 |
+| `archive/master-before-stable-rebuild-20260724@d83b433` | 稳定重建前的旧本地 master |
+
+删除的 13 个及其保活方式：
+
+- 提交已全在 `master` 历史里（直接删）：`codex/menu-hotkey-adjustments-v066@b65d1ac`、`codex/release-v0.6.6-stable@552105b`、`codex/v065-4.5-process-liveness@b503fd6`、`codex/v065-4.4-messaging-admission@aad543d`、`codex/v065-4.3-quit-last@3bd1fef`、`codex/v065-4.2-open-gray@d226e80`、`codex/focus-return-trial@ed460c9`
+- 是 `codex/release-v0.6.6` 的祖先：`finder-folder-preview@56f69ef`
+- 已有发布标签指向尖端：`release/v0.6.0@7235191`（标签 `v0.6.0`）、`codex/release-v0.5.0@121724d`（标签 `v0.5.0`）
+- 新建归档标签保活：`codex/contest-v0.5.0@f0b624e` → `archive/contest-v0.5.0-20260725`；`codex/finder-content-popover@297909d` → `archive/finder-content-popover-20260725`；`feat/focus-return@c030b93` → `archive/focus-return-20260725`
+
+拆除的 worktree：`macos-dock-cc-v2-v065-stable`（master 已回主目录）、`macos-dock-cc-v2-release-publish-v0.5.0`、`macos-dock-cc-v2-release-v0.5.0`。
+
+远端 `origin/master` 原停在 `121724d`（v0.5.0 时代），且不是本地 `master` 的祖先，仓库首页因此长期落后三个版本。2026-07-25 归位时已用 `git push --force-with-lease` 覆盖为本地 `master`。被覆盖的 3 个远端独有提交（`3f8f3dc` v0.4.5 发布说明、`4863d20` 合并、`121724d` v0.5.0 发布说明 + 版本号）实质无丢失：`v0.4.5` / `v0.5.0` 两个标签已推送且指向原提交，两份发布说明也已字节级补进 `Docs/Archive/Releases/`。Homebrew cask 引用 release 资产的 zip + sha256，不引用 master 分支，不受影响。
+
+归档标签 `archive/*-20260725` **只在本地**，未推送到 GitHub（避免污染公开标签列表）；如需异地保活再单独 push。
 
 2026-07-25 在正式发布标签 `v0.6.6@dd85d86` 上建立发布后功能分支 `codex/menu-hotkey-adjustments-v066`；`bcef0ed` 是已实机验收的「菜单与唤醒快捷键调整」检查点。它保留 v0.6.6 全部运行行为，只新增系统 Dock 设置入口、把钨极热键改为 ⌥⇧⌘D，并把「标记为消息应用」改为恒定标题 + 原生勾选态。该分支已于 2026-07-25 以合并提交 `7e0989e` 并入本地 `master`（无冲突，账本两侧条目均保留），分支本身随本轮分支收拢删除；后续不得从封存旧开发线重放这三项功能。
 
