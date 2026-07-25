@@ -108,11 +108,12 @@ Tungsten Edge needs **Accessibility** permission to read and manage your windows
 Tungsten Edge lives in the macOS menu bar. Its menu currently includes:
 
 - **Launch at login** — available on macOS 13 and later. If macOS asks for approval, open Login Items in System Settings and approve Tungsten Edge there.
-- **隐藏/显示系统 Dock** — a dynamic command that follows the native Dock's real auto-hide state. Clicking it changes only visibility and restarts Dock; it does not overwrite the system's wake delay. The `⌥⌘D` shown on the right is macOS's own shortcut.
-- **隐藏/显示 Tungsten Edge 钨极** — switches between always visible and your last auto-hide wake delay. The compact slider immediately below it controls the wake delay: `常驻`, `0.1s`–`3.0s`, or `不唤醒`. When the status menu is closed, the global `⌥⌘E` shortcut performs the same switch; if registration fails, the menu hides its key hint but the command remains clickable. Tungsten Edge claims `⌥⌘E` exclusively while running, shadowing Safari's Develop → Empty Caches and Finder's File → Eject All shortcuts; the owner accepts these low-frequency conflicts for the memorable default.
+- **Hide/Show System Dock** — a dynamic command that follows the native Dock's real auto-hide state. Clicking it changes only visibility and restarts Dock; it does not overwrite the system's wake delay. The `⌥⌘D` shown on the right is macOS's own shortcut.
+- **Open System Dock Settings…** — opens Desktop & Dock on Ventura and later, or Dock & Menu Bar on macOS 12. It only opens System Settings; it never writes Dock preferences or restarts Dock.
+- **Hide/Show Tungsten Edge 钨极** — switches between always visible and your last auto-hide wake delay. The compact slider immediately below it controls the wake delay: `常驻`, `0.1s`–`3.0s`, or `不唤醒`. When the status menu is closed, the global `⌥⇧⌘D` shortcut performs the same switch; if registration fails, the menu hides its key hint but the command remains clickable. Adding Shift mirrors the system Dock's `⌥⌘D` while releasing the old `⌥⌘E` shortcut back to Safari and Finder.
 - **检查更新…** — manually checks the latest stable GitHub release. When an update is available, Tungsten Edge opens that release page for you to download and install it.
 
-The native Dock setting requires a non-sandboxed build because macOS sandboxed apps cannot directly write the system Dock preferences or restart Dock.
+Changing native Dock visibility from this menu requires a non-sandboxed build because sandboxed apps cannot write Dock preferences or restart Dock. Opening the settings pane works in either environment.
 
 ## Recommended setup (align the minimize animation to the bottom)
 

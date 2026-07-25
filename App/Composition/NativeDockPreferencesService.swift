@@ -1,7 +1,9 @@
+import AppKit
 import Foundation
 import Security
 
 typealias ShellRunner = @MainActor (_ executable: String, _ arguments: [String]) throws -> Void
+typealias URLOpener = @MainActor (URL) -> Bool
 
 /// 系统 Dock 自动隐藏的实际状态快照。delay 为 nil = autohide-delay 键不存在（系统默认值）。
 struct NativeDockAutohideState: Equatable {
@@ -16,6 +18,8 @@ protocol NativeDockPreferencesServicing {
     /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
     /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
     func currentAutohideState() -> NativeDockAutohideState?
+    /// 只打开系统设置里的 Dock 页面，不修改偏好，也不受写入路径的沙箱门控。
+    func openSystemSettings() -> Bool
 }
 
 struct SandboxEnvironment {
@@ -36,13 +40,16 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
     private let sandbox: SandboxEnvironment
     private let runner: ShellRunner
     private let autohideReader: @MainActor () -> NativeDockAutohideState?
+    private let urlOpener: URLOpener
 
     init(sandbox: SandboxEnvironment = .current,
          runner: @escaping ShellRunner = NativeDockPreferencesService.runProcess,
-         autohideReader: @escaping @MainActor () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem) {
+         autohideReader: @escaping @MainActor () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem,
+         urlOpener: @escaping URLOpener = NativeDockPreferencesService.openURL) {
         self.sandbox = sandbox
         self.runner = runner
         self.autohideReader = autohideReader
+        self.urlOpener = urlOpener
     }
 
     var isAvailable: Bool { !sandbox.isSandboxed }
@@ -50,6 +57,20 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
     func currentAutohideState() -> NativeDockAutohideState? {
         guard isAvailable else { return nil }
         return autohideReader()
+    }
+
+    /// Monterey 使用「程序坞与菜单栏」，Ventura 及以上映射到「桌面与程序坞」。
+    /// 深链失败时交给系统打开 Dock.prefPane；两条路径都不启动子进程。
+    func openSystemSettings() -> Bool {
+        if let primary = URL(string: "x-apple.systempreferences:com.apple.preference.dock"),
+           urlOpener(primary) {
+            return true
+        }
+        return urlOpener(URL(fileURLWithPath: "/System/Library/PreferencePanes/Dock.prefPane"))
+    }
+
+    private static func openURL(_ url: URL) -> Bool {
+        NSWorkspace.shared.open(url)
     }
 
     static func readAutohideStateFromSystem() -> NativeDockAutohideState? {

@@ -107,6 +107,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let checkForUpdatesItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
     private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
     private let nativeDockToggleItem = NSMenuItem(title: "", action: #selector(toggleNativeDockAutoHideFromMenu), keyEquivalent: "")
+    private let openNativeDockSettingsItem = NSMenuItem(title: "打开系统 Dock 设置…", action: #selector(openNativeDockSettings), keyEquivalent: "")
     private let edgeSliderView: PreferenceSliderMenuItemView
     private var updateCheckState = UpdateCheckMenuState()
 
@@ -180,6 +181,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         nativeDockToggleItem.keyEquivalent = nativeHint.key
         nativeDockToggleItem.keyEquivalentModifierMask = nativeHint.mask
         menu.addItem(nativeDockToggleItem)
+        openNativeDockSettingsItem.target = self
+        menu.addItem(openNativeDockSettingsItem)
         menu.addItem(.separator())
 
         edgeAutoHideToggleItem.target = self
@@ -295,6 +298,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             storeDelay: store.nativeDockAutoHideDelay
         )
         scheduleNativeDockVisibilityChange(enabled: targetEnabled)
+    }
+
+    @objc private func openNativeDockSettings() {
+        guard nativeDockPreferencesService.openSystemSettings() else {
+            presentError(
+                title: "无法打开系统 Dock 设置",
+                message: "请从系统设置进入「桌面与程序坞」（macOS 12 为「程序坞与菜单栏」）。"
+            )
+            return
+        }
     }
 
     private func refreshCheckmarks() {
