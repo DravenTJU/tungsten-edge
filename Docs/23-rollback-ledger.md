@@ -8,13 +8,13 @@
 
 ## 当前本地主线（master）
 
-以官方 `v0.6.5@9b4b5d0` 为起点的稳定重建线已于 2026-07-24 提升为本地 `master`，当前 worktree 为 `/Users/caye/Projects/macos-dock-cc-v2-v065-stable`。`codex/v065-stable-rebuild@3fb0df4` 冻结保留为 4.1 提升前检查点；旧本地 `master@d83b433` 保存在 `archive/master-before-stable-rebuild-20260724`；旧脏开发线 `codex/release-v0.6.6@5082100` 及其 worktree 原样保留。
+以官方 `v0.6.5@9b4b5d0` 为起点的稳定重建线已于 2026-07-24 提升为本地 `master`；2026-07-25 归位后 `master` 直接检出在主目录 `/Users/caye/Projects/macos-dock-cc-v2`（原 `macos-dock-cc-v2-v065-stable` worktree 已拆除）。`codex/v065-stable-rebuild@3fb0df4` 冻结保留为 4.1 提升前检查点；旧本地 `master@d83b433` 保存在 `archive/master-before-stable-rebuild-20260724`；旧脏开发线 `codex/release-v0.6.6@5082100` 原样保留（其上封存的资产见下方专节）。
 
 Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回归暂停。4.5 稳定产品以发布提交 `dd85d86` 打包为正式 `v0.6.6`，标签固定在该提交。若未来恢复重建，只从本地 `master` 继续，不得误从旧开发线或远端 master 接续。
 
 远端 `origin/master@121724d` 未修改，也不是本地 `master` 的 upstream；它相对当前稳定线保留 3 个远端独有的旧发布提交。GitHub 已新增 `codex/release-v0.6.6-stable` 发布分支与 `v0.6.6` 标签，未覆盖远端 master。
 
-2026-07-25 在正式发布标签 `v0.6.6@dd85d86` 上建立发布后功能分支 `codex/menu-hotkey-adjustments-v066`；`bcef0ed` 是已实机验收的「菜单与唤醒快捷键调整」检查点。它保留 v0.6.6 全部运行行为，只新增系统 Dock 设置入口、把钨极热键改为 ⌥⇧⌘D，并把「标记为消息应用」改为恒定标题 + 原生勾选态。该分支尚未合并到本地 `master`，也未 push；后续不得从封存旧开发线重放这三项功能。
+2026-07-25 在正式发布标签 `v0.6.6@dd85d86` 上建立发布后功能分支 `codex/menu-hotkey-adjustments-v066`；`bcef0ed` 是已实机验收的「菜单与唤醒快捷键调整」检查点。它保留 v0.6.6 全部运行行为，只新增系统 Dock 设置入口、把钨极热键改为 ⌥⇧⌘D，并把「标记为消息应用」改为恒定标题 + 原生勾选态。该分支已于 2026-07-25 以合并提交 `7e0989e` 并入本地 `master`（无冲突，账本两侧条目均保留），分支本身随本轮分支收拢删除；后续不得从封存旧开发线重放这三项功能。
 
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
@@ -27,6 +27,19 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 - 4.2 备份 hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
 - 4.1 备份 hash: `0b92d6d2f90fb3602bbc010987760971df89444cb7c459cf1f4a0f37c5756334`
 - 官方 v0.6.5 备份 hash: `a9da38bf2f98f7ebe432d83e5cb9ac798d58297bc93b1422b03a69053e3ebb3f`
+
+## 封存在废弃开发线上的资产（尚未搬回稳定线）
+
+回退到 v0.6.5 重建时，旧脏开发线 `codex/release-v0.6.6@5082100` 上有一批**与聚焦缺陷无关**的发布/权限基建没有跟着搬回来。Owner 于 2026-07-25 决定本轮暂不搬，只在此登记，避免以后想不起来还有这回事。要用时按下表 `git cherry-pick` 或 `git checkout <commit> -- <path>` 取回，取回后必须重新验证。
+
+| 资产 | 取回位置 | 对当前稳定线的影响 |
+| --- | --- | --- |
+| Developer ID 签名 + 公证打包链（`Scripts/package_release.sh`，相对稳定线 +275 行，fail-closed：凭据或验证缺失即停，不回退临时签名） | `codex/release-v0.6.6`，提交 `2c2a51a` | 稳定线的 `Scripts/package_release.sh` 仍是 v0.1.0 时代的 ad-hoc `codesign --force --deep --sign -`。**已发布的 `v0.6.6` 公开包因此未签名未公证**，用户首次打开需右键「打开」或在「隐私与安全性」里「仍要打开」（发布说明已写明） |
+| 辅助功能权限重授权引导（`App/Scenes/PermissionOnboardingView.swift` +244 行、`Tests/Unit/PermissionOnboardingTests.swift` 168 行） | `codex/release-v0.6.6`，提交 `26371b8` | 与上一条配套：从 ad-hoc 换成 Developer ID 签名会使旧的辅助功能授权失效，需要引导用户删旧条目重授权一次。稳定线的 `PermissionOnboardingView.swift` 仍是 61 行的基础版 |
+| 自签试用包脚本 `Scripts/package_preview.sh`（239 行） | `codex/release-v0.6.6`，提交 `7943618`（同 `v0.6.6-beta.1` 标签） | 稳定线没有试用包打包流程 |
+| `Resources/TungstenEdge.entitlements` | `codex/release-v0.6.6`，提交 `2c2a51a` | 公证链依赖；稳定线 `Resources/` 下只有 `Assets.xcassets` 与 `Info.plist` |
+
+上述四项的提交均已验证可从 `codex/release-v0.6.6` 到达，该分支因此**不得删除**。同线上的 `finder-folder-preview` 是它的祖先，删除后不影响这些资产。
 
 ## 数据边界：抽屉位置与退出后保留拆分
 

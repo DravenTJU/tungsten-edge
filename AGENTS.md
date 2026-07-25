@@ -18,6 +18,7 @@
 - Trust model history: `Docs/Archive/Engineering/19-taskbar-trust-incident.md`, `Docs/Archive/Engineering/20-inventory-first-taskbar-trust.md`.
 - Focus debug history: `Docs/22-window-focus-flicker-debugging.md`.
 - Finder P0 records: `Docs/Archive/Engineering/17-finder-p0-implementation.md`, `Docs/Archive/Engineering/18-real-sample-finder-findings.md`.
+- Public packaging is currently **ad-hoc signed and unnotarized** (`Scripts/package_release.sh`). A completed Developer ID signing + notarization pipeline, its companion Accessibility re-authorization onboarding, and the preview-build script are parked on the abandoned dev line `codex/release-v0.6.6` — see the "封存在废弃开发线上的资产" section of `Docs/23-rollback-ledger.md` before rebuilding any of it from scratch.
 
 ## Taskbar Trust And Placement
 
