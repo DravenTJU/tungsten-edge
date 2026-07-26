@@ -63,6 +63,7 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 | 辅助功能权限重授权引导（`App/Scenes/PermissionOnboardingView.swift` +244 行、`Tests/Unit/PermissionOnboardingTests.swift` 168 行） | `codex/release-v0.6.6`，提交 `26371b8` | 与上一条配套：从 ad-hoc 换成 Developer ID 签名会使旧的辅助功能授权失效，需要引导用户删旧条目重授权一次。稳定线的 `PermissionOnboardingView.swift` 仍是 61 行的基础版 |
 | 自签试用包脚本 `Scripts/package_preview.sh`（239 行） | `codex/release-v0.6.6`，提交 `7943618`（同 `v0.6.6-beta.1` 标签） | 稳定线没有试用包打包流程 |
 | `Resources/TungstenEdge.entitlements` | `codex/release-v0.6.6`，提交 `2c2a51a` | 公证链依赖；稳定线 `Resources/` 下只有 `Assets.xcassets` 与 `Info.plist` |
+| 最小化时的背景窗口焦点交接（`Platform/Accessibility/BackgroundFocusHandoff.swift` 116 行 + `AccessibilitySource.swift` 相应改动） | `codex/release-v0.6.6`，提交 `df482d3`「最小化命令提交与状态确认分离 + 背景窗口精确交接」 | 稳定线的聚焦 / 最小化路径**与官方 `v0.6.5` 完全相同**——`git diff --name-only v0.6.5 master` 在 `Platform/Accessibility/`、`Core/Lifecycle/ActionPlanning/`、`TabFoldDecision.swift` 上零改动，整条重建线从未碰过这里。废弃线相对稳定线在该路径上共 +383/−82 行。**注意：owner 2026-07-26 已明确排除 `df482d3` 打包出的 `v0.6.6-beta.2`（「试过肯定不对」）**；废弃线在 beta.2 之后还有一版 carbon-before 交接方案，只存在于已丢失的脏工作区，不可取回。取回本条前必须先与 owner 确认要的是哪一版行为 |
 
 上述四项的提交均已验证可从 `codex/release-v0.6.6` 到达，该分支因此**不得删除**。同线上的 `finder-folder-preview` 是它的祖先，删除后不影响这些资产。
 
