@@ -159,6 +159,7 @@
 		A00000000000000000009E01 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E00 /* ScreenAttribution.swift */; };
 		A00000000000000000009E02 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E00 /* ScreenAttribution.swift */; };
 		A00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E10 /* ScreenGeometrySource.swift */; };
+		A00000000000000000009E51 /* ScreenBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E50 /* ScreenBar.swift */; };
 		A00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E30 /* ScreenAttributionTests.swift */; };
 		A00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E40 /* ScreenStickinessTests.swift */; };
 		A00000000000000000009A02 /* WindowZoomAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowZoomAvoidance.swift */; };
@@ -196,6 +197,7 @@
 		A00000000000000000009A00 /* WindowZoomAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomAvoidance.swift; sourceTree = "<group>"; };
 		A00000000000000000009E00 /* ScreenAttribution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttribution.swift; sourceTree = "<group>"; };
 		A00000000000000000009E10 /* ScreenGeometrySource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGeometrySource.swift; sourceTree = "<group>"; };
+		A00000000000000000009E50 /* ScreenBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenBar.swift; sourceTree = "<group>"; };
 		A00000000000000000009E30 /* ScreenAttributionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttributionTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E40 /* ScreenStickinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenStickinessTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A10 /* WindowZoomAvoidanceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomAvoidanceController.swift; sourceTree = "<group>"; };
@@ -356,6 +358,7 @@
 				A00000000000000000000066 /* AppDelegate.swift */,
 				A00000000000000000008020 /* StatusMenuController.swift */,
 				A0000000000000000000006C /* PanelCoordinator.swift */,
+				A00000000000000000009E50 /* ScreenBar.swift */,
 				A00000000000000000009750 /* NonConstrainingPanel.swift */,
 			);
 			path = Entry;
@@ -840,6 +843,7 @@
 					A00000000000000000009A01 /* WindowZoomAvoidance.swift in Sources */,
 					A00000000000000000009E01 /* ScreenAttribution.swift in Sources */,
 					A00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */,
+					A00000000000000000009E51 /* ScreenBar.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
 					A000000000000000000019A1 /* LauncherChip.swift in Sources */,
 					A000000000000000000019D1 /* AppMenuFragments.swift in Sources */,
