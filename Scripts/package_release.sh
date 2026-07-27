@@ -33,6 +33,10 @@ STAGE="$(mktemp -d)"
 APP="$STAGE/$APP_NAME.app"
 cp -R "$PRODUCTS/$BUILT_NAME.app" "$APP"
 
+# GPL-3.0 requires the license text to accompany the binary. Must land inside
+# the bundle BEFORE codesign below — adding files to a signed bundle breaks it.
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/LICENSE"
+
 echo "==> Verifying architectures:"
 lipo -info "$APP/Contents/MacOS/$BUILT_NAME" || true
 
@@ -48,6 +52,7 @@ ZIP="$DIST/Tungsten-Edge-$VERSION.zip"
 echo "==> Creating .dmg (drag-to-install)…"
 DMG_STAGE="$(mktemp -d)"
 cp -R "$APP" "$DMG_STAGE/"
+cp "$ROOT/LICENSE" "$DMG_STAGE/"
 ln -s /Applications "$DMG_STAGE/Applications"
 DMG="$DIST/Tungsten-Edge-$VERSION.dmg"
 hdiutil create -volname "$VOL_NAME" -srcfolder "$DMG_STAGE" \
