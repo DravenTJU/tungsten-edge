@@ -68,9 +68,10 @@ final class WindowZoomAvoidanceController {
                 return
             }
 
-            let primaryHeight = NSScreen.main?.frame.height ?? 0
+            // 翻转基准取主屏 screens[0]，不能用 NSScreen.main（跟着 key window 跑）。
+            let primaryHeight = MainActor.assumeIsolated { ScreenGeometrySource.primaryMaxY }
             let appKitPoint = NSEvent.mouseLocation
-            let quartzPoint = CGPoint(x: appKitPoint.x, y: primaryHeight - appKitPoint.y)
+            let quartzPoint = ScreenAttribution.quartzPoint(fromAppKit: appKitPoint, primaryMaxY: primaryHeight)
             guard let candidate = Self.topmostWindow(
                 at: quartzPoint,
                 timestamp: event.timestamp

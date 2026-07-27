@@ -274,7 +274,7 @@ final class PanelCoordinator: NSObject {
         }
 
         let screen = effectiveDockScreen(panel)
-        let primaryHeight = NSScreen.main?.frame.height ?? 0
+        let primaryHeight = ScreenGeometrySource.primaryMaxY
         return WindowZoomAvoidanceContext(
             geometry: WindowZoomAvoidance.Geometry(
                 screenFrame: screen.frame,
@@ -297,7 +297,7 @@ final class PanelCoordinator: NSObject {
             return nil
         }
         let screen = effectiveDockScreen(panel)
-        let primaryHeight = NSScreen.main?.frame.height ?? 0
+        let primaryHeight = ScreenGeometrySource.primaryMaxY
         return WindowZoomAvoidanceContext(
             geometry: WindowZoomAvoidance.Geometry(
                 screenFrame: screen.frame,
@@ -1182,6 +1182,7 @@ final class PanelCoordinator: NSObject {
 
     private func subscribeSnapshotWidth() {
         snapshotWidthSubscription = runtime.$snapshot
+            .removeDuplicates()   // 快照无条件发布（如应用激活），相同内容不必重测宽度+播动画；多屏下成本 ×N
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 // Defer one run-loop cycle so SwiftUI finishes layout before we read fittingSize
@@ -1453,11 +1454,11 @@ final class PanelCoordinator: NSObject {
         panelCurrentScreen(panel: panel)
     }
 
-    // AppKit frame (bottom-left origin) → CG/Quartz frame (top-left origin of primary screen)
+    // AppKit frame (bottom-left origin) → CG/Quartz frame (top-left origin of primary screen).
+    // 翻转基准必须是主屏 screens[0]，不是 NSScreen.main（后者跟着 key window 跑，
+    // 主副屏高度不同时会让全屏检测整体偏移）。见 ScreenAttribution 的注释。
     private static func toCGRect(_ screen: NSScreen) -> CGRect {
-        let primaryH = NSScreen.main?.frame.height ?? 0
-        let f = screen.frame
-        return CGRect(x: f.minX, y: primaryH - f.maxY, width: f.width, height: f.height)
+        ScreenAttribution.quartzRect(fromAppKit: screen.frame, primaryMaxY: ScreenGeometrySource.primaryMaxY)
     }
 
     nonisolated private static func detectFullscreenViaAX(pid: pid_t?, screenCGFrame: CGRect) -> Bool {
