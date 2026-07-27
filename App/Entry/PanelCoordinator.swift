@@ -217,10 +217,20 @@ final class PanelCoordinator: NSObject {
         drawerHostScreenID.flatMap { bar(with: $0) } ?? primaryBar
     }
 
-    /// 光标所在那块屏的 bar（用于抽屉/弹窗/拖拽这些"在哪块屏点的就归哪块屏"的单例）。
+    /// 光标所在那块屏的 bar（用于抽屉/弹窗这些"在哪块屏点的就归哪块屏"的单例）。
     private func barUnderMouse() -> ScreenBar? {
-        let mouse = NSEvent.mouseLocation
-        return bars.first(where: { $0.screen.frame.contains(mouse) }) ?? primaryBar
+        bar(containing: NSEvent.mouseLocation)
+    }
+
+    /// 某个 AppKit 屏幕坐标点落在哪条 bar 上（找不到则退回主屏那条）。
+    private func bar(containing point: CGPoint) -> ScreenBar? {
+        bars.first(where: { $0.screen.frame.contains(point) }) ?? primaryBar
+    }
+
+    /// 当前拖拽的**发起屏**那条 bar。跨屏拖卡片永不支持（owner 2026-07-27），
+    /// 所以整段拖拽的投放判定都锁在发起屏，不跟着光标跑。
+    private func activeDragBar() -> ScreenBar? {
+        dragController?.activeScreenID.flatMap { bar(with: $0) } ?? barUnderMouse()
     }
 
     private var dockPanel: NSPanel? { primaryBar?.dockPanel }
@@ -242,6 +252,8 @@ final class PanelCoordinator: NSObject {
     private var edgeWakeRequiresHotZone = true
     private var hoverLocalMouseMonitor: Any?
     private var hoverGlobalMouseMonitor: Any?
+    /// 拓扑变更防抖的代次令牌（见 `screenParametersChanged`）。用令牌而不是再加一个 Timer 字段。
+    private var screenTopologyToken: Int = 0
 
     init(runtime: AppRuntime,
          drawerStore: DrawerStore,
@@ -311,8 +323,25 @@ final class PanelCoordinator: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    func toggleDrawer() {
-        if drawerWantsOpen { closeDrawer() } else { openDrawer() }
+    /// `screenID` = 触发这次开合的胶囊所在屏；nil（状态菜单等无屏上下文的入口）时用光标所在屏。
+    ///
+    /// 抽屉是**全桌面单例**（owner 2026-07-27）：同一块屏再点一次收起；点**另一块**屏的胶囊
+    /// 则把它移过去，而不是开出第二个。判定在纯函数 `SingletonPanelPlan` 里。
+    func toggleDrawer(on screenID: ScreenID? = nil) {
+        let target = screenID ?? barUnderMouse()?.id
+        let open: (content: Int, screen: ScreenID)? = drawerWantsOpen
+            ? drawerHostScreenID.map { (content: 0, screen: $0) }
+            : nil
+        guard let target else {
+            if drawerWantsOpen { closeDrawer() }
+            return
+        }
+        switch SingletonPanelPlan.decide(open: open, requested: (content: 0, screen: target)) {
+        case .close:
+            closeDrawer()
+        case .open, .moveOrSwitch:
+            openDrawer(on: target)
+        }
     }
 
     /// 权限丢失时把整套面板拆干净并交出所有权（调用方随后置空引用即可）。幂等。
@@ -333,21 +362,21 @@ final class PanelCoordinator: NSObject {
         closeDrawer()
         closeFolderPopup(immediately: true)
         dismissWindowTitleTooltip()
-        cancelHoverSwitch()
 
-        // 换掉 contentView 触发 SwiftUI 拆树；单独强持有的 host 要先置空。
-        dockContentHost = nil
-        capsuleContentHost = nil
+        // 换掉 contentView 触发 SwiftUI 拆树；单独强持有的 host 随 ScreenBar 一起丢弃。
         drawerContentHost = nil
         folderPopupContentHost = nil
-        for panel in [dockPanel, capsulePanel, drawerPanel, folderPopupPanel, windowTitleTooltipPanel] {
-            guard let panel else { continue }
+        // 每屏一套面板（2026-07-27）：全部拆掉，不能只拆主屏那条。
+        var panels: [NSPanel] = bars.flatMap { [$0.dockPanel, $0.capsulePanel] }
+        panels.append(contentsOf: [drawerPanel, folderPopupPanel, windowTitleTooltipPanel].compactMap { $0 })
+        for panel in panels {
             panel.contentView = NSView()
             panel.orderOut(nil)
             panel.close()
         }
-        dockPanel = nil
-        capsulePanel = nil
+        bars.removeAll()
+        drawerHostScreenID = nil
+        popupHostScreenID = nil
         drawerPanel = nil
         folderPopupPanel = nil
         windowTitleTooltipPanel = nil
@@ -361,7 +390,11 @@ final class PanelCoordinator: NSObject {
               let panel = dockPanel else {
             return nil
         }
-
+        // ⚠️ 已知缺口（每屏常驻任务条移植，2026-08-07）：这里仍然只认**主屏**那条栏，
+        // 所以副屏上的最大化窗口不会避让副屏的任务条。上游把本函数的返回值当作
+        // 相等性快照用（6 处 `host?.windowLiftAvoidanceContext() == context` 判断
+        // 「任务条几何变了就放弃本次抬升」），改成按窗口取上下文要动上游逻辑本身，
+        // 不属于机械移植，单独排期。
         let screen = panelCurrentScreen(panel: panel)
         let primaryScreenHeight = Self.quartzPrimaryScreenHeight
         let geometry = WindowLiftAvoidance.Geometry(
@@ -382,8 +415,8 @@ final class PanelCoordinator: NSObject {
         )
     }
 
-    private func openDrawer() {
-        guard let mainPanel = dockPanel, capsulePanel != nil else { return }
+    private func openDrawer(on screenID: ScreenID? = nil) {
+        guard let host = (screenID.flatMap { bar(with: $0) } ?? barUnderMouse()) else { return }
         drawerActionCloseToken += 1  // 旧点击排队的 delayed close 捕获旧 token，不匹配则丢弃
         drawerWantsOpen = true
         setAutoHideInhibitor(.drawerOpen, active: true)
@@ -408,11 +441,11 @@ final class PanelCoordinator: NSObject {
         }
         guard let panel = drawerPanel else { return }
 
-        let screen = panelCurrentScreen(panel: mainPanel)
-        drawerHostScreenID = primaryBar?.id   // 检查点 3 起改为「在哪块屏点的胶囊就挂哪块屏」
+        let screen = host.screen
+        drawerHostScreenID = host.id   // 在哪块屏点的胶囊就挂哪块屏（全桌面单例）
         let screenGeometry = Self.screenGeometry(screen)
         // 用胶囊**目标** frame 定位（不读 live：用户可能在任务条宽度动画中触发弹簧开抽屉,Codex 二审 P1）。
-        let capsuleRef = lastCapsuleTargetFrame == .zero ? (capsulePanel?.frame ?? .zero) : lastCapsuleTargetFrame
+        let capsuleRef = host.lastCapsuleTargetFrame == .zero ? host.capsulePanel.frame : host.lastCapsuleTargetFrame
         // 抽屉最大内容高度 = 胶囊上方锚点 → 屏幕上沿的可用高度。超出由 DrawerView 内部滚动,
         // 绝不靠下压底边来塞下（否则压向胶囊/任务条 = 重叠,Codex 二审第 4 点）。
         // 顶部上限仍避让菜单栏 / 刘海；底部锚点不避让原生 Dock，避免 Command+Option+D 或侧边 Dock 推动抽屉。
@@ -420,7 +453,8 @@ final class PanelCoordinator: NSObject {
 
         // 每次打开都换一份新内容视图 → DrawerView 的 onAppear 重新触发淡入缩放,并拿到当前 maxContentHeight。
         let hosting = NSHostingView(rootView: DrawerView(maxContentHeight: maxContentHeight,
-                                                         onPrimaryAction: { [weak self] in self?.closeDrawerAfterAction() })
+                                                         onPrimaryAction: { [weak self] in self?.closeDrawerAfterAction() },
+                                                         screenID: host.id)
             .environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore)
             .environmentObject(drawerOrderStore).environmentObject(dragController)
             .environmentObject(keptAppStore).environmentObject(runningApplicationStore)
@@ -512,31 +546,47 @@ final class PanelCoordinator: NSObject {
 
     private func dismissDrawerIfOutside() {
         guard dragController.draggingPayload == nil else { return }   // 拖动中不误关
-        guard let drawer = drawerPanel, drawer.isVisible,
-              let dock   = dockPanel else { return }
+        guard let drawer = drawerPanel, drawer.isVisible else { return }
         let mouse = NSEvent.mouseLocation
-        guard !drawer.frame.contains(mouse),
-              !dock.frame.contains(mouse),
-              !(capsulePanel?.frame.contains(mouse) ?? false) else { return }
+        guard !drawer.frame.contains(mouse) else { return }
+        // 点在**任意一块屏**的任务条/胶囊上都不算"点到外面"——否则在副屏上操作会误关抽屉。
+        for bar in bars where bar.dockPanel.frame.contains(mouse) || bar.capsulePanel.frame.contains(mouse) {
+            return
+        }
         closeDrawer()
     }
 
     // MARK: - 文件夹/废纸篓弹窗（克隆抽屉模板：懒面板 + 普通容器包 hosting + 淡入淡出 + click-away 监视器）
 
-    /// chip 点击入口：同一文件夹再点 = 收起；换文件夹 = 瞬时切换目标。anchorVisibleRect 是 chip 可视矩形（屏幕坐标）。
+    /// chip 点击入口：同一文件夹**且同一块屏**再点 = 收起；换文件夹或换屏 = 原地切换目标。
+    /// 弹窗是全桌面单例（owner 2026-07-27），宿主屏由锚点矩形反推，判定见 `SingletonPanelPlan`。
+    /// anchorVisibleRect 是 chip 可视矩形（屏幕坐标）。
     func toggleFolderPopup(path: String, anchorVisibleRect: CGRect) {
-        if folderPopupWantsOpen, openPopupContent == .folder(path: path) {
+        let requested = popupHostID(for: anchorVisibleRect)
+        let open = openPopupContent.flatMap { c in popupHostScreenID.map { (content: c, screen: $0) } }
+        switch SingletonPanelPlan.decide(open: open,
+                                         requested: (content: PopupContent.folder(path: path), screen: requested)) {
+        case .close:
             closeFolderPopup()
-        } else {
+        case .open, .moveOrSwitch:
             openFolderPopup(path: path, anchorVisibleRect: anchorVisibleRect)
         }
     }
 
+    /// 锚点矩形中心落在哪块屏 → 弹窗挂哪块屏。
+    private func popupHostID(for anchorVisibleRect: CGRect) -> ScreenID {
+        let center = CGPoint(x: anchorVisibleRect.midX, y: anchorVisibleRect.midY)
+        return bar(containing: center)?.id ?? ScreenID(rawValue: 0)
+    }
+
     /// 中转格点击入口：再点 = 收起；从文件夹弹窗切过来 = 原地切换（同单面板语义）。
     func toggleShelfPopup(anchorVisibleRect: CGRect) {
-        if folderPopupWantsOpen, openPopupContent == .shelf {
+        let requested = popupHostID(for: anchorVisibleRect)
+        let open = openPopupContent.flatMap { c in popupHostScreenID.map { (content: c, screen: $0) } }
+        switch SingletonPanelPlan.decide(open: open, requested: (content: PopupContent.shelf, screen: requested)) {
+        case .close:
             closeFolderPopup()
-        } else {
+        case .open, .moveOrSwitch:
             openShelfPopup(anchorVisibleRect: anchorVisibleRect)
         }
     }
@@ -619,8 +669,8 @@ final class PanelCoordinator: NSObject {
         }
         guard let panel = folderPopupPanel else { return }
 
-        let screen = panelCurrentScreen(panel: mainPanel)
-        popupHostScreenID = primaryBar?.id   // 检查点 3 起改为「在哪块屏点的 chip 就挂哪块屏」
+        popupHostScreenID = popupHostID(for: anchorVisibleRect)   // 在哪块屏点的 chip 就挂哪块屏
+        let screen = popupHostScreenID.flatMap { bar(with: $0) }?.screen ?? mainPanel.screen ?? NSScreen.screens[0]
         let screenGeometry = Self.screenGeometry(screen)
         let maxContentHeight = PanelGeometry.maxFolderPopupContentHeight(
             anchorVisibleRect: anchorVisibleRect, on: screenGeometry, metrics: layoutMetrics)
@@ -696,13 +746,13 @@ final class PanelCoordinator: NSObject {
         guard folderPopupWantsOpen,
               let panel = folderPopupPanel,
               let hosting = folderPopupContentHost,
-              let dock = dockPanel else { return }
+              let host = popupHostScreenID.flatMap({ bar(with: $0) }) ?? primaryBar else { return }
         // 入场窗口期内一律瞬时校正,不与入场淡入叠加出晃动（散装感修复）。
         let animated = animated && Date().timeIntervalSince(popupOpenedAt) > 0.25
         let fitting = hosting.fittingSize
         let size = CGSize(width: max(fitting.width, 160), height: max(fitting.height, 120))
         lastPopupSize = size
-        let screen = panelCurrentScreen(panel: dock)
+        let screen = host.screen
         let target = PanelGeometry.folderPopupTargetFrame(
             anchorVisibleRect: popupAnchorVisibleRect, size: size, on: Self.screenGeometry(screen), metrics: layoutMetrics)
         lastPopupTargetFrame = target
@@ -751,11 +801,12 @@ final class PanelCoordinator: NSObject {
         let token = folderPopupTweenToken
 
         let start = panel.frame
-        guard start != target, duration > 0, let dock = dockPanel else {
+        guard start != target, duration > 0,
+              let host = popupHostScreenID.flatMap({ bar(with: $0) }) ?? primaryBar else {
             panel.setFrame(target, display: true)
             return
         }
-        let screen = Self.screenGeometry(panelCurrentScreen(panel: dock))
+        let screen = Self.screenGeometry(host.screen)
 
         let ease = UnitBezierEase(timingFunction)
         let (w0, w1) = (start.width, target.width)
@@ -921,13 +972,17 @@ final class PanelCoordinator: NSObject {
     ///   shadowPadding=20 透明边，减 20 得 52×52 可见区，再外扩 8 容错，不能更宽——胶囊紧挨任务条，太宽会
     ///   "拖到附近就被收走"）；抽屉打开时叠加抽屉可见内容区。任务条本身不是它们的投放区。
     /// - `.drawer`（抽屉图标找移回目标）= 任务条 dock 面板可见内容区（减 shadowPadding）。
+    ///
+    /// 多屏：一律读**拖拽发起屏**那条 bar 的矩形。跨屏拖卡片永不支持（owner 2026-07-27），
+    /// 所以投放区在整段拖拽里是固定的，不跟着光标换屏。
     private func dragDropZones(for source: DragSource) -> [CGRect] {
         // 读**目标** frame：动画中 live frame 是中途值,会和视觉/落点短暂错位（Codex 二审 P2）。目标未初始化时退回 live。
         func target(_ stored: NSRect, _ live: NSRect?) -> NSRect? { stored != .zero ? stored : live }
+        guard let active = activeDragBar() else { return [] }
         switch source {
         case .strip, .messaging:
             var zones: [CGRect] = []
-            if let c = target(lastCapsuleTargetFrame, capsulePanel?.frame) {
+            if let c = target(active.lastCapsuleTargetFrame, active.capsulePanel.frame) {
                 zones.append(c.insetBy(dx: Self.shadowPadding - 8, dy: Self.shadowPadding - 8))
             }
             if let drawer = drawerPanel, drawer.isVisible, let d = target(lastDrawerTargetFrame, drawer.frame) {
@@ -936,12 +991,12 @@ final class PanelCoordinator: NSObject {
                 // 而过冲向下（owner 2026-06-21"先向下扩展再上移"的真因）。
                 let inset = d.insetBy(dx: Self.shadowPadding, dy: Self.shadowPadding)
                 // 投放区向上延伸到与抽屉一致的顶部上限：避让菜单栏/刘海，但不避让原生 Dock。
-                let top = Self.screenGeometry(panelCurrentScreen(panel: drawer)).topUsableY
+                let top = Self.screenGeometry(drawerHostBar()?.screen ?? active.screen).topUsableY
                 zones.append(CGRect(x: inset.minX, y: inset.minY, width: inset.width, height: max(inset.height, top - inset.minY)))
             }
             return zones
         case .drawer:
-            guard let d = target(lastDockTargetFrame, dockPanel?.frame) else { return [] }
+            guard let d = target(active.lastDockTargetFrame, active.dockPanel.frame) else { return [] }
             return [d.insetBy(dx: Self.shadowPadding, dy: Self.shadowPadding)]
         case .folder:
             // 文件夹 chip 无投放区（canExternalDrop=false 本就不会查;区内重排/拖出移除/拖回打开
@@ -950,9 +1005,10 @@ final class PanelCoordinator: NSObject {
         }
     }
 
+    /// 拖拽载体面板铺在**发起屏**上。跨屏拖卡片永不支持（owner 2026-07-27），
+    /// 所以单屏载体是策略上的正确，而不是将就。
     private func carrierTargetScreen() -> NSScreen {
-        if let dock = dockPanel { return panelCurrentScreen(panel: dock) }
-        return NSScreen.main ?? NSScreen.screens[0]
+        activeDragBar()?.screen ?? NSScreen.screens.first ?? NSScreen.main!
     }
 
     // MARK: - 弹簧文件夹：拖卡悬停胶囊自动弹开抽屉
@@ -1136,8 +1192,9 @@ final class PanelCoordinator: NSObject {
         // 非任务条发起（纯抽屉内拖动 / 抽屉→任务条移回）不弹簧。
         guard dragOriginatedFromStrip else { cancelSpringTimers(); return }
 
+        let activeCapsule = activeDragBar()?.lastCapsuleTargetFrame ?? .zero
         let inDrawer  = drawerWantsOpen && lastDrawerTargetFrame != .zero && springZone(lastDrawerTargetFrame).contains(location)
-        let inCapsule = lastCapsuleTargetFrame != .zero && springZone(lastCapsuleTargetFrame).contains(location)
+        let inCapsule = activeCapsule != .zero && springZone(activeCapsule).contains(location)
 
         if inDrawer || inCapsule {
             // 在抽屉或胶囊上 → 取消收回；关着且在胶囊上 → 起开抽屉定时器。
@@ -1181,8 +1238,9 @@ final class PanelCoordinator: NSObject {
         springCloseTimer = nil
         guard dragOriginatedFromStrip, drawerWantsOpen else { return }
         let loc = dragController.globalLocation
+        let activeCapsule = activeDragBar()?.lastCapsuleTargetFrame ?? .zero
         let inDrawer  = lastDrawerTargetFrame != .zero && springZone(lastDrawerTargetFrame).contains(loc)
-        let inCapsule = lastCapsuleTargetFrame != .zero && springZone(lastCapsuleTargetFrame).contains(loc)
+        let inCapsule = activeCapsule != .zero && springZone(activeCapsule).contains(loc)
         guard !inDrawer, !inCapsule else { return }   // 又回到抽屉/胶囊 → 不关
         closeDrawer()
     }
@@ -1192,17 +1250,18 @@ final class PanelCoordinator: NSObject {
         // 到点仍在拖、仍悬胶囊、抽屉仍关 → 弹开。用 dragOriginatedFromStrip + 重测胶囊命中（不用
         // isOverDropZone：转正成 .drawer 后它指的是任务条区,悬胶囊时为 false,会误拦重开。owner 2026-06-22）。
         let loc = dragController.globalLocation
-        let inCapsule = lastCapsuleTargetFrame != .zero && springZone(lastCapsuleTargetFrame).contains(loc)
+        let activeCapsule = activeDragBar()?.lastCapsuleTargetFrame ?? .zero
+        let inCapsule = activeCapsule != .zero && springZone(activeCapsule).contains(loc)
         guard dragController.draggingPayload != nil,
               dragOriginatedFromStrip,
               inCapsule,
               !drawerWantsOpen else { return }
-        openDrawer()
+        openDrawer(on: activeDragBar()?.id)
         drawerSpringOpened = true   // openDrawer 把它置 false 了,这里标记是弹簧开的
         dragController.bringCarrierToFront()
     }
 
-    private func makeDockPanel(on screen: NSScreen) -> NSPanel {
+    private func makeDockPanel(on screen: NSScreen, screenID: ScreenID) -> (NSPanel, ManualPanelHost) {
         let s = screen.frame
 
         let panel = NonConstrainingPanel(
@@ -1221,6 +1280,7 @@ final class PanelCoordinator: NSObject {
         panel.hidesOnDeactivate = false
 
         let hosting = NSHostingView(rootView: DockStripView(
+            screenID: screenID,
             onFolderPopupToggle: { [weak self] path, anchorRect in
                 self?.toggleFolderPopup(path: path, anchorVisibleRect: anchorRect)
             },
@@ -1256,7 +1316,7 @@ final class PanelCoordinator: NSObject {
         }
     }
 
-    private func makeCapsulePanel() -> NSPanel {
+    private func makeCapsulePanel(screenID: ScreenID) -> (NSPanel, ManualPanelHost) {
         let panel = NonConstrainingPanel(
             contentRect: NSRect(origin: .zero, size: CGSize(width: capsuleWidth + Self.shadowPadding * 2, height: capsuleWidth + Self.shadowPadding * 2)),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -1276,7 +1336,8 @@ final class PanelCoordinator: NSObject {
                 onRequestTaskbarMenu: { [weak self] event, view in
                     self?.onRequestTaskbarMenu?(event, view)
                 },
-                action: { [weak self] in self?.toggleDrawer() }
+                screenID: screenID,
+                action: { [weak self] in self?.toggleDrawer(on: screenID) }
             )
                 .environmentObject(runtime)
                 .environmentObject(drawerStore)
@@ -1510,35 +1571,52 @@ final class PanelCoordinator: NSObject {
 
     // MARK: - ScreenBar 生命周期
 
-    /// 按当前拓扑增删 bar。检查点 2：**只建主屏那一条**，行为与改造前一致。
+    /// 按当前拓扑增删 bar：**每块显示器一条**（owner 2026-07-27）。
+    /// 增/删/留的判定在纯函数 `ScreenSetDiff` 里。
     private func reconcileBars() {
         let topology = ScreenGeometrySource.current()
-        guard let primaryID = ScreenAttribution.primaryID(topology),
-              let primaryScreen = NSScreen.screens.first else {
-            return
+        var screenByID: [ScreenID: NSScreen] = [:]
+        for (index, geo) in topology.enumerated() where index < NSScreen.screens.count {
+            screenByID[geo.id] = NSScreen.screens[index]
         }
-        let wanted: [(ScreenID, NSScreen)] = [(primaryID, primaryScreen)]
-        let wantedIDs = Set(wanted.map(\.0))
 
-        for bar in bars where !wantedIDs.contains(bar.id) {
-            bar.teardown()
-        }
-        bars.removeAll { !wantedIDs.contains($0.id) }
+        let plan = ScreenSetDiff.plan(existing: Set(bars.map(\.id)), current: topology.map(\.id))
 
-        for (id, screen) in wanted {
-            if let existing = bar(with: id) {
-                existing.adopt(screen: screen)
-            } else {
-                let (dock, dockHost) = makeDockPanel(on: screen)
-                let (capsule, capsuleHost) = makeCapsulePanel()
-                bars.append(ScreenBar(id: id, screen: screen,
-                                      dockPanel: dock, dockContentHost: dockHost,
-                                      capsulePanel: capsule, capsuleContentHost: capsuleHost))
-            }
+        for id in plan.removed {
+            bar(with: id)?.teardown()
         }
+        let removedSet = Set(plan.removed)
+        bars.removeAll { removedSet.contains($0.id) }
+
+        for id in plan.kept {
+            if let screen = screenByID[id] { bar(with: id)?.adopt(screen: screen) }
+        }
+        for id in plan.added {
+            guard let screen = screenByID[id] else { continue }
+            let (dock, dockHost) = makeDockPanel(on: screen, screenID: id)
+            let (capsule, capsuleHost) = makeCapsulePanel(screenID: id)
+            bars.append(ScreenBar(id: id, screen: screen,
+                                  dockPanel: dock, dockContentHost: dockHost,
+                                  capsulePanel: capsule, capsuleContentHost: capsuleHost))
+        }
+
+        // 兜底：拓扑读不出任何屏时至少保住一条，否则用户会完全失去任务条。
+        if bars.isEmpty, let fallback = NSScreen.screens.first {
+            let id = ScreenGeometrySource.screenID(of: fallback) ?? ScreenID(rawValue: 0xFFFF_0000)
+            let (dock, dockHost) = makeDockPanel(on: fallback, screenID: id)
+            let (capsule, capsuleHost) = makeCapsulePanel(screenID: id)
+            bars.append(ScreenBar(id: id, screen: fallback,
+                                  dockPanel: dock, dockContentHost: dockHost,
+                                  capsulePanel: capsule, capsuleContentHost: capsuleHost))
+        }
+
         // 保持与系统显示器顺序一致，主屏在前。
         let order = Dictionary(uniqueKeysWithValues: topology.enumerated().map { ($0.element.id, $0.offset) })
         bars.sort { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
+
+        // 抽屉/弹窗的宿主屏可能刚被拔掉 —— 单例已在 screenParametersChanged 里关掉，这里补清引用。
+        if let host = drawerHostScreenID, bar(with: host) == nil { drawerHostScreenID = nil }
+        if let host = popupHostScreenID, bar(with: host) == nil { popupHostScreenID = nil }
     }
 
     /// 三面板同一个动画组提交,共用一条时间轴（Codex 二审 P2：避免各跑各的时间轴抖动）。
@@ -1551,16 +1629,28 @@ final class PanelCoordinator: NSObject {
         }
     }
 
+    /// 插拔显示器 / 改分辨率 / 改排列。
+    ///
+    /// 同步部分立刻做（拖拽载体和弹窗锚点的坐标已经作废，不能等）；建/拆面板那部分**防抖 150ms**
+    /// —— 这个通知在插拔和睡眠唤醒时是成串发的，不防抖就会把所有面板反复拆了又建。
+    /// 防抖用代次令牌而不是再加一个 Timer 字段，免得定时器数量继续膨胀。
     @objc private func screenParametersChanged() {
-        dragController?.cancelDrag()   // 切屏/分辨率变 → 取消进行中的跨面板拖动，免得载体留在旧屏坐标
-        cancelHoverSwitch()
+        dragController?.cancelDrag()   // 拓扑变 → 取消进行中的跨面板拖动，免得载体留在旧屏坐标
         closeFolderPopup()             // 屏幕参数变了,旧锚点坐标作废
         dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
         closeDrawer()                  // 抽屉锚在某块屏的胶囊上,那块屏可能已经没了
-        reconcileBars()                // 按新拓扑增删/换屏
-        guard !bars.isEmpty else { return }
-        relayout(animated: false)      // 切屏瞬时,不滑
-        reconcilePanelVisibility()
+
+        screenTopologyToken += 1
+        let token = screenTopologyToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.screenTopologyToken == token else { return }
+                self.reconcileBars()
+                guard !self.bars.isEmpty else { return }
+                self.relayout(animated: false)   // 拓扑变化瞬时,不滑
+                self.reconcilePanelVisibility()
+            }
+        }
     }
 
     // MARK: - Fullscreen Monitor
@@ -1591,56 +1681,70 @@ final class PanelCoordinator: NSObject {
 
     // MARK: - Sync CG fullscreen probe (main thread only, no AX)
 
-    private func checkFullscreenViaCGSync() -> Bool {
-        guard let panel = dockPanel else { return false }
-        let screen = panelCurrentScreen(panel: panel)
-        let screenCGFrame = Self.toCGRect(screen)
+    /// 返回当前处于全屏的显示器集合（每屏独立，owner 2026-07-27）。
+    /// 候选窗口用上游的共享探针按屏取，铺满判定在纯函数 `FullscreenScreenScan` 里。
+    private func checkFullscreenViaCGSync() -> Set<ScreenID> {
+        guard !bars.isEmpty else { return [] }
+        let displays = bars.map {
+            ScreenAttribution.ScreenGeometry(id: $0.id, quartzFrame: $0.quartzFrame, isPrimary: false)
+        }
         let ourPID = pid_t(ProcessInfo.processInfo.processIdentifier)
-        guard let candidate = WindowLiftCGWindowProbe.frontmostLargeWindow(
-            on: screenCGFrame,
-            excludingPID: ourPID
-        ) else { return false }
 
-        let cgBounds = candidate.quartzFrame
-        let t: CGFloat = 8
-        return abs(cgBounds.width  - screenCGFrame.width)  < t
-            && abs(cgBounds.height - screenCGFrame.height) < t
-            && abs(cgBounds.minX   - screenCGFrame.minX)   < t
-            && abs(cgBounds.minY   - screenCGFrame.minY)   < t
+        var candidates: [FullscreenScreenScan.Candidate] = []
+        for bar in bars {
+            guard let found = WindowLiftCGWindowProbe.frontmostLargeWindow(
+                on: bar.quartzFrame,
+                excludingPID: ourPID
+            ) else { continue }
+            candidates.append(FullscreenScreenScan.Candidate(quartzBounds: found.quartzFrame))
+        }
+        return FullscreenScreenScan.fullscreenDisplays(candidates: candidates, displays: displays)
     }
 
     // MARK: - Async AX fullscreen probe (secondary / fallback)
 
+    /// AX 兜底探针：对**每一块**屏各判一次（前台窗口只可能铺满其中一块，其余为 false）。
     private func triggerAsyncFullscreenCheck(pid explicitPID: pid_t? = nil) {
-        guard let panel = dockPanel else { return }
+        guard !bars.isEmpty else { return }
         // Convert to CG coords on main thread; AX kAXPositionAttribute also uses CG (top-left origin)
-        let screenCGFrame = Self.toCGRect(panelCurrentScreen(panel: panel))
+        let frames: [(ScreenID, CGRect)] = bars.map { ($0.id, $0.quartzFrame) }
         // NSWorkspace.frontmostApplication 是滞后缓存，可见性决策不可依赖（AGENTS 守则）——
         // 无显式 PID 时改用新鲜的 isActive 扫描
         let frontPID = explicitPID
             ?? NSWorkspace.shared.runningApplications.first(where: { $0.isActive })?.processIdentifier
         Task.detached { [weak self] in
-            let fullscreen = Self.detectFullscreenViaAX(pid: frontPID, screenCGFrame: screenCGFrame)
+            let fullscreen = Set(frames.compactMap { id, frame in
+                Self.detectFullscreenViaAX(pid: frontPID, screenCGFrame: frame) ? id : nil
+            })
             await MainActor.run { [weak self] in self?.applyFullscreenVisibility(fullscreen) }
         }
     }
 
     private func fullscreenReconcileIfNeeded() {
-        guard visibilityState.hideReasons.contains(.fullscreen) else { return }
+        guard bars.contains(where: { $0.isFullscreenHidden }) else { return }
         triggerAsyncFullscreenCheck()
     }
 
-    private func applyFullscreenVisibility(_ isFullscreen: Bool) {
-        if isFullscreen {
-            closeDrawer()
-            closeFolderPopup()
-            dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
-            visibilityState.setFullscreen(true)
-        } else {
-            visibilityState.setFullscreen(false)
+    /// 每屏独立套用全屏隐藏。抽屉/弹窗是全桌面单例，只有**它们的宿主屏**进入全屏才关。
+    ///
+    /// 全局 `visibilityState` 的 `.fullscreen` 现在表示「**所有**已接显示器都在全屏」，
+    /// 它只用来给自动隐藏的唤醒逻辑把关（单屏时与改造前逐位一致）。
+    private func applyFullscreenVisibility(_ fullscreenIDs: Set<ScreenID>) {
+        let changed = bars.contains { $0.isFullscreenHidden != fullscreenIDs.contains($0.id) }
+        for bar in bars { bar.isFullscreenHidden = fullscreenIDs.contains(bar.id) }
+
+        if !fullscreenIDs.isEmpty {
+                if let host = drawerHostScreenID, fullscreenIDs.contains(host) { closeDrawer() }
+            if let host = popupHostScreenID, fullscreenIDs.contains(host) { closeFolderPopup() }
         }
+        let allFullscreen = !bars.isEmpty && bars.allSatisfy { $0.isFullscreenHidden }
+        visibilityState.setFullscreen(allFullscreen)
+
         reconcilePanelVisibility()
-        logger.info("[fullscreen] active=\(isFullscreen, privacy: .public)")
+        if changed {
+            let ids = fullscreenIDs.map { String($0.rawValue) }.sorted().joined(separator: ",")
+            logger.info("[fullscreen] screens=\(ids, privacy: .public) all=\(allFullscreen, privacy: .public)")
+        }
     }
 
     private func panelCurrentScreen(panel: NSPanel) -> NSScreen {
@@ -1697,11 +1801,10 @@ final class PanelCoordinator: NSObject {
         )
     }
 
-    // MARK: - HoverSwitch Diagnostics
+    // MARK: - 底边探针与屏幕诊断
 
-    private let hoverLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "HoverSwitch")
+    private let hoverLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "ScreenBars")
     private static let hoverHotZone: CGFloat = 4.0
-    private static let hoverSwitchDwell: TimeInterval = 0.35   // 光标驻留热区 ≥ 350ms 才切换，路过不算
     private static let hoverVerboseLogging = false
     /// 底边唤醒/自动隐藏的复现诊断（owner 2026-07-16 issue #2 排查）。默认关闭；这里用纯 print()
     /// 而不是 Logger/os_log——沙箱环境读不了 `log show`/`log stream`，只有落到重定向文件里的
@@ -1713,8 +1816,6 @@ final class PanelCoordinator: NSObject {
     private static let menuHoverSuspensionEnabled = ProcessInfo.processInfo.environment["DOCK_MENU_HOVER_SUSPEND"] != "0"
     private var hoverLastScreenIndex: Int? = nil
     private var hoverLastInHotZone: Bool? = nil
-    private var hoverSwitchTimer: Timer?
-    private var hoverSwitchTargetScreen: NSScreen? = nil
 
     private func setupHoverDiagnostics() {
         if Self.hoverVerboseLogging { logScreenMap() }
@@ -1804,7 +1905,6 @@ final class PanelCoordinator: NSObject {
             NSEvent.removeMonitor(monitor)
             hoverGlobalMouseMonitor = nil
         }
-        cancelHoverSwitch()
         cancelEdgeWake()
     }
 
@@ -1837,7 +1937,7 @@ final class PanelCoordinator: NSObject {
             inHotZone = false
         }
 
-        handleBottomEdgeProbe(screen: curScreen, inHotZone: inHotZone)
+        updateEdgeWakeFromMouse(screen: curScreen, inHotZone: inHotZone)
         updateEdgeIdleTimerFromMouse()
 
         guard curScreenIdx != hoverLastScreenIndex || inHotZone != hoverLastInHotZone else { return }
@@ -1845,10 +1945,8 @@ final class PanelCoordinator: NSObject {
         hoverLastInHotZone = inHotZone
 
         if Self.hoverVerboseLogging {
-            let panelScreenIdx = dockPanel.map { p -> String in
-                let ps = panelCurrentScreen(panel: p)
-                return screens.firstIndex(of: ps).map { "\($0)" } ?? "?"
-            } ?? "nil"
+            let panelScreenIdx = bars.compactMap { bar in screens.firstIndex(of: bar.screen).map { "\($0)" } }
+                .joined(separator: ",")
             if let s = curScreen, let idx = curScreenIdx {
                 let f = s.frame
                 let vf = s.visibleFrame
@@ -1860,68 +1958,17 @@ final class PanelCoordinator: NSObject {
 
     }
 
-    private func cancelHoverSwitch() {
-        hoverSwitchTimer?.invalidate()
-        hoverSwitchTimer = nil
-        hoverSwitchTargetScreen = nil
-    }
-
-    private func commitHoverSwitch() {
-        hoverSwitchTimer = nil
-        guard let targetScreen = hoverSwitchTargetScreen, let panel = dockPanel else {
-            hoverSwitchTargetScreen = nil
-            return
-        }
-        hoverSwitchTargetScreen = nil
-        // Confirm the cursor is still on the target screen (it may have left within the last poll gap).
-        guard targetScreen.frame.contains(NSEvent.mouseLocation) else { return }
-        let panelScreen = panelCurrentScreen(panel: panel)
-        guard targetScreen != panelScreen else { return }   // panel already moved (e.g. screenParametersChanged)
-        let screens = NSScreen.screens
-        let fromIdx = screens.firstIndex(of: panelScreen).map { "\($0)" } ?? "?"
-        let toIdx = screens.firstIndex(of: targetScreen).map { "\($0)" } ?? "?"
-        let actualWidth = PanelGeometry.dockTargetFrame(
-            contentWidth: lastDesiredWidth,
-            on: Self.screenGeometry(targetScreen),
-            metrics: layoutMetrics
-        ).width - Self.shadowPadding * 2
-        closeFolderPopup()   // 切屏后旧锚点在旧屏,弹窗收起
-        dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
-        // 检查点 2：仍是「一条栏跟着光标走」，让它换一块屏。检查点 3 会整段删掉这条路径。
-        primaryBar?.adopt(screen: targetScreen)
-        layoutPanels(animated: false)
-        hoverLogger.info("switch toScreen=\(toIdx, privacy: .public) name=\(targetScreen.localizedName, privacy: .public) actualWidth=\(actualWidth, privacy: .public) fromScreen=\(fromIdx, privacy: .public)")
-        armEdgeWakeIfNeeded(on: targetScreen, requiresHotZone: false)
-    }
-
-    private func handleBottomEdgeProbe(screen: NSScreen?, inHotZone: Bool) {
-        guard let screen, let panel = dockPanel else {
-            cancelHoverSwitch()
+    /// 边缘唤醒探针（每屏常驻任务条，2026-07-27 起不再切屏）。
+    ///
+    /// 悬停停留 0.35s 把整条栏搬到另一块屏的那套机制（`commitHoverSwitch` /
+    /// `hoverSwitchTimer` / `hoverSwitchTargetScreen`）**已整段删除**——每块屏现在都常驻
+    /// 一条自己的栏，没有可搬的东西了。不要重新引入，也不要重新引入多显示器策略菜单。
+    /// 见 ADR `Docs/23-per-display-taskbar.md`。
+    private func updateEdgeWakeFromMouse(screen: NSScreen?, inHotZone: Bool) {
+        guard let screen else {
             cancelEdgeWake()
             return
         }
-
-        let panelScreen = panelCurrentScreen(panel: panel)
-        if screen != panelScreen {
-            cancelEdgeWake()
-            if hoverSwitchTargetScreen == screen {
-                return
-            }
-            if inHotZone {
-                hoverSwitchTimer?.invalidate()
-                hoverSwitchTargetScreen = screen
-                let timer = Timer(timeInterval: Self.hoverSwitchDwell, repeats: false) { [weak self] _ in
-                    Task { @MainActor [weak self] in self?.commitHoverSwitch() }
-                }
-                RunLoop.main.add(timer, forMode: .common)
-                hoverSwitchTimer = timer
-            } else {
-                cancelHoverSwitch()
-            }
-            return
-        }
-
-        cancelHoverSwitch()
         if inHotZone {
             armEdgeWakeIfNeeded(on: screen)
         } else if edgeWakeTargetScreen == screen, edgeWakeRequiresHotZone {
@@ -2024,10 +2071,7 @@ final class PanelCoordinator: NSObject {
         }
         edgeWakeTargetScreen = nil
         edgeWakeRequiresHotZone = true
-        if let bar = primaryBar, bar.screen != screen {
-            bar.adopt(screen: screen)
-            layoutPanels(animated: false)
-        }
+        // 每块屏都常驻一条栏了，唤醒只是纯粹的显隐翻转，不再需要把面板搬到 `screen` 上。
         visibilityState.setEdgeAutoHidden(false)
         reconcilePanelVisibility()
     }
@@ -2048,13 +2092,18 @@ final class PanelCoordinator: NSObject {
 
     private func applyPanelVisibility() {
         guard !isSuspendedForPermissionLoss else { return }
-        let shouldShow = visibilityState.isVisible
-        guard shouldShow != panelsAreVisible else { return }
-        panelsAreVisible = shouldShow
-        if Self.edgeHoverTraceEnabled { logEdgeHoverTrace(shouldShow: shouldShow) }
-        if shouldShow {
-            dockPanel?.orderFrontRegardless()
-            capsulePanel?.orderFrontRegardless()
+        // 全局部分（自动隐藏，owner 不用，保持全局同步）× 每屏部分（该屏是否全屏）。
+        let globalVisible = visibilityState.isVisible
+        for bar in bars {
+            bar.setOrderedIn(PanelVisibilityState.barIsVisible(global: globalVisible,
+                                                               screenFullscreen: bar.isFullscreenHidden))
+        }
+
+        let anyVisible = bars.contains { globalVisible && !$0.isFullscreenHidden }
+        guard anyVisible != panelsAreVisible else { return }
+        panelsAreVisible = anyVisible
+        if Self.edgeHoverTraceEnabled { logEdgeHoverTrace(shouldShow: anyVisible) }
+        if anyVisible {
             if drawerWantsOpen { drawerPanel?.orderFrontRegardless() }
         } else {
             if visibilityState.hideReasons.contains(.fullscreen) { closeDrawer() }
@@ -2097,8 +2146,9 @@ final class PanelCoordinator: NSObject {
 
     private func isMouseOutsideInteractivePanels() -> Bool {
         let mouse = NSEvent.mouseLocation
-        if let dock = dockPanel, dock.frame.contains(mouse) { return false }
-        if let capsule = capsulePanel, capsule.frame.contains(mouse) { return false }
+        for bar in bars where bar.dockPanel.frame.contains(mouse) || bar.capsulePanel.frame.contains(mouse) {
+            return false
+        }
         if drawerWantsOpen, let drawer = drawerPanel, drawer.frame.contains(mouse) { return false }
         if folderPopupWantsOpen, let popup = folderPopupPanel, popup.frame.contains(mouse) { return false }
         // 唤醒热区贯穿整条屏幕底边，比居中的任务条/胶囊窄矩形宽得多；停在热区内但任务条范围外

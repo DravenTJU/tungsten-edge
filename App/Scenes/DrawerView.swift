@@ -16,6 +16,9 @@ struct DrawerView: View {
     /// 点击 app 图标执行「唤出」或「启动」后回调。由 PanelCoordinator 注入，用于关闭抽屉。
     /// 「最小化（前台 → 收起）」不触发——抽屉保持打开。右键菜单、拖动操作同样不触发。
     var onPrimaryAction: () -> Void = {}
+    /// 抽屉当前挂在哪块屏（全桌面单例，PanelCoordinator 每次开抽屉时注入）。
+    /// 起拖时钉进 DragController，让投放判定锁在这块屏上。
+    var screenID: ScreenID?
 
     @EnvironmentObject var runtime: AppRuntime
     @EnvironmentObject var drawerStore: DrawerStore
@@ -239,7 +242,7 @@ struct DrawerView: View {
                                                   visualKind: .drawerIcon, canExternalDrop: true)
                         dragController.beginDrag(payload: payload,
                                                  startScreenLocation: NSEvent.mouseLocation,
-                                                 grabOffset: grab)
+                                                 grabOffset: grab, screenID: screenID)
                     }
             )
     }

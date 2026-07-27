@@ -237,6 +237,15 @@
 		A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */; };
 		A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
 		B00000000000000000009E01 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E00 /* ScreenAttribution.swift */; };
+		B00000000000000000009F01 /* ScreenSetDiff.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F00 /* ScreenSetDiff.swift */; };
+		B00000000000000000009F02 /* ScreenSetDiff.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F00 /* ScreenSetDiff.swift */; };
+		B00000000000000000009F11 /* FullscreenScreenScan.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F10 /* FullscreenScreenScan.swift */; };
+		B00000000000000000009F12 /* FullscreenScreenScan.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F10 /* FullscreenScreenScan.swift */; };
+		B00000000000000000009F21 /* SingletonPanelPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F20 /* SingletonPanelPlan.swift */; };
+		B00000000000000000009F22 /* SingletonPanelPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F20 /* SingletonPanelPlan.swift */; };
+		B00000000000000000009F31 /* StripScreenRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F30 /* StripScreenRouting.swift */; };
+		B00000000000000000009F32 /* StripScreenRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F30 /* StripScreenRouting.swift */; };
+		B00000000000000000009F41 /* PerDisplayTaskbarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F40 /* PerDisplayTaskbarTests.swift */; };
 		B00000000000000000009E02 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E00 /* ScreenAttribution.swift */; };
 		B00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E10 /* ScreenGeometrySource.swift */; };
 		B00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E30 /* ScreenAttributionTests.swift */; };
@@ -291,6 +300,11 @@
 		A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitorTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A00 /* WindowLiftAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidance.swift; sourceTree = "<group>"; };
 		B00000000000000000009E00 /* ScreenAttribution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttribution.swift; sourceTree = "<group>"; };
+		B00000000000000000009F00 /* ScreenSetDiff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenSetDiff.swift; sourceTree = "<group>"; };
+		B00000000000000000009F10 /* FullscreenScreenScan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullscreenScreenScan.swift; sourceTree = "<group>"; };
+		B00000000000000000009F20 /* SingletonPanelPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingletonPanelPlan.swift; sourceTree = "<group>"; };
+		B00000000000000000009F30 /* StripScreenRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripScreenRouting.swift; sourceTree = "<group>"; };
+		B00000000000000000009F40 /* PerDisplayTaskbarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerDisplayTaskbarTests.swift; sourceTree = "<group>"; };
 		B00000000000000000009E10 /* ScreenGeometrySource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGeometrySource.swift; sourceTree = "<group>"; };
 		B00000000000000000009E30 /* ScreenAttributionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttributionTests.swift; sourceTree = "<group>"; };
 		B00000000000000000009E40 /* ScreenStickinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenStickinessTests.swift; sourceTree = "<group>"; };
@@ -602,6 +616,10 @@
 				A00000000000000000000A100 /* MessagingZoneAdmission.swift */,
 				A00000000000000000009A00 /* WindowLiftAvoidance.swift */,
 				B00000000000000000009E00 /* ScreenAttribution.swift */,
+				B00000000000000000009F00 /* ScreenSetDiff.swift */,
+				B00000000000000000009F10 /* FullscreenScreenScan.swift */,
+				B00000000000000000009F20 /* SingletonPanelPlan.swift */,
+				B00000000000000000009F30 /* StripScreenRouting.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
 				A00000000000000000009E07 /* BuildProvenance.swift */,
 				D10000000000000000000006 /* AccessoryWindowPresentation.swift */,
@@ -863,6 +881,7 @@
 				A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */,
 				B00000000000000000009E30 /* ScreenAttributionTests.swift */,
 				B00000000000000000009E40 /* ScreenStickinessTests.swift */,
+				B00000000000000000009F40 /* PerDisplayTaskbarTests.swift */,
 				A00000000000000000009801 /* CGWindowSnapshotTests.swift */,
 				A00000000000000000009710 /* DragConversionPlanTests.swift */,
 				A00000000000000000000A110 /* MessagingZoneAdmissionTests.swift */,
@@ -1031,6 +1050,10 @@
 					A00000000000000000009A11 /* WindowLiftAvoidanceController.swift in Sources */,
 					A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */,
 					B00000000000000000009E01 /* ScreenAttribution.swift in Sources */,
+					B00000000000000000009F01 /* ScreenSetDiff.swift in Sources */,
+					B00000000000000000009F11 /* FullscreenScreenScan.swift in Sources */,
+					B00000000000000000009F21 /* SingletonPanelPlan.swift in Sources */,
+					B00000000000000000009F31 /* StripScreenRouting.swift in Sources */,
 					B00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */,
 				A00000000000000000009E1C /* BuildProvenance.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
@@ -1247,6 +1270,11 @@
 				B00000000000000000009E02 /* ScreenAttribution.swift in Sources */,
 				B00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */,
 				B00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */,
+				B00000000000000000009F02 /* ScreenSetDiff.swift in Sources */,
+				B00000000000000000009F12 /* FullscreenScreenScan.swift in Sources */,
+				B00000000000000000009F22 /* SingletonPanelPlan.swift in Sources */,
+				B00000000000000000009F32 /* StripScreenRouting.swift in Sources */,
+				B00000000000000000009F41 /* PerDisplayTaskbarTests.swift in Sources */,
 					A00000000000000000009811 /* CGWindowSnapshot.swift in Sources */,
 					A00000000000000000009812 /* CGWindowSnapshotTests.swift in Sources */,
 					A00000000000000000009702 /* DragConversionPlan.swift in Sources */,

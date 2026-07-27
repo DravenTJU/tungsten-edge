@@ -31,6 +31,12 @@ final class DragController: ObservableObject {
     @Published private(set) var draggingPayload: DragPayload?
     @Published private(set) var globalLocation: CGPoint = .zero
     @Published private(set) var isOverDropZone = false
+    /// 这次拖拽的**发起屏**（每屏常驻任务条，2026-07-27）。`beginDrag` 时钉死，整段拖拽不变。
+    ///
+    /// 跨屏拖卡片永不支持（owner 决策），所以仲裁权归发起屏：每个 `DockStripView` 实例都在
+    /// 共享同一个 DragController，不加这道闸的话，光标不在它身上的那条任务条会算出
+    /// 「已经拖出去了」并把发起屏正在进行的转换**当场回滚**。这不是可能，是必然。
+    @Published private(set) var activeScreenID: ScreenID?
 
     private(set) var grabOffset: CGSize = .zero
     private(set) var carrierScreenFrame: CGRect = .zero
@@ -133,10 +139,12 @@ final class DragController: ObservableObject {
 
     // MARK: - 起拖
 
-    func beginDrag(payload: DragPayload, startScreenLocation: CGPoint, grabOffset: CGSize) {
+    func beginDrag(payload: DragPayload, startScreenLocation: CGPoint, grabOffset: CGSize,
+                   screenID: ScreenID? = nil) {
         guard draggingPayload == nil else { return }
         self.grabOffset = grabOffset
         globalLocation = startScreenLocation
+        activeScreenID = screenID
         draggingPayload = payload
         refreshDropZone()
         showCarrier()
@@ -325,6 +333,7 @@ final class DragController: ObservableObject {
         folderDragZone = nil
         folderDropGeometry = nil
         draggingPayload = nil
+        activeScreenID = nil
         isOverDropZone = false
         removeMonitors()
         pollTimer?.invalidate(); pollTimer = nil
