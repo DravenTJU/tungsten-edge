@@ -209,6 +209,7 @@
 		A00000000000000000006012 /* DragController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000006010 /* DragController.swift */; };
 		A00000000000000000009741 /* DragCarrierView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009740 /* DragCarrierView.swift */; };
 		A00000000000000000009751 /* NonConstrainingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009750 /* NonConstrainingPanel.swift */; };
+		B00000000000000000009E51 /* ScreenBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E50 /* ScreenBar.swift */; };
 		A00000000000000000009752 /* NonConstrainingPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009750 /* NonConstrainingPanel.swift */; };
 		A00000000000000000000C01 /* ManualPanelHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000C00 /* ManualPanelHostTests.swift */; };
 		A00000000000000000009711 /* DragConversionPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009710 /* DragConversionPlanTests.swift */; };
@@ -300,6 +301,7 @@
 		A00000000000000000009700 /* DragConversionPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragConversionPlan.swift; sourceTree = "<group>"; };
 		A00000000000000000009740 /* DragCarrierView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragCarrierView.swift; sourceTree = "<group>"; };
 		A00000000000000000009750 /* NonConstrainingPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NonConstrainingPanel.swift; sourceTree = "<group>"; };
+		B00000000000000000009E50 /* ScreenBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenBar.swift; sourceTree = "<group>"; };
 		A00000000000000000000C00 /* ManualPanelHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualPanelHostTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009710 /* DragConversionPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragConversionPlanTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000A100 /* MessagingZoneAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagingZoneAdmission.swift; sourceTree = "<group>"; };
@@ -485,6 +487,7 @@
 				D10000000000000000000001 /* SettingsWindowController.swift */,
 				A0000000000000000000006C /* PanelCoordinator.swift */,
 				A00000000000000000009750 /* NonConstrainingPanel.swift */,
+				B00000000000000000009E50 /* ScreenBar.swift */,
 			);
 			path = Entry;
 			sourceTree = "<group>";
@@ -1017,6 +1020,7 @@
 					A00000000000000000006011 /* DragController.swift in Sources */,
 					A00000000000000000009741 /* DragCarrierView.swift in Sources */,
 					A00000000000000000009751 /* NonConstrainingPanel.swift in Sources */,
+					B00000000000000000009E51 /* ScreenBar.swift in Sources */,
 					A00000000000000000007011 /* DrawerOrderStore.swift in Sources */,
 					A00000000000000000008011 /* AppSettingsStore.swift in Sources */,
 					A00000000000000000009F01 /* GlobalHotKeyMonitor.swift in Sources */,
