@@ -19,12 +19,15 @@ final class AppRuntime: ObservableObject {
     /// app 生效：.accessory 菜单栏 app（Tailscale 类）本就无窗口，进程一出现即清除，
     /// 不被卡住——守住「在跑 = 进程在不在跑」的命门。窗口出现或 8s 超时即清除。
     @Published private(set) var launchingBundleIDs: Set<String> = []
+    /// 当前显示器拓扑（Quartz 坐标，`screens[0]` = 主屏）。视图据此把卡片投影到对应的任务条上。
+    @Published private(set) var screens: [ScreenAttribution.ScreenGeometry] = []
 
     private let tracker = AppTracker()
     private let intentPipeline = IntentPipeline(actionPlanning: LifecycleActionPlanner())
     private let actionExecutor = PlatformActionExecutor()
     private let permissionService = PermissionService()
     private var snapshotSubscription: AnyCancellable?
+    private var screensSubscription: AnyCancellable?
     private var feedbackTimer: Timer?
     private var startedAt: Date?
     var onToggleDrawer: (() -> Void)?
@@ -44,6 +47,13 @@ final class AppRuntime: ObservableObject {
                 self?.handleSnapshotUpdate(newSnapshot)
             }
 
+        screens = tracker.screens
+        screensSubscription = tracker.$screens
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newScreens in
+                self?.screens = newScreens
+            }
+
         feedbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tickFeedback() }
         }
@@ -54,6 +64,8 @@ final class AppRuntime: ObservableObject {
         tracker.stop()
         snapshotSubscription?.cancel()
         snapshotSubscription = nil
+        screensSubscription?.cancel()
+        screensSubscription = nil
         feedbackTimer?.invalidate()
         feedbackTimer = nil
     }
@@ -271,7 +283,7 @@ private struct TaskbarDebugReport: Codable {
             }
         )
 
-        self.schemaVersion = 1
+        self.schemaVersion = 2   // v2: 卡片增加 screenID（每屏常驻任务条）
         self.generatedAt = generatedAt
         self.trackedCount = records.count
         self.visibleCount = records.filter { $0.status != .disappeared }.count
@@ -313,6 +325,8 @@ private struct TaskbarDebugCard: Codable {
     let bundleIdentifier: String?
     let appID: String
     let bounds: TaskbarDebugRect?
+    /// 这张卡片被归到哪块显示器（`nil` = 算不出来 → 投影层锚定主屏）。取证用。
+    let screenID: UInt32?
     let duplicateKey: String
     let processAlive: Bool
     let liveAXTitleMatches: Int
@@ -347,6 +361,7 @@ private struct TaskbarDebugCard: Codable {
         self.bundleIdentifier = record.bundleIdentifier
         self.appID = record.appID.rawValue
         self.bounds = record.bounds.map(TaskbarDebugRect.init)
+        self.screenID = record.screenID?.rawValue
         self.duplicateKey = duplicateKey
         self.processAlive = processAlive
         self.liveAXTitleMatches = axTitleMatches.count

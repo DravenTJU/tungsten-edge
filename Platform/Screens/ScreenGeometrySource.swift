@@ -14,4 +14,24 @@ enum ScreenGeometrySource {
     static var primaryMaxY: CGFloat {
         NSScreen.screens.first?.frame.maxY ?? 0
     }
+
+    /// 当前拓扑，Quartz 坐标。`screens[0]` = 主屏。
+    ///
+    /// 读不到 `NSScreenNumber` 的屏（实测从未出现）会退化成一个按下标合成的 id，
+    /// 保证它仍然拿得到任务条，而不是被静默丢掉。
+    static func current() -> [ScreenAttribution.ScreenGeometry] {
+        let primaryMaxY = self.primaryMaxY
+        return NSScreen.screens.enumerated().map { index, screen in
+            ScreenAttribution.ScreenGeometry(
+                id: screenID(of: screen) ?? ScreenID(rawValue: 0xFFFF_0000 | UInt32(index)),
+                quartzFrame: ScreenAttribution.quartzRect(fromAppKit: screen.frame, primaryMaxY: primaryMaxY),
+                isPrimary: index == 0
+            )
+        }
+    }
+
+    static func screenID(of screen: NSScreen) -> ScreenID? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
+            .map { ScreenID(rawValue: $0.uint32Value) }
+    }
 }

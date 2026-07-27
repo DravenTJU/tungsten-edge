@@ -160,6 +160,7 @@
 		A00000000000000000009E02 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E00 /* ScreenAttribution.swift */; };
 		A00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E10 /* ScreenGeometrySource.swift */; };
 		A00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E30 /* ScreenAttributionTests.swift */; };
+		A00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E40 /* ScreenStickinessTests.swift */; };
 		A00000000000000000009A02 /* WindowZoomAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowZoomAvoidance.swift */; };
 		A00000000000000000009A11 /* WindowZoomAvoidanceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A10 /* WindowZoomAvoidanceController.swift */; };
 		A00000000000000000009D21 /* WindowZoomDemoController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009D20 /* WindowZoomDemoController.swift */; };
@@ -196,6 +197,7 @@
 		A00000000000000000009E00 /* ScreenAttribution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttribution.swift; sourceTree = "<group>"; };
 		A00000000000000000009E10 /* ScreenGeometrySource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGeometrySource.swift; sourceTree = "<group>"; };
 		A00000000000000000009E30 /* ScreenAttributionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttributionTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009E40 /* ScreenStickinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenStickinessTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A10 /* WindowZoomAvoidanceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomAvoidanceController.swift; sourceTree = "<group>"; };
 		A00000000000000000009D20 /* WindowZoomDemoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowZoomDemoController.swift; sourceTree = "<group>"; };
 		A00000000000000000009D30 /* WindowSlideAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowSlideAvoidance.swift; sourceTree = "<group>"; };
@@ -687,6 +689,7 @@
 				A00000000000000000009A20 /* WindowZoomAvoidanceTests.swift */,
 				A00000000000000000009D40 /* WindowSlideAvoidanceTests.swift */,
 				A00000000000000000009E30 /* ScreenAttributionTests.swift */,
+				A00000000000000000009E40 /* ScreenStickinessTests.swift */,
 			);
 			path = Unit;
 			sourceTree = "<group>";
@@ -970,6 +973,7 @@
 				A00000000000000000009A02 /* WindowZoomAvoidance.swift in Sources */,
 				A00000000000000000009E02 /* ScreenAttribution.swift in Sources */,
 				A00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */,
+				A00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */,
 				A00000000000000000009A21 /* WindowZoomAvoidanceTests.swift in Sources */,
 				A00000000000000000009D32 /* WindowSlideAvoidance.swift in Sources */,
 				A00000000000000000009D41 /* WindowSlideAvoidanceTests.swift in Sources */,

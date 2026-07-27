@@ -105,4 +105,110 @@ final class ScreenAttributionTests: XCTestCase {
         XCTAssertEqual(quartz.width, 0)
         XCTAssertEqual(quartz.height, 0)
     }
+
+    // MARK: - 归属（面积多数）
+
+    /// 主屏 1920x1080 在左，副屏 2560x1440 在右（Quartz 坐标，主屏左上角为原点）。
+    private static let primary = ScreenAttribution.ScreenGeometry(
+        id: ScreenID(rawValue: 1), quartzFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080), isPrimary: true)
+    private static let secondary = ScreenAttribution.ScreenGeometry(
+        id: ScreenID(rawValue: 2), quartzFrame: CGRect(x: 1920, y: -360, width: 2560, height: 1440), isPrimary: false)
+    private var twoScreens: [ScreenAttribution.ScreenGeometry] { [Self.primary, Self.secondary] }
+
+    func testWindowFullyInsideSecondaryReturnsThatScreen() {
+        let w = CGRect(x: 2200, y: 100, width: 800, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .resolved(ScreenID(rawValue: 2)))
+    }
+
+    func testWindowFullyInsidePrimaryReturnsPrimary() {
+        let w = CGRect(x: 100, y: 100, width: 800, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .resolved(ScreenID(rawValue: 1)))
+    }
+
+    /// 跨接缝 60/40：1000 宽的窗口，600 在主屏、400 在副屏 → 主屏。
+    func testStraddlingWindowGoesToMajorityAreaScreenPrimarySide() {
+        let w = CGRect(x: 1320, y: 100, width: 1000, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .resolved(ScreenID(rawValue: 1)))
+    }
+
+    /// 反方向 40/60 → 副屏。
+    func testStraddlingWindowGoesToMajorityAreaScreenSecondarySide() {
+        let w = CGRect(x: 1520, y: 100, width: 1000, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .resolved(ScreenID(rawValue: 2)))
+    }
+
+    /// 正好 50/50：必须确定性地落到主屏，否则窗口卡在接缝上时卡片会两屏来回跳。
+    func testExactFiftyFiftyTieBreaksToPrimary() {
+        let w = CGRect(x: 1420, y: 100, width: 1000, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .resolved(ScreenID(rawValue: 1)))
+    }
+
+    /// 两块都不是主屏时平局 → 取 rawValue 较小者（同样是为了确定性）。
+    func testTieAmongNonPrimariesBreaksToLowestDisplayID() {
+        let left = ScreenAttribution.ScreenGeometry(
+            id: ScreenID(rawValue: 7), quartzFrame: CGRect(x: 0, y: 0, width: 1000, height: 1000), isPrimary: false)
+        let right = ScreenAttribution.ScreenGeometry(
+            id: ScreenID(rawValue: 3), quartzFrame: CGRect(x: 1000, y: 0, width: 1000, height: 1000), isPrimary: false)
+        let w = CGRect(x: 500, y: 0, width: 1000, height: 100)
+
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: [left, right]), .resolved(ScreenID(rawValue: 3)))
+        // 顺序不影响结果。
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: [right, left]), .resolved(ScreenID(rawValue: 3)))
+    }
+
+    func testWindowEntirelyOutsideAllScreensIsUnresolved() {
+        let w = CGRect(x: 9000, y: 9000, width: 100, height: 100)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .unresolved)
+    }
+
+    /// AX 经典「停车位」：窗口被挪到 x = -32000。必须判定为无归属，由投影层降级到主屏。
+    func testParkedWindowAtLargeNegativeCoordinatesIsUnresolved() {
+        let w = CGRect(x: -32000, y: -32000, width: 800, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: twoScreens), .unresolved)
+    }
+
+    func testNilBoundsIsUnresolved() {
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: nil, screens: twoScreens), .unresolved)
+    }
+
+    func testZeroScreensIsUnresolved() {
+        let w = CGRect(x: 0, y: 0, width: 100, height: 100)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: []), .unresolved)
+    }
+
+    /// 退化矩形（宽或高 ≤ 0）没有面积可比，退化成原点包含判定。
+    func testDegenerateZeroSizeRectUsesOriginContainment() {
+        let onSecondary = CGRect(x: 2200, y: 100, width: 0, height: 0)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: onSecondary, screens: twoScreens), .resolved(ScreenID(rawValue: 2)))
+
+        let nowhere = CGRect(x: 9999, y: 9999, width: 0, height: 0)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: nowhere, screens: twoScreens), .unresolved)
+    }
+
+    /// 只贴着边缘、零面积重叠（窗口右边缘正好等于主屏左边缘）→ 不算归属。
+    func testEdgeTouchingWithZeroOverlapIsNotAMatch() {
+        let single = [Self.primary]
+        let w = CGRect(x: -800, y: 100, width: 800, height: 600)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: single), .unresolved)
+    }
+
+    /// 垂直堆叠布局（副屏在主屏上方，Quartz y 为负）。
+    func testVerticallyStackedLayout() {
+        let above = ScreenAttribution.ScreenGeometry(
+            id: ScreenID(rawValue: 5), quartzFrame: CGRect(x: 0, y: -1200, width: 1920, height: 1200), isPrimary: false)
+        let w = CGRect(x: 100, y: -900, width: 400, height: 300)
+        XCTAssertEqual(ScreenAttribution.attribute(quartzFrame: w, screens: [Self.primary, above]), .resolved(ScreenID(rawValue: 5)))
+    }
+
+    // MARK: - primaryID
+
+    func testPrimaryIDPrefersFlaggedScreen() {
+        XCTAssertEqual(ScreenAttribution.primaryID(twoScreens), ScreenID(rawValue: 1))
+        XCTAssertEqual(ScreenAttribution.primaryID([Self.secondary, Self.primary]), ScreenID(rawValue: 1))
+    }
+
+    func testPrimaryIDFallsBackToFirstWhenNoneFlagged() {
+        XCTAssertEqual(ScreenAttribution.primaryID([Self.secondary]), ScreenID(rawValue: 2))
+        XCTAssertNil(ScreenAttribution.primaryID([]))
+    }
 }

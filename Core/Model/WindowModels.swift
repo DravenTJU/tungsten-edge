@@ -16,6 +16,12 @@ struct WindowRecord: Hashable, Sendable {
     /// 并以它作为卡片的稳定 id（切标签 / 后台标签来去都不换身份证 → 卡片不跳不裂）。
     /// 默认空串 = 退化为按 `id` 各自独立（兼容未赋值路径）。
     var groupID: String
+    /// 这个窗口当前在哪块显示器上（每屏常驻任务条，2026-07-27）。
+    ///
+    /// **位置事实，不是身份**：它决定卡片渲染在哪条任务条上，绝不能当作卡片身份或持久化排序键
+    /// （那仍然是 `groupID` / 全局顺序表）。最小化/隐藏时粘住最后已知的屏，见 `ScreenAttribution.resolve`。
+    /// `nil` = 算不出来（无窗口兜底卡、或与所有屏零重叠）→ 投影层降级到主屏，绝不让卡片消失。
+    var screenID: ScreenID?
 
     init(
         id: WindowID,
@@ -27,7 +33,8 @@ struct WindowRecord: Hashable, Sendable {
         status: WindowStatus,
         cgWindowID: CGWindowID? = nil,
         isOnDesktop: Bool = false,
-        groupID: String = ""
+        groupID: String = "",
+        screenID: ScreenID? = nil
     ) {
         self.id = id
         self.appID = appID
@@ -39,6 +46,7 @@ struct WindowRecord: Hashable, Sendable {
         self.cgWindowID = cgWindowID
         self.isOnDesktop = isOnDesktop
         self.groupID = groupID.isEmpty ? id.rawValue : groupID
+        self.screenID = screenID
     }
 }
 
