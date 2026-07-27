@@ -28,6 +28,13 @@ struct StripItem: Hashable {
     let cgWindowID: CGWindowID?
     /// Current representative frame in screen coordinates, if available.
     let bounds: CGRect?
+    /// 这张卡片渲染在哪条任务条上（每屏常驻任务条，2026-07-27）。
+    ///
+    /// 与 `bounds` 是**两个不同的概念**，别用 `bounds` 现算：`bounds` 是"代表窗口"的位置，
+    /// 标签组切标签时代表会翻；而 `screenID` 是座位级、带粘滞历史的位置事实。
+    /// 和 `bounds` 一样是**当下的实时事实**，绝不能当卡片身份或持久化排序键。
+    /// `nil` = 算不出来 → 投影层降级到主屏，绝不让卡片消失。
+    let screenID: ScreenID?
     /// Current representative process id.
     let pid: Int32
     /// Window the显隐类动作 (toggle/activate/minimize/hide/newWindow) routes to, and the key
@@ -74,6 +81,7 @@ struct StripItem: Hashable {
         self.isOnDesktop = representative.isOnDesktop
         self.cgWindowID = representative.cgWindowID
         self.bounds = representative.bounds
+        self.screenID = representative.screenID
         self.pid = representative.pid
     }
 

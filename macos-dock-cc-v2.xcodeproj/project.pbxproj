@@ -235,6 +235,11 @@
 		A00000000000000000009E1A /* ScanAdmissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E05 /* ScanAdmissionDecision.swift */; };
 		A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */; };
 		A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
+		B00000000000000000009E01 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E00 /* ScreenAttribution.swift */; };
+		B00000000000000000009E02 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E00 /* ScreenAttribution.swift */; };
+		B00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E10 /* ScreenGeometrySource.swift */; };
+		B00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E30 /* ScreenAttributionTests.swift */; };
+		B00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E40 /* ScreenStickinessTests.swift */; };
 		A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
 		A00000000000000000009A11 /* WindowLiftAvoidanceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A10 /* WindowLiftAvoidanceController.swift */; };
 		A00000000000000000009A21 /* WindowLiftAvoidanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */; };
@@ -284,6 +289,10 @@
 		A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitor.swift; sourceTree = "<group>"; };
 		A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitorTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A00 /* WindowLiftAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidance.swift; sourceTree = "<group>"; };
+		B00000000000000000009E00 /* ScreenAttribution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttribution.swift; sourceTree = "<group>"; };
+		B00000000000000000009E10 /* ScreenGeometrySource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGeometrySource.swift; sourceTree = "<group>"; };
+		B00000000000000000009E30 /* ScreenAttributionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenAttributionTests.swift; sourceTree = "<group>"; };
+		B00000000000000000009E40 /* ScreenStickinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenStickinessTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A10 /* WindowLiftAvoidanceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidanceController.swift; sourceTree = "<group>"; };
 		A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidanceTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009800 /* CGWindowSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGWindowSnapshot.swift; sourceTree = "<group>"; };
@@ -589,6 +598,7 @@
 				A00000000000000000009700 /* DragConversionPlan.swift */,
 				A00000000000000000000A100 /* MessagingZoneAdmission.swift */,
 				A00000000000000000009A00 /* WindowLiftAvoidance.swift */,
+				B00000000000000000009E00 /* ScreenAttribution.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
 				A00000000000000000009E07 /* BuildProvenance.swift */,
 				D10000000000000000000006 /* AccessoryWindowPresentation.swift */,
@@ -677,8 +687,17 @@
 				A00000000000000000000033 /* Finder */,
 				A00000000000000000000034 /* Permissions */,
 				A00000000000000000000070 /* AppTracking */,
+				B00000000000000000009E20 /* Screens */,
 			);
 			path = Platform;
+			sourceTree = "<group>";
+		};
+		B00000000000000000009E20 /* Screens */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000009E10 /* ScreenGeometrySource.swift */,
+			);
+			path = Screens;
 			sourceTree = "<group>";
 		};
 		A00000000000000000000070 /* AppTracking */ = {
@@ -839,6 +858,8 @@
 				A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */,
 				A00000000000000000009E08 /* BuildProvenanceTests.swift */,
 				A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */,
+				B00000000000000000009E30 /* ScreenAttributionTests.swift */,
+				B00000000000000000009E40 /* ScreenStickinessTests.swift */,
 				A00000000000000000009801 /* CGWindowSnapshotTests.swift */,
 				A00000000000000000009710 /* DragConversionPlanTests.swift */,
 				A00000000000000000000A110 /* MessagingZoneAdmissionTests.swift */,
@@ -1005,6 +1026,8 @@
 					A00000000000000000009081 /* PanelGeometry.swift in Sources */,
 					A00000000000000000009A11 /* WindowLiftAvoidanceController.swift in Sources */,
 					A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */,
+					B00000000000000000009E01 /* ScreenAttribution.swift in Sources */,
+					B00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */,
 				A00000000000000000009E1C /* BuildProvenance.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
 					A00000000000000000009C01 /* UpdateChecker.swift in Sources */,
@@ -1217,6 +1240,9 @@
 					A00000000000000000009E1E /* BuildProvenanceTests.swift in Sources */,
 					A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */,
 					A00000000000000000009A21 /* WindowLiftAvoidanceTests.swift in Sources */,
+				B00000000000000000009E02 /* ScreenAttribution.swift in Sources */,
+				B00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */,
+				B00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */,
 					A00000000000000000009811 /* CGWindowSnapshot.swift in Sources */,
 					A00000000000000000009812 /* CGWindowSnapshotTests.swift in Sources */,
 					A00000000000000000009702 /* DragConversionPlan.swift in Sources */,

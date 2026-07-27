@@ -50,6 +50,10 @@ struct WindowEntry {
     /// 竞态」两类折叠失效（分裂 bug 根治）。防 cgID 复用误折叠：真销毁(tombstone)时全局清除、
     /// 每轮对账与 CG 全列表求交集；拽出(tear-out)被赶走的标签【不】记入（它是独立窗口了）。
     var formerCgIDs: Set<CGWindowID> = []
+    /// 这个座位当前归属的显示器（每屏常驻任务条，2026-07-27）。最小化 / 应用隐藏 / AX 读不到
+    /// bounds 时【保持不变】（粘在最后已知的屏，恢复时卡片不跳）。显示器拔掉后该 id 不在拓扑里，
+    /// `ScreenAttribution.resolve` 会丢弃它 → 投影层降级到主屏。
+    var screenID: ScreenID? = nil
 }
 
 @MainActor
@@ -60,6 +64,8 @@ final class AppTracker: ObservableObject {
     private var appOrder: [pid_t] = []
     private var observers: [pid_t: AppWindowObserver] = [:]
     private var workspaceObservers: [NSObjectProtocol] = []
+    /// 显示器拓扑变化观察者（走 `NotificationCenter.default`，与 workspace 中心分开）。
+    private var screenObserver: NSObjectProtocol?
     private var reconcileTimer: Timer?
     private var frontmostPollTimer: Timer?
     private var isScanningCandidates = false
@@ -91,13 +97,25 @@ final class AppTracker: ObservableObject {
     private var shadowPoolDiagnosticsByPID: [pid_t: ShadowPoolDiagnosticState] = [:]
     private var heldLogDeduplicator = InventoryPhantomHeldDeduplicator()
 
+    /// 当前显示器拓扑（Quartz 坐标）。由 `screensProvider` 读入并缓存，
+    /// 在启动与 `didChangeScreenParametersNotification` 时刷新。
+    @Published private(set) var screens: [ScreenAttribution.ScreenGeometry] = []
+    private let screensProvider: @MainActor () -> [ScreenAttribution.ScreenGeometry]
+    /// `[screen]` 诊断的去重记忆：座位 token → 上次打印过的状态，避免同一个卡死状态每 5 秒刷屏。
+    private var screenLogMemo: [String: String] = [:]
+    /// 抖动检测：座位 token → 最近若干次归属变化的 (时刻, 屏 id)。
+    private var screenFlipHistory: [String: [(at: Date, id: ScreenID)]] = [:]
+
     private let reader = AXWindowReader()
     private let windowEligibility = AppTrackerWindowEligibility()
     private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "app-tracker")
     private let inventoryLog: WindowInventoryAnomalyLog
 
-    init(inventoryLog: WindowInventoryAnomalyLog = WindowInventoryAnomalyLog()) {
+    init(inventoryLog: WindowInventoryAnomalyLog = WindowInventoryAnomalyLog(),
+         screensProvider: @escaping @MainActor () -> [ScreenAttribution.ScreenGeometry] = { ScreenGeometrySource.current() }) {
         self.inventoryLog = inventoryLog
+        self.screensProvider = screensProvider
+        self.screens = screensProvider()
     }
 
     func start() {
@@ -132,6 +150,10 @@ final class AppTracker: ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver(obs)
         }
         workspaceObservers.removeAll()
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+            self.screenObserver = nil
+        }
         for obs in observers.values { obs.stop() }
         observers.removeAll()
         apps.removeAll()
@@ -247,12 +269,22 @@ final class AppTracker: ObservableObject {
         // history = 座位延续时继承的「曾任活跃标签」集合。与 CG 全列表求交集：真关掉的标签
         // 随之出列，防 cgID 复用后被误折叠进旧座位。wasEverVisible = 座位此前是否可见过（延续时
         // 继承）；本次以 min=false 现身也算——幽灵座位永远凑不齐这个标记（自愈判定的头号门槛）。
+        // previousScreen = 座位延续时继承的上一次显示器归属。最小化 / 应用隐藏时它压过本轮
+        // 新算出来的值（不少应用在最小化期间报垃圾坐标），拔屏后失效值由 resolve 丢弃。
         func make(token: String, _ s: AXWindowSnapshot, history: Set<CGWindowID> = [],
-                  wasEverVisible: Bool = false) -> WindowEntry {
-            WindowEntry(cgWindowID: s.cgWindowID!, token: token, title: s.title ?? "",
-                        bounds: s.bounds, isMinimized: s.isMinimized, isFocused: s.isFocusedWindow,
-                        everSeenVisible: wasEverVisible || !s.isMinimized,
-                        formerCgIDs: history.subtracting([s.cgWindowID!]).intersection(cgIDs))
+                  wasEverVisible: Bool = false, previousScreen: ScreenID? = nil) -> WindowEntry {
+            let fresh = ScreenAttribution.attribute(quartzFrame: s.bounds, screens: screens)
+            let screen = ScreenAttribution.resolve(
+                fresh: fresh, previous: previousScreen,
+                isPinned: s.isMinimized || app.isHidden, screens: screens)
+            logScreenAnomalies(token: token, pid: pid, cgID: s.cgWindowID,
+                               bounds: s.bounds, fresh: fresh, resolved: screen,
+                               isPinned: s.isMinimized || app.isHidden)
+            return WindowEntry(cgWindowID: s.cgWindowID!, token: token, title: s.title ?? "",
+                               bounds: s.bounds, isMinimized: s.isMinimized, isFocused: s.isFocusedWindow,
+                               everSeenVisible: wasEverVisible || !s.isMinimized,
+                               formerCgIDs: history.subtracting([s.cgWindowID!]).intersection(cgIDs),
+                               screenID: screen)
         }
         // 某 frame 当前有几个老座位认领（>1 = 窗口重叠歧义，切标签顶替时跳过，保守不误并）
         func seatsAtFrame(_ key: String) -> Int {
@@ -286,14 +318,14 @@ final class AppTracker: ObservableObject {
                    }), let yc = Y.cgWindowID {
                     // 座位留旧 frame、顶替成 Y，token 不变。X 被赶出成独立窗口 → 【不】记入历史
                     place(make(token: seat.token, Y, history: seat.formerCgIDs,
-                               wasEverVisible: seat.everSeenVisible))
+                               wasEverVisible: seat.everSeenVisible, previousScreen: seat.screenID))
                     usedEligible.insert(yc)
                     tearOutCgIDs.insert(X)
                     // X 不标 used → 落到 Pass B 成新座位（被赶出去的当前标签）
                 } else {
-                    // 普通：跟着 X（frame 可移动）
+                    // 普通：跟着 X（frame 可移动，跨屏也在这里被重新归属）
                     place(make(token: seat.token, snapX, history: seat.formerCgIDs,
-                               wasEverVisible: seat.everSeenVisible))
+                               wasEverVisible: seat.everSeenVisible, previousScreen: seat.screenID))
                     usedEligible.insert(X)
                 }
             } else {
@@ -315,7 +347,7 @@ final class AppTracker: ObservableObject {
                     var history = seat.formerCgIDs
                     if !isTombstoned(X) { history.insert(X) }
                     place(make(token: seat.token, Y, history: history,
-                               wasEverVisible: seat.everSeenVisible))
+                               wasEverVisible: seat.everSeenVisible, previousScreen: seat.screenID))
                     usedEligible.insert(yc)
                 } else if cgIDs.contains(X) && !isTombstoned(X) {
                     // X 离开 AX 但仍在 CG。区分「最小化/隐藏(保座位)」vs「关窗后窗口赖在 CG(该删)」:
@@ -376,6 +408,9 @@ final class AppTracker: ObservableObject {
                             }
                             seat.isFocused = false
                             seat.absentSince = nil
+                            // 原样留座位 → screenID 天然粘住最后已知的屏，别在这里"顺手"重算：
+                            // 窗口此刻不在 AX 里，根本没有可信的新坐标。拔屏后的失效清理由
+                            // refreshScreens() 负责（这条分支不经过 make/resolve）。
                             place(seat)                   // 真最小化(Safari 离开 AX)/ 应用隐藏 → 保座位
                         }
                     } else if let since = seat.absentSince, now.timeIntervalSince(since) >= Self.closedReapGrace {
@@ -682,11 +717,115 @@ final class AppTracker: ObservableObject {
     }
 
     /// 座位集合的轻量指纹（顺序 + token + 标题 + 最小化/焦点），用来判断这次对账有没有实际变化。
+    /// 座位集合的轻量指纹（顺序 + token + 标题 + 最小化/焦点 + **所在显示器**），用来判断这次
+    /// 对账有没有实际变化。
+    ///
+    /// 显示器那一项是每屏常驻任务条的**核心修复**（2026-07-27）：`reconcileSeats` 本来就已经
+    /// 读到并写入了新 bounds，只是指纹不含位置，于是「窗口从 A 屏拖到 B 屏」这种纯移动被判定为
+    /// 「没变化」而永不发布快照——卡片会赖在错的屏上。
+    ///
+    /// 放的是**派生出来的屏幕键**，不是原始 bounds：屏幕键每跨屏才变一次，天然防抖；
+    /// 塞原始坐标会让窗口在同屏内挪一下就每轮重建快照。**别改成 bounds。**
     private func seatSignature(_ app: AppEntry) -> String {
         app.windowOrder.map { id -> String in
             let e = app.windowsByID[id]
-            return "\(id):\(e?.token ?? ""):\(e?.title ?? ""):\(e?.isMinimized == true ? 1 : 0):\(e?.isFocused == true ? 1 : 0)"
+            let screen = e?.screenID.map { String($0.rawValue) } ?? "-"
+            return "\(id):\(e?.token ?? ""):\(e?.title ?? ""):\(e?.isMinimized == true ? 1 : 0):\(e?.isFocused == true ? 1 : 0):\(screen)"
         }.joined(separator: "|")
+    }
+
+    // MARK: - 显示器拓扑
+
+    /// 刷新拓扑并清理指向已拔掉显示器的座位归属。
+    ///
+    /// 清理是必须的：最小化/隐藏保留分支走的是 `place(seat)`（原样留座位，不经过 `make`），
+    /// 所以那些座位的 `screenID` 不会自动过 `ScreenAttribution.resolve` 的失效检查。
+    /// 返回 true 表示确实有座位被清理过（调用方据此决定要不要重建快照）。
+    @discardableResult
+    func refreshScreens() -> Bool {
+        screens = screensProvider()
+        let live = Set(screens.map(\.id))
+        var orphaned: [String] = []
+
+        for pid in appOrder {
+            guard var app = apps[pid] else { continue }
+            var touched = false
+            for cgID in app.windowOrder {
+                guard var seat = app.windowsByID[cgID], let sid = seat.screenID, !live.contains(sid) else { continue }
+                orphaned.append(seat.token)
+                seat.screenID = nil
+                app.windowsByID[cgID] = seat
+                touched = true
+            }
+            if touched { apps[pid] = app }
+        }
+
+        // 拓扑变更本身不打印（单屏开机是常态）；只有确实有座位失效时才留取证。
+        if !orphaned.isEmpty {
+            let desc = screens.map { "\($0.id.rawValue)\($0.isPrimary ? "*" : ""):\(Int($0.quartzFrame.minX)),\(Int($0.quartzFrame.minY)) \(Int($0.quartzFrame.width))x\(Int($0.quartzFrame.height))" }
+                .joined(separator: " ")
+            print("[screen] 拓扑变更 screens=[\(desc)] 失效座位=\(orphaned.count) (\(orphaned.joined(separator: ",")))")
+        }
+        // 诊断记忆按活座位收敛，避免应用来去之后无限增长。
+        let liveTokens = Set(apps.values.flatMap { app in app.windowOrder.compactMap { app.windowsByID[$0]?.token } })
+        screenLogMemo = screenLogMemo.filter { liveTokens.contains($0.key) }
+        screenFlipHistory = screenFlipHistory.filter { liveTokens.contains($0.key) }
+        return !orphaned.isEmpty
+    }
+
+    /// `[screen]` 诊断（常驻，正常路径零输出）。三条异常路径：
+    /// A 无归属（窗口有真实 bounds 却与所有屏零重叠）、B 粘滞覆盖（本轮算出 B 屏但保留了 A 屏）、
+    /// D 抖动（座位在两块屏之间来回跳，说明窗口正好卡在接缝上）。
+    private func logScreenAnomalies(
+        token: String,
+        pid: pid_t,
+        cgID: CGWindowID?,
+        bounds: CGRect?,
+        fresh: ScreenAttribution.Attribution,
+        resolved: ScreenID?,
+        isPinned: Bool
+    ) {
+        guard !screens.isEmpty else { return }
+        func desc(_ b: CGRect?) -> String {
+            b.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "nil"
+        }
+
+        // A：有 bounds 却算不出归属
+        if bounds != nil, fresh == .unresolved {
+            let key = "A:\(resolved?.rawValue.description ?? "-")"
+            if screenLogMemo[token] != key {
+                screenLogMemo[token] = key
+                let map = screens.map { "\($0.id.rawValue):\(desc($0.quartzFrame))" }.joined(separator: " ")
+                print("[screen] 无归属 pid=\(pid) cg=\(cgID.map(String.init) ?? "-") token=\(token) b=[\(desc(bounds))] screens=[\(map)] 落到=\(resolved?.rawValue.description ?? "nil→主屏")")
+            }
+            return
+        }
+
+        // B：粘滞压过了本轮算出的新归属
+        if isPinned, case .resolved(let freshID) = fresh, let resolved, resolved != freshID {
+            let key = "B:\(resolved.rawValue)->\(freshID.rawValue)"
+            if screenLogMemo[token] != key {
+                screenLogMemo[token] = key
+                print("[screen] 粘滞 pid=\(pid) token=\(token) 保留=\(resolved.rawValue) 本轮=\(freshID.rawValue) b=[\(desc(bounds))]")
+            }
+            return
+        }
+
+        screenLogMemo[token] = "ok:\(resolved?.rawValue.description ?? "-")"
+
+        // D：抖动（2 秒内翻转 ≥3 次）
+        guard let resolved else { return }
+        let now = Date()
+        var history = (screenFlipHistory[token] ?? []).filter { now.timeIntervalSince($0.at) <= 2.0 }
+        if history.last?.id != resolved {
+            history.append((at: now, id: resolved))
+            if history.count >= 4 {
+                let seq = history.map { String($0.id.rawValue) }.joined(separator: ",")
+                print("[screen] 抖动 token=\(token) flips=\(history.count)/2.0s 序列=\(seq) b=[\(desc(bounds))]")
+                history = [history[history.count - 1]]
+            }
+        }
+        screenFlipHistory[token] = history
     }
 
     // MARK: - Seed
@@ -847,6 +986,20 @@ final class AppTracker: ObservableObject {
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             Task { @MainActor [weak self] in self?.handleAppActivated(app) }
         })
+
+        // 显示器插拔 / 分辨率 / 排列变化。注意这条走 NotificationCenter.default（不是 workspace 中心）。
+        // 系统会把消失显示器上的窗口搬到主屏，所以刷新拓扑之后要立刻全量对账，
+        // 让卡片下一帧就迁过去，而不是等最长 5 秒的定时对账。
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.refreshScreens()
+                self.reconcile()
+            }
+        }
     }
 
     // MARK: - Workspace Handlers
@@ -1365,7 +1518,8 @@ final class AppTracker: ObservableObject {
                     bounds: nil,
                     status: app.isHidden ? .hidden : .inactive,
                     isOnDesktop: pid == frontmostPID,
-                    groupID: id.rawValue   // 兜底卡自成一组，永不并入别人
+                    groupID: id.rawValue,   // 兜底卡自成一组，永不并入别人
+                    screenID: nil           // 无窗口 = 不属于任何屏 → 投影层锚定主屏
                 )
                 orderedWindowIDs.append(id)
             } else {
@@ -1385,7 +1539,8 @@ final class AppTracker: ObservableObject {
                         status: windowStatus(isHidden: app.isHidden, isMinimized: seat.isMinimized, isFocused: seat.isFocused, pid: pid, frontmostPID: frontmostPID),
                         cgWindowID: cgID,
                         isOnDesktop: !seat.isMinimized && !app.isHidden,
-                        groupID: seat.token
+                        groupID: seat.token,
+                        screenID: seat.screenID
                     )
                     orderedWindowIDs.append(id)
                 }
