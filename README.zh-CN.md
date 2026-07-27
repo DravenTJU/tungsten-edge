@@ -121,6 +121,20 @@ brew install --cask tungsten-edge
 
 系统 Dock 自己的唤醒行为继续在系统设置里调整；钨极状态栏菜单只负责隐藏或显示它。
 
+## 社区
+
+钨极认可并感谢 [LINUX DO](https://linux.do/) 社区提供的交流与反馈。
+
+## 许可证
+
+Copyright (C) 2026 Moonbai Studio.
+
+钨极采用 GNU General Public License v3.0 或更高版本（`GPL-3.0-or-later`）授权，详见 [LICENSE](LICENSE)。
+
+应用源码、构建脚本和完成构建所需的资产均公开在本仓库中。代码签名证书、公证凭据、账号凭据和其他秘密信息不属于源码，也不会提交到仓库。
+
+该许可证覆盖源码，但不要求官方签名公证版或相关服务必须免费提供。
+
 ---
 
 ## 开发者

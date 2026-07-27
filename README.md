@@ -131,6 +131,20 @@ This is an early public build (v0.3). Known limitations and what's next:
 - **Chinese-only UI** → localization is on the roadmap. A Chinese version of this README is available at [README.zh-CN.md](README.zh-CN.md).
 - Feedback and issues are very welcome.
 
+## Community
+
+Tungsten Edge recognizes and thanks the [LINUX DO](https://linux.do/) community for providing a place for discussion and feedback.
+
+## License
+
+Copyright (C) 2026 Moonbai Studio.
+
+Tungsten Edge is licensed under the GNU General Public License v3.0 or later (`GPL-3.0-or-later`). See [LICENSE](LICENSE).
+
+The application source code, build scripts, and assets required to build it are published in this repository. Code-signing certificates, notarization credentials, account credentials, and other secrets are not source code and are never included.
+
+The license covers the source code; it does not require official signed/notarized binaries or related services to be provided free of charge.
+
 ---
 
 ## Developers
