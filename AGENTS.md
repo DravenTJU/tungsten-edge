@@ -81,6 +81,7 @@
 - `DragController` remains the single authority for monitors, carrier `NSPanel`, coordinate conversion, drop decisions, and idempotent teardown.
 - Carrier position and cross-panel hit testing use `NSEvent.mouseLocation` screen coordinates.
 - Timers used during drag must be added to `.common` run-loop mode.
+- Cross-screen chip drag is **never** supported. `DragController.activeScreenID` is fixed at `beginDrag` to the origin screen and owns arbitration for the whole drag; every `DockStripView` instance must short-circuit its `onChange(globalLocation)` fan-out, its `messagingZoneIDs` cancel watcher, and its capsule/strip drop highlights unless it owns the drag — otherwise the off-cursor screen reverts the in-flight conversion and N capsules glow at once. Drop zones and spring-load hit tests read the **origin** bar's target frames; the carrier panel stays single-screen by policy, not by accident.
 - Drawer is app-centric: one bundleID = one `LauncherChip`. Drawer click is app-level frontmost->hide, otherwise unhide/open; not-running->launch.
 - Drawer two zones are partitioned by process state from `RunningApplicationStore`: upper zone = running (bright + white dot), lower zone = not-running (gray, no dot). `isLaunchingWithoutWindow` gating still applies.
 - `DrawerOrderStore` is the persistent ordering layer keyed by bundleID and synced over `drawerStore - keptAppStore`.
@@ -120,7 +121,7 @@
 
 ## Pinned Folders And External File Drop
 
-- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]` (kept-app placeholders live in the live zone, not the messaging zone); empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
+- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]` (kept-app placeholders live in the live zone, not the messaging zone); empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty. Zone contents are screen-filtered per **Per-Display Taskbar** below; ordering runs on the global list first, filtering second.
 - Folder chips drag via `DragController` source `.folder`; keep it isolated from strip/drawer stash semantics.
 - Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
@@ -142,10 +143,10 @@
 
 - Shelf stores references only, newest first. Never move/copy files implicitly. `ShelfStore.prune()` runs when opening the shelf popup.
 - Shelf chip is a fixed head of the pinned-folder zone: click + drop target only, never draggable and never a `DragController` source.
-- Folder and shelf share one popup panel through `PanelCoordinator.PopupContent`; preserve the one-popup-at-a-time invariant.
+- Folder and shelf share one popup panel through `PanelCoordinator.PopupContent`; preserve the one-popup-at-a-time invariant. The invariant is **desktop-wide**: exactly one popup and one drawer across all displays. Same content + same screen = close; anything else = move/switch in place (pure `SingletonPanelPlan.decide`).
 - Popup lifecycle stays in `PanelCoordinator`: plain `NSView` container, pinned `NSHostingView`, alpha fade, local/global left-mouse monitors.
 - `dismissFolderPopupIfOutside` must exclude the anchor chip rect with tolerance so clicking the same chip does not close-then-reopen.
-- Popup closes on dock target-frame change, screen-parameter change, hover screen switch, fullscreen, or panel hide. Do not chase an animating anchor.
+- Popup closes on its **host screen's** dock target-frame change, screen-parameter change, that screen's fullscreen, or panel hide. A width change on an unrelated screen must not close it. Do not chase an animating anchor.
 - Popup layout mirrors native Stacks: no header row; Finder open is the grid tail cell; drill-in uses a floating back chip.
 - Popup width is derived from `FolderPopupStyle`: column count = clamp(cell count, 3, 8). It is not measured feedback.
 - Grid-cell menus are hand-built via `FileItemMenuBuilder`; no Quick Look, Get Info, or rename in the nonactivating panel.
@@ -168,12 +169,16 @@
 - Drawer window content must be a plain `NSView` container with the `NSHostingView` pinned inside.
 - Placement panels use `NonConstrainingPanel`, not plain `NSPanel`.
 - Bottom-anchored panels use `screen.frame` for bottom Y and horizontal clamp; reserve `visibleFrame` for drawer top/menu-bar height cap.
-- Hover screen switching uses dwell, not instant edge-trigger.
-- Fullscreen hide hides capsule and closes drawer. `FullscreenWindowClassifier.isFullscreen` remains the single AX predicate, gated to real `AXWindow` roles.
+- **Per-display taskbar (owner 2026-07-27; ADR `Docs/23-per-display-taskbar.md`).** One resident bar on **every** attached display, one `ScreenBar` per `CGDirectDisplayID`. The dwell hover-switch (`commitHoverSwitch` / `handleBottomEdgeProbe`'s cross-screen branch / `hoverSwitchTimer`) is deleted — do not reintroduce it. Screen identity is `NSScreen.deviceDescription["NSScreenNumber"]` → `ScreenID`; nothing per-screen is persisted, so no display UUID is needed. "Primary" always means the menu-bar display `NSScreen.screens[0]`, **never** `NSScreen.main` (which tracks the key window — that bug shifted every Quartz conversion on mixed-height rigs and is fixed via `ScreenAttribution.quartzRect`).
+- Zone nature decides placement: TOOL zones (shelf + pinned folders + drawer capsule) render on every screen with globally shared contents; APP/WINDOW chips follow their window's screen (majority-area overlap, `ScreenAttribution`); chips with no window (Finder's persistent chip, exited kept placeholders, not-running messaging apps) live on the **primary display only**. Minimized/hidden seats stick to their last known screen (`WindowEntry.screenID` + `ScreenAttribution.resolve`, session-only; the min/hidden retention branch reuses the seat verbatim — do not "helpfully" recompute it there).
+- Chip order is ONE global table (`StripOrderStore` stays single) that each screen filters. **Never feed `StripOrderStore.reconciled` / `sync` / `reorder` a screen-filtered id list** — absent ids hit the 5s grace and get dropped from the global order, and `reorder` persists the truncated result to UserDefaults. Keep `partitioned()` / `liveOrderIDs` / `liveAppKeys` global and filter only in `stripEntries`, after ordering.
+- `WindowRecord.screenID` / `StripItem.screenID` are current placement facts, never chip identity or persistent order keys. The `[screen]` prints (无归属 / 粘滞 / 拓扑变更 / 抖动) are permanent anomaly-path diagnostics with zero output on normal paths — same standing as `[tabfold]` / `[tabheal]`, do not remove them as 诊断遗留.
+- The derived screen key belongs in `AppTracker.seatSignature`, **not** raw bounds: a screen key changes once per boundary crossing (naturally debounced), raw bounds would republish the snapshot on every poll tick during a drag. `kAXWindowMovedNotification` is deliberately NOT registered — it floods during drags and the 0.5s frontmost poll already covers the only case that matters (you must click a window to drag it).
+- Fullscreen hiding is **per-screen**: a fullscreen app on display A hides only A's dock + capsule, and closes the drawer/popup only if their host screen is A. `FullscreenWindowClassifier.isFullscreen` remains the single AX predicate, gated to real `AXWindow` roles; screen bucketing lives in pure `FullscreenScreenScan`. The global `.fullscreen` visibility reason now means "every attached screen is fullscreen" and exists only to gate auto-hide arming. Edge auto-hide keeps **global** semantics (owner does not use it) — do not build per-screen auto-hide.
 
 ## Settings And Compatibility
 
-- Do not reintroduce the multi-display strategy menu; behavior is fixed to dwell hover-switch.
+- Do not reintroduce the multi-display strategy menu. Behavior is fixed to one resident bar per display (see **Per-Display Taskbar**).
 - Native Dock slider applies only on commit and remains non-sandbox gated.
 - Tungsten Edge slider controls wake delay, not hide delay. `不唤醒` still allows hide but disables bottom-edge wake.
 - Hidden-state bottom-edge detection must keep probing while the dock panel is hidden.

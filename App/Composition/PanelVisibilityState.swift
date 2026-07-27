@@ -78,6 +78,19 @@ struct PanelVisibilityState: Equatable {
             hideReasons.remove(reason)
         }
     }
+
+    /// 一条任务条最终可不可见 = 全局部分 × 该屏部分（每屏常驻任务条，2026-07-27）。
+    ///
+    /// - 全局部分：边缘自动隐藏。owner 不使用自动隐藏，所以刻意保持**全局同步**语义，
+    ///   不做按屏自动隐藏。
+    /// - 每屏部分：这块屏上有没有应用处于全屏。副屏全屏只藏副屏那条（owner 决策）。
+    ///
+    /// 注意全局 `hideReasons` 里的 `.fullscreen` 现在表示「**所有**已接显示器都在全屏」，
+    /// 它只用来给 `EdgeAutoHideRuntimeRules` 的唤醒/隐藏门槛把关；单屏时两者等价，
+    /// 行为与改造前逐位一致。
+    static func barIsVisible(global: Bool, screenFullscreen: Bool) -> Bool {
+        global && !screenFullscreen
+    }
 }
 
 @MainActor

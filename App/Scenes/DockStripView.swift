@@ -52,6 +52,10 @@ struct DockStripView: View {
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
 
+    /// 这条任务条属于哪块显示器（每屏常驻任务条，2026-07-27）。
+    /// `nil` = 不做按屏过滤（单面板/测试路径），行为与改造前逐位一致。
+    var screenID: ScreenID?
+
     /// 文件夹 chip 点击 → 弹窗 toggle（path + chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
     var onFolderPopupToggle: (String, CGRect) -> Void = { _, _ in }
     /// 中转格点击 → 中转弹窗 toggle（chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
@@ -230,14 +234,20 @@ struct DockStripView: View {
     private var stripEntries: [StripEntry] {
         let (messaging, liveNatural) = partitioned()
         let appKeyOf = liveAppKeys
+        // ⚠️ 喂给顺序层的永远是**全局并集**（liveNatural / liveOrderIDs / liveAppKeys 都不过滤）。
+        // 见 `liveOrderIDs` 的注释：喂过滤后的列表会让别的屏上的卡片被判为消失并从全局顺序表里删掉。
         let order = stripOrderStore.reconciled(current: liveNatural.map(\.id), appKeyOf: appKeyOf,
                                                headPreferred: Set(messagingStore.bundleIDs))
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let orderedLive = order.compactMap { byID[$0] }
+        // 排序完成之后，才按屏过滤出这条任务条要显示的部分。
+        let orderedLive = order.compactMap { byID[$0] }.filter { showsOnThisScreen($0) }
         // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
         // 中转格固定在文件夹区头位 → 文件夹区恒非空,分隔线恒在。
         let folderEntries = [StripEntry.shelf] + pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
-        var zones = [messaging, folderEntries, orderedLive].filter { !$0.isEmpty }
+        // 工具类分区（暂存架 + 固定文件夹）每块屏都有，内容全局共享，不过滤。
+        // 消息区是应用类，要过滤——副屏上消息区常常是空的，空区连同相邻分隔线一起省略（已有规则）。
+        let visibleMessaging = messaging.filter { showsOnThisScreen($0) }
+        var zones = [visibleMessaging, folderEntries, orderedLive].filter { !$0.isEmpty }
         guard !zones.isEmpty else { return [] }
         var out = zones.removeFirst()
         for (index, zone) in zones.enumerated() {
@@ -249,6 +259,42 @@ struct DockStripView: View {
 
     private var stripLayoutKeys: [StripLayoutKey] {
         stripEntries.map(StripLayoutKey.init)
+    }
+
+    // MARK: - 按屏过滤
+
+    private var primaryScreenID: ScreenID? { ScreenAttribution.primaryID(runtime.screens) }
+
+    /// 这条任务条是不是当前拖拽的发起方。`screenID == nil`（单面板/测试）时恒为 true。
+    private var ownsDrag: Bool {
+        guard let screenID else { return true }
+        guard let active = dragController.activeScreenID else { return true }
+        return active == screenID
+    }
+
+    /// 条目性质 → 归属策略。工具类不走这里（它们每块屏都渲染）。
+    private func placement(of entry: StripEntry) -> StripScreenRouting.Placement {
+        switch entry {
+        case let .window(item):
+            // app-* 兜底卡本身就是"这个应用没有真窗口"的表示 → 锚定主屏。
+            return item.isAppLevelFallback ? .anchoredPrimary : .followsWindow(item.screenID)
+        case .keptApp:
+            return .anchoredPrimary
+        case let .messagingApp(_, mainWindow):
+            guard let mainWindow else { return .anchoredPrimary }
+            return .followsWindow(mainWindow.screenID)
+        case .pinnedFolder, .shelf, .divider:
+            return .followsWindow(nil)   // 不会被调用；工具类分区不过滤
+        }
+    }
+
+    private func showsOnThisScreen(_ entry: StripEntry) -> Bool {
+        switch entry {
+        case .pinnedFolder, .shelf, .divider:
+            return true
+        default:
+            return StripScreenRouting.showsOn(placement(of: entry), screen: screenID, primary: primaryScreenID)
+        }
     }
 
     var body: some View {
@@ -319,7 +365,12 @@ struct DockStripView: View {
         // 抽屉图标拖到任务条上：进任务条区即转正成窗口卡、跟光标整块实时让位（镜像 DrawerView 的全局鼠标驱动）。
         // 消息区的重排/释放同样由全局鼠标驱动——重排会挪动被拖 chip,SwiftUI 会取消原手势,
         // 不能依赖 chip 自己的 .onChanged（同抽屉教训,owner 2026-06-22 / Codex 评审 P1-4）。
+        // 多屏仲裁（每屏常驻任务条，2026-07-27）：N 条任务条共享同一个 DragController，
+        // 不加闸的话，光标不在自己身上的那条会算出「已经拖出去了」并把发起屏正在进行的转换
+        // **当场回滚**；`updateFolderDragZone` 也会 N 个实例抢写同一份几何。
+        // 仲裁权归**发起屏**，整段拖拽不变（跨屏拖卡片永不支持）。
         .onChange(of: dragController.globalLocation) { _ in
+            guard ownsDrag else { return }
             updateDrawerToMessagingRelease()
             updateDrawerToStripConvert()
             updateStripBlockReorder()
@@ -329,7 +380,10 @@ struct DockStripView: View {
         }
         // 拖动中消息 chip 的 app 从消息区消失（退出/外部 unmark/快照丢）→ 取消拖动，免得空位卡死。
         // 收纳预览（messagingToDrawer）不误判：转换后载荷来源已是 .drawer（Codex 评审 P2-5）。
+        // 同样要加闸：`messagingZoneIDs` 现在是按屏过滤的，副屏消息区为空时这个条件恒真，
+        // 不加闸会取消掉主屏发起的拖动。
         .onChange(of: messagingZoneIDs) { ids in
+            guard ownsDrag else { return }
             if let p = dragController.draggingPayload, p.source == .messaging, !ids.contains(p.bundleID) {
                 dragController.cancelDrag()
             }
@@ -394,6 +448,7 @@ struct DockStripView: View {
     /// 消息成员的抽屉图标不点亮——它的落点只有消息区范围（释放时 chip 物化就是反馈），
     /// 整条高亮会暗示"哪里都能放"（Codex 评审 P1-3 的落点边界）。
     private var stripHighlighted: Bool {
+        guard ownsDrag else { return false }   // 多屏：只有发起屏那条亮，否则 N 条一起亮
         if dragController.isOverUnstashZone,
            let p = dragController.draggingPayload, !messagingStore.contains(p.bundleID) { return true }
         if case .pin = externalDropTarget { return true }
@@ -692,7 +747,7 @@ struct DockStripView: View {
                                                           canExternalDrop: DragController.canStash(item))
                                 dragController.beginDrag(payload: payload,
                                                          startScreenLocation: NSEvent.mouseLocation,
-                                                         grabOffset: grab)
+                                                         grabOffset: grab, screenID: screenID)
                             }
                             if !dragController.isOverDropZone {
                                 reorderTarget(at: value.location, dragging: item.id)
@@ -727,7 +782,7 @@ struct DockStripView: View {
                                                       canExternalDrop: true)
                             dragController.beginDrag(payload: payload,
                                                      startScreenLocation: NSEvent.mouseLocation,
-                                                     grabOffset: grab)
+                                                     grabOffset: grab, screenID: screenID)
                         }
                         .onEnded { _ in dragController.endDrag() }
                 )
@@ -756,7 +811,7 @@ struct DockStripView: View {
                                                           canExternalDrop: true)
                                 dragController.beginDrag(payload: payload,
                                                          startScreenLocation: NSEvent.mouseLocation,
-                                                         grabOffset: grab)
+                                                         grabOffset: grab, screenID: screenID)
                             }
                             if !dragController.isOverDropZone {
                                 reorderTarget(at: value.location, dragging: chipID)
@@ -792,7 +847,7 @@ struct DockStripView: View {
                                                           canExternalDrop: false)
                                 dragController.beginDrag(payload: payload,
                                                          startScreenLocation: NSEvent.mouseLocation,
-                                                         grabOffset: grab)
+                                                         grabOffset: grab, screenID: screenID)
                             }
                             folderReorderTarget(at: value.location, dragging: path)
                             updateFolderDragZone()
@@ -964,6 +1019,9 @@ struct DockStripView: View {
     /// 手势（重击/中键）命中回调：全局屏幕坐标 → strip 空间 → 命中固定文件夹 / 具体访达窗口 → 预览。
     /// 命中不到任何可预览 chip 就静默忽略。
     private func handleGesturePreview(atScreen global: CGPoint) {
+        // 每个 DockStripView 实例各装一套 pressure/中键监视器，N 块屏就是 N 次回调。
+        // 命中测试本来也会失败，但先短路能省掉 N 遍 `StripItem.items(from:)` 全量投影。
+        guard stripRootScreenRect.contains(global) else { return }
         guard let p = stripPoint(from: global) else { return }
         for path in pinnedFolderStore.folderPaths {
             let entryID = StripEntry.pinnedFolder(path: path).id
@@ -1332,7 +1390,16 @@ struct DrawerCapsuleButton: View {
     @EnvironmentObject var keptAppStore: KeptAppStore
     /// 拖卡进抽屉的投放反馈：手指压在投放区时胶囊放大 + 高亮描边。
     @EnvironmentObject var dragController: DragController
+    /// 这颗胶囊属于哪块屏（每屏一颗）。nil = 单面板/测试路径。
+    var screenID: ScreenID?
     let action: () -> Void
+
+    /// 投放反馈只在**发起屏**那颗胶囊上给，否则 N 颗一起放大发光。
+    private var showsStashFeedback: Bool {
+        guard dragController.isOverStashZone else { return false }
+        guard let screenID, let active = dragController.activeScreenID else { return true }
+        return active == screenID
+    }
 
     private static let iconSize: CGFloat = 10
     private static let gridSpacing: CGFloat = 5
@@ -1376,10 +1443,10 @@ struct DrawerCapsuleButton: View {
                 .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
         }
         // 拖卡悬到胶囊上：**微微发光 + 极轻微放大**（去掉原来生硬的白圈描边,owner 2026-06-21）。
-        .scaleEffect(dragController.isOverStashZone ? 1.04 : 1.0)
-        .shadow(color: .white.opacity(dragController.isOverStashZone ? 0.18 : 0),
-                radius: dragController.isOverStashZone ? 5 : 0)
-        .animation(.easeInOut(duration: DrawerAnimation.duration), value: dragController.isOverStashZone)
+        .scaleEffect(showsStashFeedback ? 1.04 : 1.0)
+        .shadow(color: .white.opacity(showsStashFeedback ? 0.18 : 0),
+                radius: showsStashFeedback ? 5 : 0)
+        .animation(.easeInOut(duration: DrawerAnimation.duration), value: showsStashFeedback)
         .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
         .padding(PanelCoordinator.shadowPadding)
         .contentShape(Rectangle())

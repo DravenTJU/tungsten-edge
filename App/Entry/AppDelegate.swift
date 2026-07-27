@@ -161,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             demo.start()
         } else {
             let zoomAvoidance = WindowZoomAvoidanceController(
-                contextProvider: { [weak coordinator] in coordinator?.windowZoomAvoidanceContext() }
+                contextProvider: { [weak coordinator] frame in coordinator?.windowZoomAvoidanceContext(windowQuartzFrame: frame) }
             )
             windowZoomAvoidanceController = zoomAvoidance
             zoomAvoidance.start()

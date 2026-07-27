@@ -39,7 +39,7 @@ private struct WindowZoomTarget {
 
 @MainActor
 final class WindowZoomAvoidanceController {
-    private let contextProvider: () -> WindowZoomAvoidanceContext?
+    private let contextProvider: (CGRect) -> WindowZoomAvoidanceContext?
     private let reader = AXWindowReader()
     private var globalMouseMonitor: Any?
     private var terminationObserver: NSObjectProtocol?
@@ -49,7 +49,7 @@ final class WindowZoomAvoidanceController {
     private var pollTasks: [WindowZoomAvoidanceKey: Task<Void, Never>] = [:]
     private var nextGeneration: UInt64 = 0
 
-    init(contextProvider: @escaping () -> WindowZoomAvoidanceContext?) {
+    init(contextProvider: @escaping (CGRect) -> WindowZoomAvoidanceContext?) {
         self.contextProvider = contextProvider
     }
 
@@ -115,9 +115,10 @@ final class WindowZoomAvoidanceController {
     }
 
     private func begin(candidate: WindowZoomClickCandidate) {
+        // 多屏：按**被点窗口自己所在的那块屏**取上下文（每块屏都有一条栏，都要避让）。
+        // 归属判定在 PanelCoordinator 里用 ScreenAttribution 做，这里不再自己比一遍。
         guard candidate.key.pid != pid_t(ProcessInfo.processInfo.processIdentifier),
-              let context = contextProvider(),
-              Self.mostlyBelongs(candidate.quartzFrame, to: context.screenQuartzFrame) else {
+              let context = contextProvider(candidate.quartzFrame) else {
             return
         }
 
