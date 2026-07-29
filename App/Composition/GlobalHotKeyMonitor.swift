@@ -23,17 +23,6 @@ struct GlobalHotKeyShortcut {
         signature: 0x5467_4567, // 'TgEg'
         id: 1
     )
-
-    /// ⌥⌘D：系统 Dock 自带的「自动隐藏」全局快捷键。仅用于菜单展示与去重匹配，
-    /// 永不做 Carbon 注册——真正的热键由 macOS 自己持有并处理。
-    static let nativeDockAutoHide = GlobalHotKeyShortcut(
-        keyCode: UInt32(kVK_ANSI_D),
-        carbonModifiers: UInt32(optionKey | cmdKey),
-        keyEquivalent: "d",
-        keyEquivalentModifierMask: [.option, .command],
-        signature: 0x5467_4567, // 'TgEg'
-        id: 2
-    )
 }
 
 /// 热键事件，backend 已解包成纯值，便于单测构造。

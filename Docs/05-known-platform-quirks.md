@@ -26,7 +26,7 @@
 - 登录项状态不是二态。除了 `unsupported` / `off` / `on`，还必须处理 `requiresApproval`：注册成功但仍需用户到系统设置批准，这不是失败。
 - 本机 SDK 已确认 `SMAppService.openSystemSettingsLoginItems()` 标注 `macOS 13.0+`，仍必须用 `#available(macOS 13.0, *)` 包住，因为项目最低部署目标是 macOS 12。
 - 沙箱 App 不能直接修改系统 Dock 偏好或重启 Dock。`NativeDockPreferencesService` 必须通过 `SecTaskCopyValueForEntitlement("com.apple.security.app-sandbox")` 检测沙箱；沙箱为 true 时不要执行 `defaults write com.apple.dock` 或 `killall Dock`。
-- 当前系统 Dock 写入面向非沙箱 GitHub/Homebrew 分发。菜单里的系统 Dock 滑杆只在鼠标松手且数值实际变化后应用，不能在拖动过程中连续写系统 Dock 或连续重启 Dock。
+- 当前系统 Dock 写入面向非沙箱 GitHub/Homebrew 分发。「彻底隐藏」写 `autohide=true` + `autohide-delay=999` 后重启 Dock；「显示」写 `autohide=false`、恢复首次隐藏前持久化的精确 delay（原本缺键则删除）后重启 Dock。恢复快照在完整成功前不得清除，多步失败后必须保留供重试。
 - 「打开系统 Dock 设置…」只通过 `NSWorkspace.open` 跳转，不写偏好、不重启 Dock，因此不走写入路径的沙箱门控。首选 `x-apple.systempreferences:com.apple.preference.dock`；失败后打开 `/System/Library/PreferencePanes/Dock.prefPane`，由 macOS 12 的 System Preferences 或新版 System Settings 接管。不要为此启动 `/usr/bin/open` 子进程。
 
 ## 面板几何与 `visibleFrame`（2026-07-01）

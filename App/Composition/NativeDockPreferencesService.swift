@@ -14,7 +14,8 @@ struct NativeDockAutohideState: Equatable {
 @MainActor
 protocol NativeDockPreferencesServicing {
     var isAvailable: Bool { get }
-    func setAutohideEnabled(_ enabled: Bool) throws
+    var hasPendingRestore: Bool { get }
+    func setCompletelyHidden(_ hidden: Bool) throws
     /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
     /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
     func currentAutohideState() -> NativeDockAutohideState?
@@ -37,22 +38,28 @@ struct SandboxEnvironment {
 
 @MainActor
 final class NativeDockPreferencesService: NativeDockPreferencesServicing {
+    static let completeHideDelay = 999.0
+
     private let sandbox: SandboxEnvironment
     private let runner: ShellRunner
     private let autohideReader: @MainActor () -> NativeDockAutohideState?
     private let urlOpener: URLOpener
+    private let defaults: UserDefaults
 
     init(sandbox: SandboxEnvironment = .current,
          runner: @escaping ShellRunner = NativeDockPreferencesService.runProcess,
          autohideReader: @escaping @MainActor () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem,
-         urlOpener: @escaping URLOpener = NativeDockPreferencesService.openURL) {
+         urlOpener: @escaping URLOpener = NativeDockPreferencesService.openURL,
+         defaults: UserDefaults = .standard) {
         self.sandbox = sandbox
         self.runner = runner
         self.autohideReader = autohideReader
         self.urlOpener = urlOpener
+        self.defaults = defaults
     }
 
     var isAvailable: Bool { !sandbox.isSandboxed }
+    var hasPendingRestore: Bool { defaults.bool(forKey: RestoreKeys.captured) }
 
     func currentAutohideState() -> NativeDockAutohideState? {
         guard isAvailable else { return nil }
@@ -126,18 +133,78 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         return NativeDockAutohideState(enabled: enabled, delay: delay)
     }
 
-    func setAutohideEnabled(_ enabled: Bool) throws {
+    func setCompletelyHidden(_ hidden: Bool) throws {
         guard isAvailable else { throw NativeDockPreferencesError.sandboxed }
-        for command in Self.commands(autohideEnabled: enabled) {
+
+        let commands: [(executable: String, arguments: [String])]
+        if hidden {
+            captureRestoreDelayIfNeeded(currentState: currentAutohideState())
+            commands = Self.completeHideCommands()
+        } else {
+            commands = Self.showCommands(restoreDelay: capturedRestoreDelay())
+        }
+
+        for command in commands {
             try runner(command.executable, command.arguments)
+        }
+        if !hidden { clearCapturedRestoreDelay() }
+    }
+
+    static func isCompletelyHidden(_ state: NativeDockAutohideState?) -> Bool {
+        guard let state, state.enabled, let delay = state.delay else { return false }
+        return delay >= completeHideDelay
+    }
+
+    static func completeHideCommands() -> [(executable: String, arguments: [String])] {
+        [
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "true"]),
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide-delay", "-float", String(Int(completeHideDelay))]),
+            ("/usr/bin/killall", ["Dock"]),
+        ]
+    }
+
+    static func showCommands(restoreDelay: Double?) -> [(executable: String, arguments: [String])] {
+        var commands: [(executable: String, arguments: [String])] = [
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "false"]),
+        ]
+        if let restoreDelay {
+            commands.append((
+                "/usr/bin/defaults",
+                ["write", "com.apple.dock", "autohide-delay", "-float", String(restoreDelay)]
+            ))
+        } else {
+            commands.append(("/usr/bin/defaults", ["delete", "com.apple.dock", "autohide-delay"]))
+        }
+        commands.append(("/usr/bin/killall", ["Dock"]))
+        return commands
+    }
+
+    private func captureRestoreDelayIfNeeded(currentState: NativeDockAutohideState?) {
+        guard !hasPendingRestore else { return }
+        defaults.set(true, forKey: RestoreKeys.captured)
+        if let delay = currentState?.delay {
+            defaults.set(true, forKey: RestoreKeys.hadDelay)
+            defaults.set(delay, forKey: RestoreKeys.delay)
+        } else {
+            defaults.set(false, forKey: RestoreKeys.hadDelay)
+            defaults.removeObject(forKey: RestoreKeys.delay)
         }
     }
 
-    static func commands(autohideEnabled enabled: Bool) -> [(executable: String, arguments: [String])] {
-        return [
-            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", enabled ? "true" : "false"]),
-            ("/usr/bin/killall", ["Dock"]),
-        ]
+    private func capturedRestoreDelay() -> Double? {
+        guard defaults.bool(forKey: RestoreKeys.captured),
+              defaults.bool(forKey: RestoreKeys.hadDelay),
+              let number = defaults.object(forKey: RestoreKeys.delay) as? NSNumber,
+              number.doubleValue.isFinite else {
+            return nil
+        }
+        return number.doubleValue
+    }
+
+    private func clearCapturedRestoreDelay() {
+        defaults.removeObject(forKey: RestoreKeys.captured)
+        defaults.removeObject(forKey: RestoreKeys.hadDelay)
+        defaults.removeObject(forKey: RestoreKeys.delay)
     }
 
     private static func runProcess(executable: String, arguments: [String]) throws {
@@ -167,6 +234,12 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         let result = number.doubleValue
         return result.isFinite ? result : nil
     }
+}
+
+private enum RestoreKeys {
+    static let captured = "com.tungsten.edge.nativeDock.restoreDelay.captured"
+    static let hadDelay = "com.tungsten.edge.nativeDock.restoreDelay.present"
+    static let delay = "com.tungsten.edge.nativeDock.restoreDelay.value"
 }
 
 enum NativeDockPreferencesError: LocalizedError {

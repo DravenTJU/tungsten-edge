@@ -20,18 +20,41 @@ enum AutoHideToggleMenuModel {
     }
 
     /// 系统 Dock 状态优先读系统真值；读不到时用本地镜像兜底。
-    static func nativeIsAutoHideEnabled(liveAutohide: Bool?, storeDelay: Double) -> Bool {
-        liveAutohide ?? isAutoHideEnabled(delay: storeDelay)
+    static func nativeIsCompletelyHidden(
+        liveState: NativeDockAutohideState?,
+        hasPendingRestore: Bool,
+        storeDelay: Double
+    ) -> Bool {
+        if hasPendingRestore { return true }
+        if let liveState { return NativeDockPreferencesService.isCompletelyHidden(liveState) }
+        return storeDelay >= NativeDockPreferencesService.completeHideDelay
     }
 
-    static func nativeTitle(liveAutohide: Bool?, storeDelay: Double) -> String {
-        nativeIsAutoHideEnabled(liveAutohide: liveAutohide, storeDelay: storeDelay)
+    static func nativeTitle(
+        liveState: NativeDockAutohideState?,
+        hasPendingRestore: Bool,
+        storeDelay: Double
+    ) -> String {
+        nativeIsCompletelyHidden(
+            liveState: liveState,
+            hasPendingRestore: hasPendingRestore,
+            storeDelay: storeDelay
+        )
             ? "显示系统 Dock"
+            // 标题按 owner 决定保持简短；命令实际执行的仍是彻底隐藏（含关闭底边唤醒）。
             : "隐藏系统 Dock"
     }
 
-    static func nativeToggleTargetEnabled(liveAutohide: Bool?, storeDelay: Double) -> Bool {
-        !nativeIsAutoHideEnabled(liveAutohide: liveAutohide, storeDelay: storeDelay)
+    static func nativeToggleTargetHidden(
+        liveState: NativeDockAutohideState?,
+        hasPendingRestore: Bool,
+        storeDelay: Double
+    ) -> Bool {
+        !nativeIsCompletelyHidden(
+            liveState: liveState,
+            hasPendingRestore: hasPendingRestore,
+            storeDelay: storeDelay
+        )
     }
 
     /// autohide-delay 键不存在时系统 Dock 的实际默认延迟。
@@ -60,26 +83,11 @@ enum AutoHideToggleMenuModel {
     }
 
     /// keyEquivalent 提示只在对应全局热键真实生效时显示。
-    /// 系统 Dock 行传 true：⌥⌘D 由 macOS 持有，恒生效，无注册环节。
     static func keyEquivalentPresentation(isHotKeyRegistered: Bool,
                                           shortcut: GlobalHotKeyShortcut) -> (key: String, mask: NSEvent.ModifierFlags) {
         isHotKeyRegistered ? (shortcut.keyEquivalent, shortcut.keyEquivalentModifierMask) : ("", [])
     }
 
-    /// 系统 ⌥⌘D 在菜单追踪期间仍由 macOS 处理；菜单 action 只跳过这一条精确 keyDown。
-    /// 鼠标、Return、辅助功能触发和其它键盘事件仍执行菜单 action。
-    /// 使用物理 D 键码而非字符，避免非美式布局下字符与系统快捷键脱节。
-    static func shouldSkipNativeDockMenuAction(eventType: NSEvent.EventType?,
-                                               keyCode: UInt16?,
-                                               modifierFlags: NSEvent.ModifierFlags,
-                                               isSystemShortcutAvailable: Bool) -> Bool {
-        guard isSystemShortcutAvailable,
-              eventType == .keyDown else { return false }
-        let shortcut = GlobalHotKeyShortcut.nativeDockAutoHide
-        guard let keyCode, UInt32(keyCode) == shortcut.keyCode else { return false }
-        let normalized = modifierFlags.intersection([.command, .option, .control, .shift])
-        return normalized == shortcut.keyEquivalentModifierMask
-    }
 }
 
 @MainActor
@@ -173,13 +181,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         nativeDockToggleItem.target = self
-        // ⌥⌘D 由 macOS 持有、恒生效，提示恒显示。
-        let nativeHint = AutoHideToggleMenuModel.keyEquivalentPresentation(
-            isHotKeyRegistered: true,
-            shortcut: .nativeDockAutoHide
-        )
-        nativeDockToggleItem.keyEquivalent = nativeHint.key
-        nativeDockToggleItem.keyEquivalentModifierMask = nativeHint.mask
+        // ⌥⌘D 只能切普通自动隐藏，不能表达「彻底隐藏」，因此不再作为本命令快捷键展示。
+        nativeDockToggleItem.keyEquivalent = ""
+        nativeDockToggleItem.keyEquivalentModifierMask = []
         menu.addItem(nativeDockToggleItem)
         openNativeDockSettingsItem.target = self
         menu.addItem(openNativeDockSettingsItem)
@@ -272,9 +276,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func refreshNativeDockToggleItem(storeDelay: Double) {
-        let live = nativeDockPreferencesService.currentAutohideState()?.enabled
+        let live = nativeDockPreferencesService.currentAutohideState()
         nativeDockToggleItem.title = AutoHideToggleMenuModel.nativeTitle(
-            liveAutohide: live,
+            liveState: live,
+            hasPendingRestore: nativeDockPreferencesService.hasPendingRestore,
             storeDelay: storeDelay
         )
         nativeDockToggleItem.state = .off
@@ -285,19 +290,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleNativeDockAutoHideFromMenu() {
-        let event = NSApp.currentEvent
-        let isKeyEvent = event?.type == .keyDown
-        if AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: event?.type,
-            keyCode: isKeyEvent ? event?.keyCode : nil,
-            modifierFlags: event?.modifierFlags ?? [],
-            isSystemShortcutAvailable: true // ⌥⌘D 由 macOS 持有，恒生效
-        ) { return }
-        let targetEnabled = AutoHideToggleMenuModel.nativeToggleTargetEnabled(
-            liveAutohide: nativeDockPreferencesService.currentAutohideState()?.enabled,
+        let targetHidden = AutoHideToggleMenuModel.nativeToggleTargetHidden(
+            liveState: nativeDockPreferencesService.currentAutohideState(),
+            hasPendingRestore: nativeDockPreferencesService.hasPendingRestore,
             storeDelay: store.nativeDockAutoHideDelay
         )
-        scheduleNativeDockVisibilityChange(enabled: targetEnabled)
+        scheduleNativeDockVisibilityChange(hidden: targetHidden)
     }
 
     @objc private func openNativeDockSettings() {
@@ -405,21 +403,21 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         NSWorkspace.shared.open(url)
     }
 
-    private func scheduleNativeDockVisibilityChange(enabled: Bool) {
+    private func scheduleNativeDockVisibilityChange(hidden: Bool) {
         menu.cancelTrackingWithoutAnimation()
         DispatchQueue.main.async { [weak self] in
-            self?.applyNativeDockVisibility(enabled: enabled)
+            self?.applyNativeDockVisibility(hidden: hidden)
         }
     }
 
-    private func applyNativeDockVisibility(enabled: Bool) {
+    private func applyNativeDockVisibility(hidden: Bool) {
         guard nativeDockPreferencesService.isAvailable else {
             presentError(title: "系统 Dock 设置失败", message: NativeDockPreferencesError.sandboxed.localizedDescription)
             return
         }
 
         do {
-            try nativeDockPreferencesService.setAutohideEnabled(enabled)
+            try nativeDockPreferencesService.setCompletelyHidden(hidden)
             reconcileNativeDockStoreWithSystem()
             refreshNativeDockToggleItem(storeDelay: store.nativeDockAutoHideDelay)
         } catch {

@@ -99,8 +99,8 @@ final class AppSettingsStore: ObservableObject {
         defaults.set(snapped, forKey: Keys.nativeDockAutoHideDelay)
     }
 
-    // 系统 Dock 组刻意不提供盲翻的 toggle 方法：它的翻转方向必须由系统实际 autohide 状态决定
-    // （AutoHideToggleMenuModel.nativeToggleTargetEnabled）——系统状态可被外部改（⌥⌘D / 系统设置），
+    // 系统 Dock 组刻意不提供盲翻的 toggle 方法：它的翻转方向必须由系统实际完整隐藏状态决定
+    // （AutoHideToggleMenuModel.nativeToggleTargetHidden）——系统状态可被外部改（⌥⌘D / 系统设置），
     // 盲翻本地存值会在两者脱节时翻错方向。
 
     func setEdgeAutoHideDelay(_ value: Double) {
