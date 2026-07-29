@@ -27,8 +27,23 @@ run_cli() {
   "$DERIVED_DATA_DIR/Build/Products/Debug/$CLI_NAME" "$@"
 }
 
+# 先确认旧进程真的退干净了再启动。原先这里用 `open -n`（强制再开一个新实例），
+# 只要 pkill 慢一拍或有别处启动的实例没被 pkill 覆盖到，屏幕上就会出现两条一模一样
+# 的任务条，验收时根本分不清测的是哪个版本。
+wait_for_exit() {
+  local attempt
+  for attempt in $(seq 1 25); do
+    pgrep -x "$APP_NAME" >/dev/null 2>&1 || return 0
+    sleep 0.2
+  done
+  echo "warning: 旧实例 5 秒内未退出，强制结束" >&2
+  pkill -9 -x "$APP_NAME" >/dev/null 2>&1 || true
+  sleep 0.3
+}
+
 open_app() {
-  /usr/bin/open -n "$APP_BUNDLE"
+  wait_for_exit
+  /usr/bin/open "$APP_BUNDLE"
 }
 
 wait_for_app() {

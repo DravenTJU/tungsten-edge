@@ -184,6 +184,9 @@
 		A00000000000000000009E17 /* ProcessLiveness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E03 /* ProcessLiveness.swift */; };
 		A00000000000000000009E18 /* ProcessLivenessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E04 /* ProcessLivenessTests.swift */; };
 		A00000000000000000009E19 /* ScanAdmissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E05 /* ScanAdmissionDecision.swift */; };
+		A00000000000000000009E1C /* BuildProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E07 /* BuildProvenance.swift */; };
+		A00000000000000000009E1D /* BuildProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E07 /* BuildProvenance.swift */; };
+		A00000000000000000009E1E /* BuildProvenanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E08 /* BuildProvenanceTests.swift */; };
 		A00000000000000000009E1A /* ScanAdmissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E05 /* ScanAdmissionDecision.swift */; };
 		A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */; };
 		A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
@@ -217,6 +220,8 @@
 		A00000000000000000009E04 /* ProcessLivenessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLivenessTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E05 /* ScanAdmissionDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAdmissionDecision.swift; sourceTree = "<group>"; };
 		A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAdmissionDecisionTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009E07 /* BuildProvenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildProvenance.swift; sourceTree = "<group>"; };
+		A00000000000000000009E08 /* BuildProvenanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildProvenanceTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitor.swift; sourceTree = "<group>"; };
 		A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitorTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A00 /* WindowLiftAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidance.swift; sourceTree = "<group>"; };
@@ -500,6 +505,7 @@
 				A00000000000000000000A100 /* MessagingZoneAdmission.swift */,
 				A00000000000000000009A00 /* WindowLiftAvoidance.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
+				A00000000000000000009E07 /* BuildProvenance.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -729,6 +735,7 @@
 				A00000000000000000009E02 /* AXWindowReaderResultTests.swift */,
 				A00000000000000000009E04 /* ProcessLivenessTests.swift */,
 				A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */,
+				A00000000000000000009E08 /* BuildProvenanceTests.swift */,
 				A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */,
 				A00000000000000000009801 /* CGWindowSnapshotTests.swift */,
 				A00000000000000000009710 /* DragConversionPlanTests.swift */,
@@ -883,6 +890,7 @@
 					A00000000000000000009081 /* PanelGeometry.swift in Sources */,
 					A00000000000000000009A11 /* WindowLiftAvoidanceController.swift in Sources */,
 					A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */,
+				A00000000000000000009E1C /* BuildProvenance.swift in Sources */,
 					A00000000000000000008021 /* StatusMenuController.swift in Sources */,
 					A00000000000000000009C01 /* UpdateChecker.swift in Sources */,
 					A000000000000000000019A1 /* LauncherChip.swift in Sources */,
@@ -1058,6 +1066,8 @@
 					A00000000000000000009E18 /* ProcessLivenessTests.swift in Sources */,
 					A00000000000000000009E1A /* ScanAdmissionDecision.swift in Sources */,
 					A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */,
+					A00000000000000000009E1D /* BuildProvenance.swift in Sources */,
+					A00000000000000000009E1E /* BuildProvenanceTests.swift in Sources */,
 					A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */,
 					A00000000000000000009A21 /* WindowLiftAvoidanceTests.swift in Sources */,
 					A00000000000000000009811 /* CGWindowSnapshot.swift in Sources */,
@@ -1158,7 +1168,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "macos-dock-cc Local Code Signing";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1179,7 +1189,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "macos-dock-cc Local Code Signing";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1198,7 +1208,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGNING_ALLOWED = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.caye.macosdockcc.v2.windowlab;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1210,7 +1220,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGNING_ALLOWED = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				MARKETING_VERSION = 0.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.caye.macosdockcc.v2.windowlab;
 				PRODUCT_NAME = "$(TARGET_NAME)";

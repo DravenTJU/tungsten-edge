@@ -228,14 +228,19 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private static func versionMenuTitle() -> String? {
         let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String
-        let build = info?["CFBundleVersion"] as? String
-        switch (version, build) {
-        case let (version?, build?): return "版本 \(version) (\(build))"
-        case let (version?, nil): return "版本 \(version)"
-        case let (nil, build?): return "版本 (\(build))"
-        case (nil, nil): return nil
-        }
+        #if DEBUG
+        let isDebugBuild = true
+        #else
+        let isDebugBuild = false
+        #endif
+        // 版本号在发布后主线不 bump，光看数字分不出开发构建和用户装的包，
+        // 因此把来源一并显示出来。判定逻辑在纯 BuildProvenance 里，有单测。
+        return BuildProvenance.versionTitle(
+            version: info?["CFBundleShortVersionString"] as? String,
+            build: info?["CFBundleVersion"] as? String,
+            isDebugBuild: isDebugBuild,
+            bundlePath: Bundle.main.bundleURL.path
+        )
     }
 
     func menuWillOpen(_ menu: NSMenu) {

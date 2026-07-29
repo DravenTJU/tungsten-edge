@@ -54,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 日志要攒满缓冲区才落盘。改成行缓冲后每条 print 立即写出，便于实时读日志。
         setvbuf(stdout, nil, _IOLBF, 0)
 
+        terminateOtherInstances()
+
         // 先注册热键再建状态菜单：菜单构建时要读注册状态决定是否显示快捷键提示。
         // Carbon 热键不依赖辅助功能权限，不用等权限引导分支。
         let hotKey = GlobalHotKeyMonitor(shortcut: .edgeAutoHideMode) { [weak self] in
@@ -76,6 +78,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // 不一定明显的状态栏图标；先用普通应用策略把权限引导窗口带到前台。
             NSApp.setActivationPolicy(.regular)
             requestAccessibilityPermission()
+        }
+    }
+
+    /// 同一个 bundle id 的另一份包（`/Applications` 正式包 vs 构建目录里的开发包）可以
+    /// 同时运行，屏幕上就会出现两条一模一样的任务条，测到的是哪个版本谁也说不清——
+    /// 2026-07-21 因此把一个其实没验证过的修复判成「不行」并整个回退。
+    ///
+    /// 采取「后启动的接管」：新实例踢掉旧实例。反过来（新的自己退出）会挡住开发时的
+    /// 验证构建，也和 `Scripts/build_and_run.sh` 先 pkill 再启动的既有行为矛盾。
+    /// 用礼貌的 `terminate()` 而不是强杀，让旧实例的 `stopAndRestore` 把被抬起的窗口
+    /// 还原回去；只有它迟迟不退时才强制结束，避免"两个任务条"这个原始症状复发。
+    private func terminateOtherInstances() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != myPID && !$0.isTerminated }
+        guard !others.isEmpty else { return }
+
+        let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "instance")
+        for app in others {
+            logger.warning("""
+                发现另一个钨极实例，终止它：pid=\(app.processIdentifier, privacy: .public) \
+                path=\(app.bundleURL?.path ?? "(unknown)", privacy: .public)
+                """)
+            app.terminate()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            for app in others where !app.isTerminated {
+                logger.error("旧实例 pid=\(app.processIdentifier, privacy: .public) 3 秒内未退出，强制结束")
+                app.forceTerminate()
+            }
         }
     }
 
