@@ -123,6 +123,12 @@ brew install --cask tungsten-edge
 
 ## 社区
 
+**微信交流群**
+
+<img src="assets/wechat-group.png" alt="钨极 Dock 微信交流群二维码" width="280" />
+
+二维码每周更新。若扫码提示已过期，欢迎到 [Issues](https://github.com/moonbai-studio/tungsten-edge/issues) 留言，我会尽快换新。
+
 钨极认可并感谢 [LINUX DO](https://linux.do/) 社区提供的交流与反馈。
 
 ## 许可证
