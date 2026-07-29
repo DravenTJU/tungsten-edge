@@ -41,12 +41,16 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 2026-07-25 在正式发布标签 `v0.6.6@dd85d86` 上建立发布后功能分支 `codex/menu-hotkey-adjustments-v066`；`bcef0ed` 是已实机验收的「菜单与唤醒快捷键调整」检查点。它保留 v0.6.6 全部运行行为，只新增系统 Dock 设置入口、把钨极热键改为 ⌥⇧⌘D，并把「标记为消息应用」改为恒定标题 + 原生勾选态。该分支已于 2026-07-25 以合并提交 `7e0989e` 并入本地 `master`（无冲突，账本两侧条目均保留），分支本身随本轮分支收拢删除；后续不得从封存旧开发线重放这三项功能。
 
+2026-07-29 发布 `v0.7.0@d4f1942`（标签固定在该提交），内容 = v0.6.6 之后的菜单/快捷键调整 + 本轮三块：系统 Dock 彻底隐藏（`d08e8d6`）、扫描准入修复（`42f70eb`）、README 微信群二维码（`203b69c`）。发布提交与 v0.6.6 一样直接打在 `master` 上；随后 `master` 未再 bump，因此**发布后的开发构建与已发布包同为 `0.7.0 (8)`，靠版本号无法区分**——这一点在 v0.6.6 已经踩过一次（用户报「菜单里没有『打开系统 Dock 设置…』」，实为发布落后于开发线 14 小时），排查同类问题时先比对提交而非版本号。Homebrew cask 已同步至 `0.7.0`（`moonbai-studio/homebrew-tungsten-edge@d9f9b88`）。
+
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
 - 当前稳定安装版（4.5）hash: `db4a18e2d4d8bdd4db13fab44e5fee101d1eb0aff6642d66945d250c68417a11`
+- GitHub `v0.7.0` DMG hash: `65e33403a882445815f2215a74dc576bd0f2bec700eeadf5a9c014cb03b42bc8`
+- GitHub `v0.7.0` ZIP hash: `62391c2a05456af1558c870eb0293bcd6c6319209347d37b87dcf49ead22add3`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@d9f9b88` 引用此值）
 - GitHub `v0.6.6` DMG hash: `10a53b8903f5b19238272f6ad154b449b962a224ba47db63aae51f7fda65c04e`
 - GitHub `v0.6.6` ZIP hash: `3ebe3f6758ec8804e78503e5b441b3a071162b83f421b3727132a40eb1475bad`
-- 公开包边界：ad-hoc 签名、未公证；版本 `0.6.6 (7)`，arm64 + x86_64，上传后重新下载并通过 `SHA256SUMS.txt` 校验
+- 公开包边界：ad-hoc 签名、未公证；`v0.7.0` 版本号 `0.7.0 (8)`、`v0.6.6` 为 `0.6.6 (7)`，均 arm64 + x86_64
 - 上一稳定安装版（4.4）备份 hash: `9b1bc1d19ca3c1ccbaade0fdf2b80a64dd0a0f59dd2805ca8279aa47e91befb6`
 - 4.3 备份 hash: `ed98039e4139d2e50ff3f4e7cf6938d5ad2ef1586fb5b82e5494a76bedd4a5ca`
 - 4.2 备份 hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
@@ -83,6 +87,8 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
+| **撤销系统 Dock 彻底隐藏改造** | `git revert d08e8d6` | 保留 v0.7.0 其余全部功能；菜单命令退回只切 `autohide` 的普通自动隐藏（不再写 `autohide-delay`、不再恢复隐藏前延迟），标题回到动态「隐藏 / 显示系统 Dock」，`⌥⌘D` 重新作为该命令的快捷键展示并恢复菜单追踪期跳过逻辑 | **↩ 单点，有系统侧数据边界**：回退**不会**自动把系统 `com.apple.dock` 的 `autohide-delay` 改回去——若回退时 Dock 正处于彻底隐藏态，用户需手动在系统设置调回唤醒延迟，或回退前先点一次「显示系统 Dock」。应用自身的恢复快照键（`com.tungsten.edge.nativeDock.restoreDelay.*`）会成为孤儿，无害但不再被读取。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
+| **撤销扫描准入 ScanAdmissionDecision 修复** | `git revert 42f70eb` | 保留 v0.7.0 其余全部功能；补扫轮次恢复用原始 `AXWindows` 非空作为准入依据，Tailscale 这类应用会重新出现「永不消失的空图标」 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：移除新增 `Platform/AppTracking/ScanAdmissionDecision.swift` 与其单测，恢复 `AppTracker` 补扫路径的旧准入与第二次无超时 AX 读取。注意误准入是**永久性**的——`reconcile()` 只清理已死进程，回退后已产生的空图标要重启钨极才会消失。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
 | **撤销菜单与唤醒快捷键调整** | `git revert bcef0ed` | 保留正式版 `v0.6.6@dd85d86` 全部功能；移除「打开系统 Dock 设置…」，钨极快捷键恢复为 ⌥⌘E，消息成员菜单恢复「标记 / 取消标记」动态标题。没有新 UserDefaults key 或迁移；回退不会反转用户已经通过既有 kept / messaging 菜单做出的选择 | **↩ 单点，无 schema 数据边界，已验证 revert**：临时 detached worktree 执行 `git revert --no-commit bcef0ed` 无冲突，工作树与索引均和 `dd85d86` 完全一致；定向测试 84/84、Debug 全量测试 474/474、Debug 构建与唯一实例启动通过；owner 于 2026-07-25 实机验收通过；`git diff --check` 无输出 |
 | **撤销 POSIX ProcessLiveness 修复与批量座位释放日志** | `git revert b503fd6` | 保留 4.4 及此前全部功能；`reconcile()` 恢复 `NSRunningApplication(processIdentifier:) == nil` 判死路径（LaunchServices 解析瞬时返回 nil 误杀活进程，连带移除整 `AppEntry` 与全部座位），同时失去 `.processGone` 批量释放日志 | **↩ 单点，无 schema 或 UserDefaults 数据边界，已验证 revert**：移除新增 `Platform/AppTracking/ProcessLiveness.swift`，恢复 `AppTracker.reconcile()` 中 `NSRunningApplication` 判死与无日志批量释放路径；`/usr/bin/true + posix_spawn + waitpid` 实证 POSIX `kill(pid, 0)` 与 LaunchServices 行为差异；定向测试 26/26、Debug 全量测试 468/468、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-25 实机验收通过；临时 detached worktree `git revert --no-commit b503fd6` 无冲突。安装回退见上方当前本地主线节 |
 | **撤销稳定重建的消息区主窗口能力准入门槛** | `git revert aad543d` | 保留「退出 App」菜单末项及此前全部功能；恢复仅凭白名单 / 社交类别自动注册消息应用、不检查主窗口标题的旧规则 | **↩ 单点，无 schema 迁移，已验证 revert**：从旧实现 `5e2e82e` 恢复纯 `MessagingZoneAdmission`、自动注册参数与 snapshot 标题输入，并同步新增两条能力护栏、删除一条 kept 冲突旧护栏；既有 persisted messaging / opt-out 数据不由回滚改写，回滚只影响后续自动准入；定向测试 41/41、Debug 全量测试 456/456、主 App Debug/Release + Window Lab Debug 三项构建通过；owner 于 2026-07-24 实机验收通过；临时 detached worktree `git revert --no-commit` 无冲突，回退后 9 个文件与父提交 `fc2eeee` 完全一致。安装回退见上方当前本地主线节 |
