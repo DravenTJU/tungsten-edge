@@ -380,14 +380,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             alert.informativeText = "当前版本 \(currentVersion)。钨极目前仍需手动下载安装。"
             alert.addButton(withTitle: "前往下载")
             alert.addButton(withTitle: "稍后")
-            if alert.runModal() == .alertFirstButtonReturn {
+            if Self.runModalInForeground(alert) == .alertFirstButtonReturn {
                 NSWorkspace.shared.open(releaseURL)
             }
         case .upToDate(let currentVersion, let latestVersion):
             alert.messageText = "当前已是最新版本"
             alert.informativeText = "当前版本 \(currentVersion)，GitHub 最新正式版为 \(latestVersion)。"
             alert.addButton(withTitle: "好")
-            alert.runModal()
+            Self.runModalInForeground(alert)
         }
     }
 
@@ -398,7 +398,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alert.informativeText = "请检查网络连接后重试，也可以直接打开 GitHub 发布页。"
         alert.addButton(withTitle: "打开发布页")
         alert.addButton(withTitle: "好")
-        if alert.runModal() == .alertFirstButtonReturn {
+        if Self.runModalInForeground(alert) == .alertFirstButtonReturn {
             NSWorkspace.shared.open(GitHubUpdateChecker.releasesURL)
         }
     }
@@ -438,7 +438,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "好")
-        alert.runModal()
+        Self.runModalInForeground(alert)
+    }
+
+    /// 钨极是 `.accessory` 应用（无程序坞图标）。这类应用直接 `runModal()` 时**不会**把自己
+    /// 带到前台，弹窗会落在当前前台应用的窗口后面——用户点了菜单项却看不到任何反应，
+    /// 表现和「功能坏了」完全一样（真实用户就是这么报的「检查更新失效」）。
+    /// 只要前台有任何窗口就中招，也就是几乎总是中招。
+    ///
+    /// `AppDelegate` 里每个 `runModal()` / 面板展示之前都调了 `NSApp.activate`，
+    /// 唯独状态菜单这四处漏了。所有弹窗一律走这里，别再各自 `runModal()`。
+    @discardableResult
+    private static func runModalInForeground(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal()
     }
 
     @objc private func showDebugConsole() { onShowDebugConsole() }
