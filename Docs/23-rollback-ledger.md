@@ -43,7 +43,7 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 2026-07-25 在正式发布标签 `v0.6.6@dd85d86` 上建立发布后功能分支 `codex/menu-hotkey-adjustments-v066`；`bcef0ed` 是已实机验收的「菜单与唤醒快捷键调整」检查点。它保留 v0.6.6 全部运行行为，只新增系统 Dock 设置入口、把钨极热键改为 ⌥⇧⌘D，并把「标记为消息应用」改为恒定标题 + 原生勾选态。该分支已于 2026-07-25 以合并提交 `7e0989e` 并入本地 `master`（无冲突，账本两侧条目均保留），分支本身随本轮分支收拢删除；后续不得从封存旧开发线重放这三项功能。
 
-2026-07-29 发布 `v0.7.0@d4f1942`（标签固定在该提交），内容 = v0.6.6 之后的菜单/快捷键调整 + 本轮三块：系统 Dock 彻底隐藏（`d08e8d6`）、扫描准入修复（`42f70eb`）、README 微信群二维码（`203b69c`）。发布提交与 v0.6.6 一样直接打在 `master` 上；随后 `master` 未再 bump，因此**发布后的开发构建与已发布包同为 `0.7.0 (8)`，靠版本号无法区分**——这一点在 v0.6.6 已经踩过一次（用户报「菜单里没有『打开系统 Dock 设置…』」，实为发布落后于开发线 14 小时），排查同类问题时先比对提交而非版本号。Homebrew cask 已同步至 `0.7.0`（`moonbai-studio/homebrew-tungsten-edge@d9f9b88`）。
+2026-07-29 发布 `v0.7.0@d4f1942`（标签固定在该提交），内容 = v0.6.6 之后的菜单/快捷键调整 + 本轮三块：系统 Dock 彻底隐藏（`d08e8d6`）、扫描准入修复（`42f70eb`）、README 微信群二维码（`203b69c`）。发布提交与 v0.6.6 一样直接打在 `master` 上；发布当时 `master` 未再 bump，因此**发布后的开发构建与已发布包一度同为 `0.7.0 (8)`，靠版本号无法区分**（`cfd6a71` 已把主线构建号推到 `10`，暂时不再撞号；下次发布后会重新撞上，别指望版本号）——这一点在 v0.6.6 已经踩过一次（用户报「菜单里没有『打开系统 Dock 设置…』」，实为发布落后于开发线 14 小时），排查同类问题时先比对提交而非版本号。Homebrew cask 已同步至 `0.7.0`（`moonbai-studio/homebrew-tungsten-edge@d9f9b88`）。
 
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
@@ -66,12 +66,12 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 | 资产 | 取回位置 | 对当前稳定线的影响 |
 | --- | --- | --- |
 | Developer ID 签名 + 公证打包链（`Scripts/package_release.sh`，相对稳定线 +275 行，fail-closed：凭据或验证缺失即停，不回退临时签名） | `codex/release-v0.6.6`，提交 `2c2a51a` | 稳定线的 `Scripts/package_release.sh` 仍是 v0.1.0 时代的 ad-hoc `codesign --force --deep --sign -`。**已发布的 `v0.6.6` 公开包因此未签名未公证**，用户首次打开需右键「打开」或在「隐私与安全性」里「仍要打开」（发布说明已写明） |
-| 辅助功能权限重授权引导（`App/Scenes/PermissionOnboardingView.swift` +244 行、`Tests/Unit/PermissionOnboardingTests.swift` 168 行） | `codex/release-v0.6.6`，提交 `26371b8` | 与上一条配套：从 ad-hoc 换成 Developer ID 签名会使旧的辅助功能授权失效，需要引导用户删旧条目重授权一次。稳定线的 `PermissionOnboardingView.swift` 仍是 61 行的基础版 |
+| ~~辅助功能权限重授权引导~~（提交 `26371b8`） | **已出表：2026-07-30 在主线重建，见 `ec930ae`** | **不要再取回 `26371b8`。** 主线的是按 owner 2026-07-25 约束重新实现的，**不是**它的副本：`.stalled` 不再被当作「旧条目已失效」的判定、位置判据从 `/Volumes` 路径前缀改成卷只读、并且新增了旧实现完全没有的运行期失效检测与自动恢复。`26371b8` 只剩参考价值（`git show` 可读），照搬会退回被否决的方案 |
 | 自签试用包脚本 `Scripts/package_preview.sh`（239 行） | `codex/release-v0.6.6`，提交 `7943618`（同 `v0.6.6-beta.1` 标签） | 稳定线没有试用包打包流程 |
 | `Resources/TungstenEdge.entitlements` | `codex/release-v0.6.6`，提交 `2c2a51a` | 公证链依赖；稳定线 `Resources/` 下只有 `Assets.xcassets` 与 `Info.plist` |
 | 最小化时的背景窗口焦点交接（`Platform/Accessibility/BackgroundFocusHandoff.swift` 116 行 + `AccessibilitySource.swift` 相应改动） | `codex/release-v0.6.6`，提交 `df482d3`「最小化命令提交与状态确认分离 + 背景窗口精确交接」 | 稳定线的聚焦 / 最小化路径**与官方 `v0.6.5` 完全相同**——`git diff --name-only v0.6.5 master` 在 `Platform/Accessibility/`、`Core/Lifecycle/ActionPlanning/`、`TabFoldDecision.swift` 上零改动，整条重建线从未碰过这里。废弃线相对稳定线在该路径上共 +383/−82 行。**注意：owner 2026-07-26 已明确排除 `df482d3` 打包出的 `v0.6.6-beta.2`（「试过肯定不对」）**；废弃线在 beta.2 之后还有一版 carbon-before 交接方案，只存在于已丢失的脏工作区，不可取回。取回本条前必须先与 owner 确认要的是哪一版行为 |
 
-上述四项的提交均已验证可从 `codex/release-v0.6.6` 到达，该分支因此**不得删除**。同线上的 `finder-folder-preview` 是它的祖先，删除后不影响这些资产。
+上述各项的提交均已验证可从 `codex/release-v0.6.6` 到达，该分支因此**不得删除**。同线上的 `finder-folder-preview` 是它的祖先，删除后不影响这些资产。权限引导那条虽已出表，该分支仍不得删除——理由见下方两条。
 
 **该分支还有第二个不得删除的理由**（2026-07-29 审计补记）：Obsidian 地图与本账本引用的两条**回摘源提交** `0b74fa6`（启停首帧影子滑动，回摘为 master 的 `8af961c`）和 `5e2e82e`（消息区准入，回摘为 master 的 `aad543d`）**只靠这个分支保活**——实测它们不在 `master` 上，也没有任何标签指向。只按「四项封存资产」的理由判断而删掉该分支，会连带让这两条源提交变成悬空对象、被 `git gc` 回收，届时地图上的引用将无法追溯。
 
@@ -102,11 +102,12 @@ git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^
 
 注意别用 `git show <提交> | git apply --check --reverse -` 代替：`git apply` 要求上下文严格对齐，而 `git revert` 走三方合并，前者会给出大量假阳性（2026-07-29 首次复检就被误导过一次）。二进制文件在 `git apply` 下也必然假阳性。
 
-**最近一次全表复检：2026-07-29（v0.7.0 发布后）**
+**最近一次全表复检：2026-07-30（`ec930ae` 权限引导重建后）**
 
 | 条目 | 是否仍可干净回退 | 说明 |
 | --- | --- | --- |
-| `cfd6a71` 主线实例可信 | ✅ 单点成立 | 2026-07-29 新增，见下表条目 |
+| `ec930ae` 辅助权限引导重建 | ✅ 单点成立 | 2026-07-30 新增，见下表条目 |
+| `cfd6a71` 主线实例可信 | ⚠️ **当天衰减**（`AppDelegate.swift` + `project.pbxproj`） | 2026-07-29 还是单点，`ec930ae` 重排了 `applicationDidFinishLaunching` 的启动顺序（位置分类要排在接管实例和注册热键之前），正好压在它改的那一段上。要回退得连 `ec930ae` 一起处理，或手工解这两个文件 |
 | `d08e8d6` 彻底隐藏 / `203b69c` 二维码 / `15f8fd6` 文档追平 | ✅ 单点成立 | 2026-07-29 新增，尚未被覆盖 |
 | `42f70eb` 扫描准入 | ⚠️ 不再是单点（仅 `project.pbxproj` 一处） | **当天就衰减了**：早上复检还干净，`cfd6a71` 把 `BuildProvenance.swift` 加进工程文件、又 bump 了构建号，与 `42f70eb` 加 `ScanAdmissionDecision.swift` 的位置相邻。冲突只在 `macos-dock-cc-v2.xcodeproj/project.pbxproj`，**源码零冲突**，手工解一下工程文件即可，代价远小于下面那三条 |
 | `8af961c` 启停首帧位置锚定 | ✅ 单点成立 | 跨多版本仍干净 |
@@ -120,6 +121,7 @@ git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^
 
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
+| **撤销辅助权限引导重建** | `git revert ec930ae` | 保留 v0.7.0 全部功能；退回 61 行的基础版权限页。失去三件事：① 不再识别「从 DMG 直接运行 / App Translocation」——那种临时副本会重新去接管正在工作的 `/Applications` 实例并抢注全局热键；② 不再有 8 秒后的条件式排障说明（勾着却不生效时删旧条目重加）；③ **运行期权限失效重新变成静默空任务条**，且最大化避让的窗口快照会在失权瞬间被清掉、永远还不回去 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：删除 `Platform/Permissions/` 下 4 个新文件与 `Tests/Unit/PermissionOnboardingTests.swift`，恢复 `AppDelegate` 启动分支、`WindowLiftAvoidanceController` 的冻结闸门与 `pendingRestorations`、`PanelCoordinator.suspendAndRelease()`。**注意 `cfd6a71` 因本提交衰减为非单点**（见上方复检表），两者的 `AppDelegate` 改动相邻。全量测试 524/524、Debug/Release/window-lab 三项构建通过；owner 于 2026-07-30 在**另一台装有已发布 0.7.0 的 Mac 上覆盖升级实测**走通完整引导（真实的「勾着却已失配」旧记录，`tccutil reset` 复现不出这个状态），并已用 `install_local_release.sh` 装到主力机、`lsappinfo` 确认 `type="UIElement"`（固定证书下 cdhash 变化但授权未丢）。**未覆盖**：可写外置卷放行、macOS 12 文案分支；运行期失效与重启失败重试两条为 owner 主动缩减范围，未实测 |
 | **撤销主线实例可信改造** | `git revert cfd6a71` | 保留 v0.7.0 全部功能；失去三件事：菜单版本行不再标「· 开发版 / · 非安装位置」、启动时不再终止同 bundle id 的其他实例、`build_and_run.sh` 退回 `open -n`（强制多开）。开发线构建号退回 8，与已发布的 `0.7.0 (8)` 重新撞号 | **↩ 单点，无代码数据边界，但有机器状态边界**：回退**不影响**已经修好的系统侧状态——登录项仍指向 `/Applications/Tungsten Edge.app/`、`/Applications` 里仍是唯一一份 0.7.0，这些是本机操作的结果、不由代码控制。真正失去的是**防复发能力**：回退后若再在开发构建上勾选「登录时启动」，会重新掉进 2026-07-21 / 07-26 那两次误诊。删除 `Core/Support/BuildProvenance.swift` 及其 7 项单测。全量测试 493/493、单实例接管已实机验证（强开第二个实例后 4 秒内只剩新的）、owner 于 2026-07-29 验收 |
 | **撤销系统 Dock 彻底隐藏改造** | `git revert d08e8d6` | 保留 v0.7.0 其余全部功能；菜单命令退回只切 `autohide` 的普通自动隐藏（不再写 `autohide-delay`、不再恢复隐藏前延迟），标题回到动态「隐藏 / 显示系统 Dock」，`⌥⌘D` 重新作为该命令的快捷键展示并恢复菜单追踪期跳过逻辑 | **↩ 单点，有系统侧数据边界**：回退**不会**自动把系统 `com.apple.dock` 的 `autohide-delay` 改回去——若回退时 Dock 正处于彻底隐藏态，用户需手动在系统设置调回唤醒延迟，或回退前先点一次「显示系统 Dock」。应用自身的恢复快照键（`com.tungsten.edge.nativeDock.restoreDelay.*`）会成为孤儿，无害但不再被读取。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
 | **撤销扫描准入 ScanAdmissionDecision 修复** | `git revert 42f70eb` | 保留 v0.7.0 其余全部功能；补扫轮次恢复用原始 `AXWindows` 非空作为准入依据，Tailscale 这类应用会重新出现「永不消失的空图标」 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：移除新增 `Platform/AppTracking/ScanAdmissionDecision.swift` 与其单测，恢复 `AppTracker` 补扫路径的旧准入与第二次无超时 AX 读取。注意误准入是**永久性**的——`reconcile()` 只清理已死进程，回退后已产生的空图标要重启钨极才会消失。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
