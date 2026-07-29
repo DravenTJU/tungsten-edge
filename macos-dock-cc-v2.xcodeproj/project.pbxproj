@@ -136,6 +136,16 @@
 		A00000000000000000001105 /* FinderAppleEventMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */; };
 		A00000000000000000001012 /* FinderSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000012 /* FinderSource.swift */; };
 		A00000000000000000001013 /* PermissionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000013 /* PermissionService.swift */; };
+		A0000000000000000000B011 /* AccessibilityPermissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B010 /* AccessibilityPermissionDecision.swift */; };
+		A0000000000000000000B012 /* AccessibilityPermissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B010 /* AccessibilityPermissionDecision.swift */; };
+		A0000000000000000000B021 /* PermissionRecoveryMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B020 /* PermissionRecoveryMachine.swift */; };
+		A0000000000000000000B022 /* PermissionRecoveryMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B020 /* PermissionRecoveryMachine.swift */; };
+		A0000000000000000000B031 /* AccessibilityPermissionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B030 /* AccessibilityPermissionModel.swift */; };
+		A0000000000000000000B032 /* AccessibilityPermissionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B030 /* AccessibilityPermissionModel.swift */; };
+		A0000000000000000000B041 /* PermissionRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B040 /* PermissionRecoveryCoordinator.swift */; };
+		A0000000000000000000B042 /* PermissionRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B040 /* PermissionRecoveryCoordinator.swift */; };
+		A0000000000000000000B052 /* PermissionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000013 /* PermissionService.swift */; };
+		A0000000000000000000B062 /* PermissionOnboardingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000B060 /* PermissionOnboardingTests.swift */; };
 		A00000000000000000001014 /* StripItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000014 /* StripItem.swift */; };
 		A00000000000000000001015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000015 /* Assets.xcassets */; };
 		A00000000000000000001016 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000017 /* main.swift */; };
@@ -288,6 +298,11 @@
 		A00000000000000000000F01 /* FinderWindowContentsReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderWindowContentsReader.swift; sourceTree = "<group>"; };
 		A00000000000000000000012 /* FinderSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinderSource.swift; sourceTree = "<group>"; };
 		A00000000000000000000013 /* PermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionService.swift; sourceTree = "<group>"; };
+		A0000000000000000000B010 /* AccessibilityPermissionDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityPermissionDecision.swift; sourceTree = "<group>"; };
+		A0000000000000000000B020 /* PermissionRecoveryMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionRecoveryMachine.swift; sourceTree = "<group>"; };
+		A0000000000000000000B030 /* AccessibilityPermissionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityPermissionModel.swift; sourceTree = "<group>"; };
+		A0000000000000000000B040 /* PermissionRecoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionRecoveryCoordinator.swift; sourceTree = "<group>"; };
+		A0000000000000000000B060 /* PermissionOnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionOnboardingTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000014 /* StripItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripItem.swift; sourceTree = "<group>"; };
 		A00000000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A00000000000000000000016 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Resources/Info.plist; sourceTree = SOURCE_ROOT; };
@@ -642,6 +657,10 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000013 /* PermissionService.swift */,
+				A0000000000000000000B010 /* AccessibilityPermissionDecision.swift */,
+				A0000000000000000000B020 /* PermissionRecoveryMachine.swift */,
+				A0000000000000000000B030 /* AccessibilityPermissionModel.swift */,
+				A0000000000000000000B040 /* PermissionRecoveryCoordinator.swift */,
 			);
 			path = Permissions;
 			sourceTree = "<group>";
@@ -707,6 +726,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000000000000000058 /* FinderP0Tests.swift */,
+				A0000000000000000000B060 /* PermissionOnboardingTests.swift */,
 				A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
 				A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */,
@@ -874,6 +894,10 @@
 					A00000000000000000001044 /* DrawerView.swift in Sources */,
 					A00000000000000000001002 /* ContentView.swift in Sources */,
 					A000000000000000000010F1 /* PermissionOnboardingView.swift in Sources */,
+					A0000000000000000000B011 /* AccessibilityPermissionDecision.swift in Sources */,
+					A0000000000000000000B021 /* PermissionRecoveryMachine.swift in Sources */,
+					A0000000000000000000B031 /* AccessibilityPermissionModel.swift in Sources */,
+					A0000000000000000000B041 /* PermissionRecoveryCoordinator.swift in Sources */,
 					A00000000000000000001003 /* AppComposition.swift in Sources */,
 					A00000000000000000001045 /* DrawerStore.swift in Sources */,
 					A000000000000000000019A0 /* MessagingAppStore.swift in Sources */,
@@ -995,6 +1019,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				A0000000000000000000101F /* FinderP0Tests.swift in Sources */,
+				A0000000000000000000B012 /* AccessibilityPermissionDecision.swift in Sources */,
+				A0000000000000000000B022 /* PermissionRecoveryMachine.swift in Sources */,
+				A0000000000000000000B032 /* AccessibilityPermissionModel.swift in Sources */,
+				A0000000000000000000B042 /* PermissionRecoveryCoordinator.swift in Sources */,
+				A0000000000000000000B052 /* PermissionService.swift in Sources */,
+				A0000000000000000000B062 /* PermissionOnboardingTests.swift in Sources */,
 				A00000000000000000008031 /* AppSettingsStore.swift in Sources */,
 				A00000000000000000008041 /* AppSettingsStoreTests.swift in Sources */,
 				A00000000000000000009F02 /* GlobalHotKeyMonitor.swift in Sources */,

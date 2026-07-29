@@ -1,5 +1,18 @@
 # Known Platform Quirks
 
+## Accessibility TCC 身份与发布签名（2026-07-29 实测）
+
+- macOS 的辅助功能授权绑定的是**应用的代码身份**，不只看显示名或 bundle ID。ad-hoc 签名没有稳定的签名者身份，其 designated requirement 落在当前二进制的 `cdhash` 上，**每次重新构建都可能变成一个新身份**。
+- 公开发布包目前仍是 ad-hoc（`Scripts/package_release.sh` 的 `codesign --force --deep --sign -`）。覆盖升级后，系统设置里可能留着一条**看起来仍然开着**的旧条目，而当前进程的 `AXIsProcessTrusted()` 依旧返回 `false`。
+- 这些失配记录会**持续累积**：2026-07-29 清理 owner 本机时，一次清出 **32 条**同一应用的授权记录。用户看到的那条开着的开关很可能属于早已失效的某一条，所以「关开一次」「删掉重加一条」都可能无效——要把该应用的记录整个清空。
+- 反过来，**固定签名身份的授权跨版本有效**：本机固定证书（`macos-dock-cc Local Code Signing`）签的包，`cdhash` 从 `c043dc7a` 变到 `2e84976f`、构建号 9→10，授权依然有效。正式签名（Developer ID）是这个缺陷唯一的根治办法，本仓库当前尚未具备资格。
+- **不要从只读卷或 App Translocation 临时路径请求辅助功能权限**：那会在系统里留下一条指向随时消失的副本的死记录。先移入 `/Applications` 再注册。判据是**卷是否只读**而不是「路径在 `/Volumes` 下」——后者会误伤把应用装在移动硬盘上的用户。读写型磁盘映像是明确接受的漏拦边界。
+- Gatekeeper 放行 / 公证状态与 Accessibility 授权是两套独立机制；清除 quarantine 修不了旧 TCC 身份。
+- 外部判断权限有没有真正生效：`lsappinfo list | grep "pid = <pid>"` 报 `type="UIElement"` 说明应用已进入正常的无程序坞图标运行态。反过来 `Foreground` **只说明尚未进入**，不等于未受信——搬家引导态和权限恢复态都是「已受信但仍是 Foreground」。系统设置里的开关状态不作数。
+- 辅助功能列表里的「−」按钮在应用运行时是灰的，必须先退出应用才能删条目。
+
+## 窗口与观察
+
 - `CGWindowID` 在最小化后会从默认窗口列表里消失。
 - Accessibility 通知在某些应用中不可靠，尤其微信、飞书。
 - Finder 进程长期存在，不等价于“有 Finder 窗口”。

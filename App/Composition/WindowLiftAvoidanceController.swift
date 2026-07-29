@@ -235,8 +235,138 @@ final class WindowLiftAvoidanceController {
     private var traceEnabled = false
     private var isEnabled = false
 
-    init(host: PanelCoordinator) {
+    /// 冻结期间：只丢任务引用，绝不动 `states` / `managedFrames` / `suppressedFrames` /
+    /// `pendingRestorations`。撤权之后 AX 写不动窗口，这时候清掉快照等于永久丢失还原能力。
+    private var isPermissionFrozen = false
+    private var freezeGeneration: UInt64 = 0
+    /// 待还原窗口归控制器所有：还原成功一项才移除。以前这批数据是拷进局部变量
+    /// 再交给 detached task 的，中途失权时新的冻结机制根本接管不到。
+    private var pendingRestorations: [WindowLiftAvoidance.WindowKey: ManagedFrames] = [:]
+    /// 入列时的进程启动时间，用来在长时间冻结后识别 pid 复用。
+    private var pendingRestorationStartTimes: [WindowLiftAvoidance.WindowKey: timeval] = [:]
+    /// 被取消但还没跑完的写任务。取消的 AX 调用没法半路打断，恢复前必须排空，
+    /// 否则迟到的 rollback 会盖掉还原结果。
+    private var pendingDrains: [Task<Void, Never>] = []
+    private let isTrustedProbe: () -> Bool
+
+    private enum RestoreOutcome: Equatable {
+        /// 已还原、或已确认不需要还原（用户动过、窗口没了、pid 被复用）。
+        case handled
+        /// 这一轮够不着（多半是还没拿到辅助功能权限），留着下次再还。
+        case unreachable
+    }
+
+    init(host: PanelCoordinator, isTrustedProbe: @escaping () -> Bool = { AXIsProcessTrusted() }) {
         self.host = host
+        self.isTrustedProbe = isTrustedProbe
+    }
+
+    // MARK: - 权限冻结
+
+    /// 权限第一次读不到时调用。用户界面此刻还没有任何变化，但快照必须立刻锁住。
+    func beginPermissionUncertainty() {
+        enterFreeze(reason: "permissionUncertain")
+    }
+
+    /// 误报路径：权限又读到了。**分级解冻**——先排空旧 writer、提升代次拒绝迟到回调、
+    /// 按当前情况收敛被冻结的会话，最后才恢复轮询。直接清冻结位会留下一个
+    /// writer 已死、却永远不会重新发起写入的 `.writing` 会话（纯 reducer 对后续观察
+    /// 只更新代次），那个窗口就再也不动了。
+    func endPermissionUncertainty() {
+        guard isPermissionFrozen else { return }
+        freezeGeneration &+= 1
+        let generation = freezeGeneration
+        let drains = pendingDrains
+        pendingDrains.removeAll()
+
+        Task { @MainActor [weak self] in
+            for task in drains { await task.value }
+            guard let self, self.freezeGeneration == generation, self.isPermissionFrozen else { return }
+            self.isPermissionFrozen = false
+            self.convergeFrozenSessions()
+            self.start()
+        }
+    }
+
+    /// 权限刚刚恢复、准备重启进程之前调用：排空 → 解冻 → 还原 → 等还原跑完。
+    func restoreAndStopForPermissionRecovery() async {
+        freezeGeneration &+= 1
+        let drains = pendingDrains
+        pendingDrains.removeAll()
+        for task in drains { await task.value }
+
+        isPermissionFrozen = false
+        stop()
+        while let task = restoreTask {
+            await task.value
+        }
+    }
+
+    private func enterFreeze(reason: String) {
+        guard !isPermissionFrozen else { return }
+        isPermissionFrozen = true
+        // 已经排进主队列的 poll() 只看这个字段，必须一并关掉。
+        isEnabled = false
+        freezeGeneration &+= 1
+        pollTimer?.invalidate()
+        pollTimer = nil
+        scanGeneration &+= 1
+        scanTask?.cancel()
+        scanTask = nil
+        scanInFlight = false
+        stopTrackedProbe()
+        for observer in workspaceObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        workspaceObservers.removeAll()
+
+        for task in writeTasks.values {
+            task.cancel()
+            pendingDrains.append(task)
+        }
+        for tasks in writeDrainTasks.values { pendingDrains.append(contentsOf: tasks) }
+        writeTasks.removeAll()
+        writeDrainTasks.removeAll()
+
+        logger.notice("""
+            lift frozen reason=\(reason, privacy: .public) \
+            sessions=\(self.states.count, privacy: .public) \
+            pending=\(self.pendingRestorations.count, privacy: .public)
+            """)
+    }
+
+    /// 解冻收敛：writer 已经被取消的 `.writing` 会话不可能自己走完，就地清掉。
+    /// 用 `suppressUntilNative` 清，免得下一轮把「已经被抬起的位置」当成原生位置再抬一次。
+    private func convergeFrozenSessions() {
+        let stalled = states.compactMap { key, state -> WindowLiftAvoidance.WindowKey? in
+            if case .writing = state { return key }
+            return nil
+        }
+        for key in stalled {
+            clearManagedSession(
+                for: key,
+                cancelWriter: false,
+                reason: "permissionUnfreeze",
+                suppressUntilNative: true
+            )
+        }
+    }
+
+    /// 冻结期间禁止一切会抹掉会话数据的操作。
+    private func canMutateSessions() -> Bool { !isPermissionFrozen }
+
+    /// 破坏性入口的统一闸门，顺手做一次**静默**的受信自检（绝不带 prompt）。
+    ///
+    /// 快照保护必须是控制器自己的事：看门狗 5 秒采样一次，而这里 0.2 秒轮询一次。
+    /// 撤权之后到看门狗看见第一次 false 之间那 0–5 秒里，只要用户切一次屏，
+    /// `reconcileContext` 就会先清掉快照再去还原——而此刻 AX 已经写不动了。
+    private func ensureTrustedOrFreeze() -> Bool {
+        if isPermissionFrozen { return false }
+        guard isTrustedProbe() else {
+            enterFreeze(reason: "selfCheck")
+            return false
+        }
+        return true
     }
 
     deinit {
@@ -266,7 +396,9 @@ final class WindowLiftAvoidanceController {
     }
 
     func stop() {
-        guard isEnabled || pollTimer != nil else { return }
+        // 冻结之后 isEnabled 和 pollTimer 都已经清掉，只看这两个条件会让 stop() 空转、
+        // 待还原的窗口永远回不去——所以还得看有没有欠着的还原。
+        guard isEnabled || pollTimer != nil || !states.isEmpty || !pendingRestorations.isEmpty else { return }
         isEnabled = false
         pollTimer?.invalidate()
         pollTimer = nil
@@ -316,7 +448,7 @@ final class WindowLiftAvoidanceController {
     }
 
     private func poll() {
-        guard isEnabled else { return }
+        guard isEnabled, ensureTrustedOrFreeze() else { return }
         let context = host?.windowLiftAvoidanceContext()
         reconcileContext(context)
         guard let context, !scanInFlight, restoreTask == nil else { return }
@@ -490,6 +622,7 @@ final class WindowLiftAvoidanceController {
     }
 
     private func reconcileContext(_ context: WindowLiftAvoidanceContext?) {
+        guard canMutateSessions() else { return }
         guard context != lastContext else { return }
         observationWatermarks.removeAll()
         suppressedFrames.removeAll()
@@ -513,6 +646,8 @@ final class WindowLiftAvoidanceController {
         guard scanGeneration == self.scanGeneration else { return }
         scanTask = nil
         scanInFlight = false
+        // 已经排队的扫描回调也要过闸门：光给几个清理函数加 guard 挡不住在飞的工作。
+        guard canMutateSessions() else { return }
         guard host?.windowLiftAvoidanceContext() == context else { return }
 
         if let liveWindowKeys = result.liveWindowKeys {
@@ -1545,6 +1680,12 @@ final class WindowLiftAvoidanceController {
         generation: UInt64,
         outcome: OperationOutcome
     ) {
+        guard canMutateSessions() else {
+            // 取消写任务会走到这里。冻结期间不许它顺手把会话清掉——
+            // `.cancelled` / `.transientValidation` 分支都通向 clearManagedSession。
+            if let writer = writeTasks.removeValue(forKey: key) { pendingDrains.append(writer) }
+            return
+        }
         guard case let .writing(attempt) = states[key], attempt.generation == generation else {
             return
         }
@@ -1719,19 +1860,26 @@ final class WindowLiftAvoidanceController {
     }
 
     private func restoreSettledWindowsAndClearSessions() {
+        guard canMutateSessions() else { return }
+
         let cancelledWrites = Array(writeTasks.values) + writeDrainTasks.values.flatMap { $0 }
         for task in cancelledWrites { task.cancel() }
         writeTasks.removeAll()
         writeDrainTasks.removeAll()
-        let restorable = states.compactMap { key, state -> (WindowLiftAvoidance.WindowKey, ManagedFrames)? in
-            guard managedFrames[key] != nil else { return nil }
+
+        // 待还原数据入列即归控制器所有，还原成功一项才移除——这样中途失权时
+        // 冻结机制接管得到这批数据，恢复授权后还能接着还。
+        for (key, state) in states {
+            guard let frames = managedFrames[key] else { continue }
             switch state {
             case .writing, .lifted, .abandoned:
-                return (key, managedFrames[key]!)
+                pendingRestorations[key] = frames
+                pendingRestorationStartTimes[key] = ProcessLiveness.startTime(pid: key.pid)
             case .idle:
-                return nil
+                break
             }
         }
+
         states.removeAll()
         managedFrames.removeAll()
         suppressedFrames.removeAll()
@@ -1739,10 +1887,12 @@ final class WindowLiftAvoidanceController {
         validationGenerations.removeAll()
         lastTraceClassifications.removeAll()
         stopTrackedProbe()
-        guard (!restorable.isEmpty || !cancelledWrites.isEmpty), restoreTask == nil else { return }
+        guard !pendingRestorations.isEmpty || !cancelledWrites.isEmpty, restoreTask == nil else { return }
 
         restoreGeneration &+= 1
         let generation = restoreGeneration
+        let items = pendingRestorations
+        let startTimes = pendingRestorationStartTimes
         restoreTask = Task.detached { [weak self] in
             // A cancelled AX call cannot be interrupted mid-message. Drain every old writer before
             // allowing the next context to scan, so a late rollback cannot overwrite a new lift.
@@ -1752,43 +1902,20 @@ final class WindowLiftAvoidanceController {
 
             let reader = AXWindowReader()
             let liveWindowKeys = WindowLiftCGWindowProbe.liveWindowKeys()
-            for (key, frames) in restorable {
-                guard !Task.isCancelled,
-                      liveWindowKeys?.contains(key) != false,
-                      let handle = reader.captureHandle(
-                          forPID: key.pid,
-                          cgWindowID: key.cgWindowID,
-                          messagingTimeout: windowLiftAXMessagingTimeout
-                      ),
-                      let currentAXFrame = reader.frame(
-                          of: handle.element,
-                          messagingTimeout: windowLiftAXMessagingTimeout
-                      ) else {
-                    continue
-                }
-                let currentAppKitFrame = WindowLiftAvoidance.appKitFrame(
-                    fromQuartz: currentAXFrame,
-                    primaryScreenHeight: frames.primaryScreenHeight
-                )
-                switch WindowLiftAvoidance.frameClassification(
-                    of: currentAppKitFrame,
-                    nativeFrame: frames.nativeAppKit,
-                    targetFrame: frames.targetAppKit
-                ) {
-                case .target, .managedTrajectory:
-                    break
-                case .native, .external:
-                    continue
-                }
+            for (key, frames) in items {
                 guard !Task.isCancelled else { break }
-                _ = reader.setFrame(
-                    frames.nativeQuartz,
-                    for: handle.element,
-                    messagingTimeout: windowLiftAXMessagingTimeout,
-                    verificationTolerance: WindowLiftAvoidance.verificationTolerance,
-                    onlyIfCurrentMatches: currentAXFrame,
-                    restoreOnFailureTo: currentAXFrame
+                let outcome = Self.restoreOne(
+                    key: key,
+                    frames: frames,
+                    expectedStartTime: startTimes[key],
+                    reader: reader,
+                    liveWindowKeys: liveWindowKeys
                 )
+                guard outcome == .handled else { continue }
+                await MainActor.run { [weak self] in
+                    self?.pendingRestorations.removeValue(forKey: key)
+                    self?.pendingRestorationStartTimes.removeValue(forKey: key)
+                }
             }
             await MainActor.run { [weak self] in
                 guard let self, self.restoreGeneration == generation else { return }
@@ -1796,6 +1923,64 @@ final class WindowLiftAvoidanceController {
                 if self.isEnabled { self.poll() }
             }
         }
+    }
+
+    /// 长时间冻结之后才还原，中间什么都可能变过，所以每一项都要重新验一遍：
+    /// 进程有没有被换掉（pid 复用）、窗口还在不在（cgWindowID 复用）、
+    /// 用户有没有自己动过。任何一条对不上就丢弃，绝不硬改。
+    nonisolated private static func restoreOne(
+        key: WindowLiftAvoidance.WindowKey,
+        frames: ManagedFrames,
+        expectedStartTime: timeval?,
+        reader: AXWindowReader,
+        liveWindowKeys: Set<WindowLiftAvoidance.WindowKey>?
+    ) -> RestoreOutcome {
+        if let expected = expectedStartTime {
+            guard let current = ProcessLiveness.startTime(pid: key.pid),
+                  current.tv_sec == expected.tv_sec,
+                  current.tv_usec == expected.tv_usec else {
+                return .handled
+            }
+        }
+        if liveWindowKeys?.contains(key) == false { return .handled }
+
+        guard let handle = reader.captureHandle(
+                  forPID: key.pid,
+                  cgWindowID: key.cgWindowID,
+                  messagingTimeout: windowLiftAXMessagingTimeout
+              ),
+              let currentAXFrame = reader.frame(
+                  of: handle.element,
+                  messagingTimeout: windowLiftAXMessagingTimeout
+              ) else {
+            // 多半是还没拿到辅助功能权限。留在队列里，等授权回来再还。
+            return .unreachable
+        }
+
+        let currentAppKitFrame = WindowLiftAvoidance.appKitFrame(
+            fromQuartz: currentAXFrame,
+            primaryScreenHeight: frames.primaryScreenHeight
+        )
+        switch WindowLiftAvoidance.frameClassification(
+            of: currentAppKitFrame,
+            nativeFrame: frames.nativeAppKit,
+            targetFrame: frames.targetAppKit
+        ) {
+        case .target, .managedTrajectory:
+            break
+        case .native, .external:
+            return .handled
+        }
+
+        _ = reader.setFrame(
+            frames.nativeQuartz,
+            for: handle.element,
+            messagingTimeout: windowLiftAXMessagingTimeout,
+            verificationTolerance: WindowLiftAvoidance.verificationTolerance,
+            onlyIfCurrentMatches: currentAXFrame,
+            restoreOnFailureTo: currentAXFrame
+        )
+        return .handled
     }
 
     private func store(
@@ -1825,6 +2010,14 @@ final class WindowLiftAvoidanceController {
         reason: String,
         suppressUntilNative: Bool = false
     ) {
+        guard canMutateSessions() else {
+            // 冻结期间只丢任务引用，会话数据一概不动。
+            if let writer = writeTasks.removeValue(forKey: key) {
+                if cancelWriter { writer.cancel() }
+                pendingDrains.append(writer)
+            }
+            return
+        }
         if cancelWriter, let writer = writeTasks.removeValue(forKey: key) {
             writer.cancel()
             writeDrainTasks[key, default: []].append(writer)

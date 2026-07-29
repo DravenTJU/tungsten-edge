@@ -404,7 +404,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        guard let url = AccessibilitySettingsLink.url else { return }
         NSWorkspace.shared.open(url)
     }
 

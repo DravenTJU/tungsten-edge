@@ -100,6 +100,9 @@ final class PanelCoordinator: NSObject {
     /// 跨面板拖动（拖卡进抽屉 路线 C）的唯一权威：载体面板 + 鼠标监视器 + 落点收尾都在它里面。
     /// 必须在 setupDockPanel/setupCapsulePanel 之前建好，因为要注入进这两个面板的 hosting。
     private var dragController: DragController!
+    /// 权限丢失后的挂起态。刻意**不**复用 `visibilityState.hideReasons`——
+    /// 那套是给全屏和边缘自动隐藏用的，混进来会让底边唤醒把面板又拉回屏幕。
+    private var isSuspendedForPermissionLoss = false
     private var drawerLocalMonitor: Any?
     private var drawerGlobalMonitor: Any?
     // MARK: 文件夹/中转弹窗状态（单面板复用 = 天然「同时只有一个弹窗」）
@@ -268,6 +271,42 @@ final class PanelCoordinator: NSObject {
 
     func toggleDrawer() {
         if drawerWantsOpen { closeDrawer() } else { openDrawer() }
+    }
+
+    /// 权限丢失时把整套面板拆干净并交出所有权（调用方随后置空引用即可）。幂等。
+    ///
+    /// 这里刻意**不**走「手工列一份摘监视器清单」的路子——漏项风险太高：
+    /// `DockStripView` 自己在 `NSViewRepresentable` 里装了力度点击 / 中键监视器，
+    /// 只有视图树真被拆掉才会触发 `dismantleNSView` 去摘；而 `deinit` 已经覆盖了
+    /// hover 监视器和一整排定时器，那份清单会随新增资源一起被维护。
+    /// 所以：拆视图树 → 关面板 → 让调用方释放本对象走 `deinit`。
+    ///
+    /// 不做对称的 resume：权限恢复后是整个进程重启，没有「恢复运行」这条路径。
+    func suspendAndRelease() {
+        guard !isSuspendedForPermissionLoss else { return }
+        isSuspendedForPermissionLoss = true
+
+        // 先回滚未提交的跨面板拖拽事务，再拆监视器。
+        dragController?.cancelDrag()
+        closeDrawer()
+        closeFolderPopup(immediately: true)
+        dismissWindowTitleTooltip()
+        cancelHoverSwitch()
+
+        // 换掉 contentView 触发 SwiftUI 拆树；两个 host 是独立强引用，得单独置空。
+        drawerContentHost = nil
+        folderPopupContentHost = nil
+        for panel in [dockPanel, capsulePanel, drawerPanel, folderPopupPanel, windowTitleTooltipPanel] {
+            guard let panel else { continue }
+            panel.contentView = NSView()
+            panel.orderOut(nil)
+            panel.close()
+        }
+        dockPanel = nil
+        capsulePanel = nil
+        drawerPanel = nil
+        folderPopupPanel = nil
+        windowTitleTooltipPanel = nil
     }
 
     /// 最大化避让只在钨极常驻且真正可见时取得上下文；一次性返回完整几何，避免切屏时撕裂读取。
@@ -1790,6 +1829,7 @@ final class PanelCoordinator: NSObject {
     }
 
     private func applyPanelVisibility() {
+        guard !isSuspendedForPermissionLoss else { return }
         let shouldShow = visibilityState.isVisible
         guard shouldShow != panelsAreVisible else { return }
         panelsAreVisible = shouldShow

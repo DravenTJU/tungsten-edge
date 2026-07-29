@@ -33,15 +33,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var terminationTask: Task<Void, Never>?
     private var debugWindow: NSWindow?
     private var permissionWindow: NSWindow?
+    private var permissionHostingView: NSHostingView<PermissionOnboardingWindowContent>?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var messagingAutoRegisterSubscription: AnyCancellable?
-    private var permissionModel: AccessibilityPermissionModel?
+    private let permissionService = PermissionService()
+    private var installLocation: AppInstallLocation = .other
+    private var permissionCoordinator: PermissionRecoveryCoordinator?
+    private var permissionWatchdogTimer: Timer?
+    private var hasStartedApp = false
+    private let permissionLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "permissions")
     private lazy var statusMenuController = StatusMenuController(
         store: settingsStore,
         launchAtLoginService: LaunchAtLoginService(),
         nativeDockPreferencesService: NativeDockPreferencesService(),
         updateChecker: GitHubUpdateChecker(),
-        isAccessibilityTrusted: { PermissionService().hasRequiredPermissions() },
+        isAccessibilityTrusted: { [permissionService] in permissionService.hasRequiredPermissions() },
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
         onQuit: { NSApp.terminate(nil) },
@@ -54,31 +60,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 日志要攒满缓冲区才落盘。改成行缓冲后每条 print 立即写出，便于实时读日志。
         setvbuf(stdout, nil, _IOLBF, 0)
 
-        terminateOtherInstances()
+        // 位置分类必须排在接管其他实例和注册热键**之前**。
+        // 挂载磁盘映像双击运行时，那份临时副本一旦执行 terminateOtherInstances()，
+        // 就会把用户正在用的 /Applications 实例杀掉，自己却只显示一个搬家引导；
+        // 抢注了全局热键还会让正常实例的 ⌥⇧⌘D 失灵。
+        let location = AppInstallLocation(
+            bundleURL: Bundle.main.bundleURL,
+            isReadOnlyVolume: { [permissionService] in permissionService.isReadOnlyVolume($0) }
+        )
+        installLocation = location
+        let trusted = permissionService.hasRequiredPermissions()
+        logPermissionLaunch(installLocation: location, isTrusted: trusted)
 
-        // 先注册热键再建状态菜单：菜单构建时要读注册状态决定是否显示快捷键提示。
-        // Carbon 热键不依赖辅助功能权限，不用等权限引导分支。
-        let hotKey = GlobalHotKeyMonitor(shortcut: .edgeAutoHideMode) { [weak self] in
-            self?.settingsStore.toggleEdgeAutoHideMode()
-        }
-        edgeToggleHotKey = hotKey
-        let hotKeyStatus = hotKey.start()
-        if hotKeyStatus != .registered {
-            Logger(subsystem: "com.caye.macosdockcc.v2", category: "hotkey")
-                .warning("常驻切换全局快捷键注册失败：\(String(describing: hotKeyStatus), privacy: .public)，本次启动不重试")
+        if !location.isTransient {
+            terminateOtherInstances()
+
+            // 先注册热键再建状态菜单：菜单构建时要读注册状态决定是否显示快捷键提示。
+            // Carbon 热键不依赖辅助功能权限，不用等权限引导分支。
+            let hotKey = GlobalHotKeyMonitor(shortcut: .edgeAutoHideMode) { [weak self] in
+                self?.settingsStore.toggleEdgeAutoHideMode()
+            }
+            edgeToggleHotKey = hotKey
+            let hotKeyStatus = hotKey.start()
+            if hotKeyStatus != .registered {
+                Logger(subsystem: "com.caye.macosdockcc.v2", category: "hotkey")
+                    .warning("常驻切换全局快捷键注册失败：\(String(describing: hotKeyStatus), privacy: .public)，本次启动不重试")
+            }
+
+            _ = statusMenuController
         }
 
-        _ = statusMenuController
+        let coordinator = PermissionRecoveryCoordinator(
+            handler: self,
+            permissionService: permissionService,
+            installLocation: location
+        )
+        permissionCoordinator = coordinator
+        coordinator.launched(trusted: trusted)
+    }
 
-        if AXIsProcessTrusted() {
-            NSApp.setActivationPolicy(.accessory)
-            startApp()
-        } else {
-            // 没有权限时任务条不会创建任何面板，保持 accessory 会让用户只能看到一个
-            // 不一定明显的状态栏图标；先用普通应用策略把权限引导窗口带到前台。
-            NSApp.setActivationPolicy(.regular)
-            requestAccessibilityPermission()
-        }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // 用户从系统设置切回来时立刻复检，不用等下一次轮询。
+        permissionCoordinator?.applicationDidBecomeActive()
+    }
+
+    private func logPermissionLaunch(installLocation: AppInstallLocation, isTrusted: Bool) {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info?["CFBundleVersion"] as? String ?? "unknown"
+        permissionLogger.info("""
+            permission launch version=\(version, privacy: .public) \
+            build=\(build, privacy: .public) \
+            location=\(installLocation.rawValue, privacy: .public) \
+            trusted=\(isTrusted, privacy: .public) \
+            bundlePath=\(Bundle.main.bundleURL.path, privacy: .private(mask: .hash))
+            """)
     }
 
     /// 同一个 bundle id 的另一份包（`/Applications` 正式包 vs 构建目录里的开发包）可以
@@ -114,9 +150,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // 收尾等待（stopAndRestore）期间事件循环还在跑：先切断热键输入，避免设置被继续切换。
+        // 收尾等待（stopAndRestore）期间事件循环还在跑：先切断热键输入，避免设置被继续切换，
+        // 并让协调器取消在飞的恢复任务——光设阶段拦不住已经进了 await 的 Task，
+        // 那会在退出之后还去拉起一个新实例。
         edgeToggleHotKey?.stop()
+        permissionCoordinator?.terminationRequested()
+
         guard let controller = windowLiftAvoidanceController else { return .terminateNow }
+        // 没有权限时 AX 写不动窗口，等 stopAndRestore 只是白等。
+        guard permissionService.hasRequiredPermissions() else { return .terminateNow }
         guard terminationTask == nil else { return .terminateLater }
 
         terminationTask = Task { @MainActor [weak self] in
@@ -129,62 +171,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         edgeToggleHotKey?.stop()
+        permissionCoordinator?.terminationRequested()
         windowLiftAvoidanceController?.stop()
         runtime.stop()
     }
 
-    private func requestAccessibilityPermission() {
-        showPermissionWindow()
-        // 系统原生提示框：把本应用注册进辅助功能列表，并在首次请求时提示用户打开设置。
-        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-
-        let model = AccessibilityPermissionModel()
-        model.onGranted = { [weak self] in self?.handlePermissionGranted() }
-        permissionModel = model
-        model.startPolling()
-    }
-
-    private func handlePermissionGranted() {
-        permissionModel?.stop()
-        permissionModel = nil
-        permissionWindow?.orderOut(nil)
-        permissionWindow?.close()
-        permissionWindow = nil
-        NSApp.setActivationPolicy(.accessory)
-        startApp()
-    }
-
+    /// 引导窗口。文案长度随状态变化很大（排障区展开时几乎翻倍），
+    /// 所以宽度固定、高度跟着内容走，并以当前屏幕可视高度封顶。
     private func showPermissionWindow() {
+        guard let coordinator = permissionCoordinator else { return }
         if let permissionWindow {
+            resizePermissionWindowToFit()
             permissionWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
+        let hosting = NSHostingView(rootView: PermissionOnboardingWindowContent(coordinator: coordinator))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 250),
+            contentRect: NSRect(x: 0, y: 0, width: PermissionOnboardingView.contentWidth, height: 260),
             styleMask: [.titled, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Tungsten Edge 钨极"
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: PermissionOnboardingView(
-            onOpenSettings: { [weak self] in self?.openAccessibilitySettings() },
-            onQuit: { NSApp.terminate(nil) }
-        ))
+        window.contentView = hosting
+        permissionWindow = window
+        permissionHostingView = hosting
+        resizePermissionWindowToFit()
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        permissionWindow = window
     }
 
-    private func openAccessibilitySettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
-        NSWorkspace.shared.open(url)
+    private func resizePermissionWindowToFit() {
+        guard let window = permissionWindow, let coordinator = permissionCoordinator else { return }
+
+        // 用一次性探针量「不加滚动时的自然高度」：真正的根视图外面套了 ScrollView，
+        // 它自己的 fittingSize 量不出内容有多高。
+        let probe = NSHostingView(rootView: PermissionOnboardingView(coordinator: coordinator))
+        probe.setFrameSize(NSSize(width: PermissionOnboardingView.contentWidth, height: 0))
+        probe.layoutSubtreeIfNeeded()
+        let natural = probe.fittingSize.height
+
+        let available = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 900
+        let height = max(200, min(natural, available - 80))
+        let size = NSSize(width: PermissionOnboardingView.contentWidth, height: height)
+        guard window.contentView?.frame.size != size else { return }
+
+        let before = window.frame
+        window.setContentSize(size)
+        // 保持视觉中心不动，别让窗口在文案变长时往下窜。
+        let after = window.frame
+        window.setFrameOrigin(NSPoint(
+            x: before.midX - after.width / 2,
+            y: before.midY - after.height / 2
+        ))
     }
 
-    private func startApp() {
+    private func closePermissionWindow() {
+        permissionWindow?.orderOut(nil)
+        permissionWindow?.close()
+        permissionWindow = nil
+        permissionHostingView = nil
+    }
+
+    private func startTaskbarRuntime() {
         appMembershipController.reconcileInvalidMemberships()
         runningApplicationStore.start()
         runtime.start()
@@ -287,4 +340,114 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         debugWindow = window
     }
 
+}
+
+// MARK: - 权限状态机的副作用执行
+
+extension AppDelegate: PermissionEffectHandler {
+    func startApp() {
+        guard !hasStartedApp else { return }
+        hasStartedApp = true
+        startTaskbarRuntime()
+    }
+
+    func setActivationPolicy(_ policy: PermissionActivationPolicy) {
+        switch policy {
+        case .accessory:
+            NSApp.setActivationPolicy(.accessory)
+        case .regular:
+            // 没有权限时任务条不会创建任何面板，保持 accessory 会让用户只能看到一个
+            // 不一定明显的状态栏图标；先用普通应用策略把引导窗口带到前台。
+            NSApp.setActivationPolicy(.regular)
+        }
+    }
+
+    func showGuideWindow() { showPermissionWindow() }
+    func updateGuideWindow() { resizePermissionWindowToFit() }
+    func closeGuideWindow() { closePermissionWindow() }
+
+    func openAccessibilitySettings() {
+        guard let url = AccessibilitySettingsLink.url else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openApplicationsFolder() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
+    }
+
+    func releaseHotKey() { edgeToggleHotKey?.stop() }
+
+    func registerHotKey() { _ = edgeToggleHotKey?.start() }
+
+    func terminateSelf() { NSApp.terminate(nil) }
+
+    // MARK: 运行期恢复
+
+    /// 5 秒一采样。防抖判定在纯 `PermissionLossDetector` 里，这里只负责喂数据。
+    /// 注意这**不是**窗口快照的保护机制——那个由 `WindowLiftAvoidanceController`
+    /// 自己在 0.2 秒的轮询里自检，否则这 5 秒的空窗足够丢掉还原数据。
+    func startWatchdog() {
+        stopWatchdog()
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.permissionCoordinator?.sampleTrust(self.permissionService.hasRequiredPermissions())
+            }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        permissionWatchdogTimer = timer
+    }
+
+    func stopWatchdog() {
+        permissionWatchdogTimer?.invalidate()
+        permissionWatchdogTimer = nil
+    }
+
+    func freezeLiftSnapshots() {
+        windowLiftAvoidanceController?.beginPermissionUncertainty()
+    }
+
+    func unfreezeLiftSnapshots() {
+        windowLiftAvoidanceController?.endPermissionUncertainty()
+    }
+
+    func suspendPanelsAndStores() {
+        messagingAutoRegisterSubscription?.cancel()
+        messagingAutoRegisterSubscription = nil
+        runtime.onToggleDrawer = nil
+        panelCoordinator?.suspendAndRelease()
+        panelCoordinator = nil
+        badgeStore.stop()
+        runtime.stop()
+        runningApplicationStore.stop()
+    }
+
+    /// 权限刚回来，AX 才写得动窗口——整条恢复链把还原推迟到这一刻就是为了这个。
+    func restoreLiftedWindows(episode: UInt64) async {
+        await windowLiftAvoidanceController?.restoreAndStopForPermissionRecovery()
+        windowLiftAvoidanceController = nil
+    }
+
+    func launchNewInstance(episode: UInt64) async -> Result<Void, Error> {
+        let configuration = NSWorkspace.OpenConfiguration()
+        // 这里制造第二个实例是**故意**的：新实例的 terminateOtherInstances() 会来收掉本实例。
+        // 和「build_and_run.sh 里禁用 open -n」那条护栏不是一回事——那条禁的是构建脚本
+        // 不等旧进程退出就凭空多开一份，制造出两条一模一样的任务条。
+        configuration.createsNewApplicationInstance = true
+        configuration.activates = true
+        let url = Bundle.main.bundleURL
+
+        return await withCheckedContinuation { continuation in
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+                // 这个 completion 在并发队列上回调。这里只 resume，
+                // 后续动状态机 / 热键 / 界面的活儿都在协调器的 @MainActor Task 里做。
+                if let error {
+                    continuation.resume(returning: .failure(error))
+                } else {
+                    continuation.resume(returning: .success(()))
+                }
+            }
+        }
+    }
 }
