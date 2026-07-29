@@ -106,7 +106,9 @@ git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^
 
 | 条目 | 是否仍可干净回退 | 说明 |
 | --- | --- | --- |
-| `d08e8d6` 彻底隐藏 / `42f70eb` 扫描准入 / `203b69c` 二维码 / `15f8fd6` 文档追平 | ✅ 单点成立 | 本轮新增，尚未被覆盖 |
+| `cfd6a71` 主线实例可信 | ✅ 单点成立 | 2026-07-29 新增，见下表条目 |
+| `d08e8d6` 彻底隐藏 / `203b69c` 二维码 / `15f8fd6` 文档追平 | ✅ 单点成立 | 2026-07-29 新增，尚未被覆盖 |
+| `42f70eb` 扫描准入 | ⚠️ 不再是单点（仅 `project.pbxproj` 一处） | **当天就衰减了**：早上复检还干净，`cfd6a71` 把 `BuildProvenance.swift` 加进工程文件、又 bump 了构建号，与 `42f70eb` 加 `ScanAdmissionDecision.swift` 的位置相邻。冲突只在 `macos-dock-cc-v2.xcodeproj/project.pbxproj`，**源码零冲突**，手工解一下工程文件即可，代价远小于下面那三条 |
 | `8af961c` 启停首帧位置锚定 | ✅ 单点成立 | 跨多版本仍干净 |
 | `bcef0ed` 菜单与唤醒快捷键调整 | ⛔ **退役，不要再执行** | 已被 `d08e8d6` 取代：它要撤销的「⌥⌘D 作为该命令快捷键展示」在当前代码里已不存在。冲突 6 个文件（含 `NativeDockPreferencesService.swift`）。要回到那个行为，改为回退 `d08e8d6` |
 | `b503fd6` POSIX 判活 + 释放日志 | ⚠️ 不再是单点 | 冲突 `ProcessLiveness.swift` + `project.pbxproj`。起因是 `42f70eb` 为做进程世代校验往 `ProcessLiveness.swift` 加了 `startTime`。真要回退需连 `42f70eb` 一起处理 |
@@ -114,8 +116,11 @@ git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^
 
 **每次发版前跑一遍这个复检**，把结果日期更新到这里；发现某条退役就明确标掉，别留着让人以为还能用。
 
+衰减比想象的快：`42f70eb` 在**同一天内**就从「单点」变成了「要手工解工程文件」，起因只是又新增了一个源文件（`project.pbxproj` 是最容易互相踩的文件，几乎任何新增文件都会碰它）。所以复检的正确频率不是「想起来时」，而是**每次发版前**，外加**任何一次新增源文件之后**。
+
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
+| **撤销主线实例可信改造** | `git revert cfd6a71` | 保留 v0.7.0 全部功能；失去三件事：菜单版本行不再标「· 开发版 / · 非安装位置」、启动时不再终止同 bundle id 的其他实例、`build_and_run.sh` 退回 `open -n`（强制多开）。开发线构建号退回 8，与已发布的 `0.7.0 (8)` 重新撞号 | **↩ 单点，无代码数据边界，但有机器状态边界**：回退**不影响**已经修好的系统侧状态——登录项仍指向 `/Applications/Tungsten Edge.app/`、`/Applications` 里仍是唯一一份 0.7.0，这些是本机操作的结果、不由代码控制。真正失去的是**防复发能力**：回退后若再在开发构建上勾选「登录时启动」，会重新掉进 2026-07-21 / 07-26 那两次误诊。删除 `Core/Support/BuildProvenance.swift` 及其 7 项单测。全量测试 493/493、单实例接管已实机验证（强开第二个实例后 4 秒内只剩新的）、owner 于 2026-07-29 验收 |
 | **撤销系统 Dock 彻底隐藏改造** | `git revert d08e8d6` | 保留 v0.7.0 其余全部功能；菜单命令退回只切 `autohide` 的普通自动隐藏（不再写 `autohide-delay`、不再恢复隐藏前延迟），标题回到动态「隐藏 / 显示系统 Dock」，`⌥⌘D` 重新作为该命令的快捷键展示并恢复菜单追踪期跳过逻辑 | **↩ 单点，有系统侧数据边界**：回退**不会**自动把系统 `com.apple.dock` 的 `autohide-delay` 改回去——若回退时 Dock 正处于彻底隐藏态，用户需手动在系统设置调回唤醒延迟，或回退前先点一次「显示系统 Dock」。应用自身的恢复快照键（`com.tungsten.edge.nativeDock.restoreDelay.*`）会成为孤儿，无害但不再被读取。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
 | **撤销扫描准入 ScanAdmissionDecision 修复** | `git revert 42f70eb` | 保留 v0.7.0 其余全部功能；补扫轮次恢复用原始 `AXWindows` 非空作为准入依据，Tailscale 这类应用会重新出现「永不消失的空图标」 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：移除新增 `Platform/AppTracking/ScanAdmissionDecision.swift` 与其单测，恢复 `AppTracker` 补扫路径的旧准入与第二次无超时 AX 读取。注意误准入是**永久性**的——`reconcile()` 只清理已死进程，回退后已产生的空图标要重启钨极才会消失。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
 | **撤销菜单与唤醒快捷键调整** | `git revert bcef0ed` | 保留正式版 `v0.6.6@dd85d86` 全部功能；移除「打开系统 Dock 设置…」，钨极快捷键恢复为 ⌥⌘E，消息成员菜单恢复「标记 / 取消标记」动态标题。没有新 UserDefaults key 或迁移；回退不会反转用户已经通过既有 kept / messaging 菜单做出的选择 | **↩ 单点，无 schema 数据边界，已验证 revert**：临时 detached worktree 执行 `git revert --no-commit bcef0ed` 无冲突，工作树与索引均和 `dd85d86` 完全一致；定向测试 84/84、Debug 全量测试 474/474、Debug 构建与唯一实例启动通过；owner 于 2026-07-25 实机验收通过；`git diff --check` 无输出 |

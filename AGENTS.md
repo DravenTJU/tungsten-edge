@@ -203,6 +203,16 @@
 - Minimum deployment target is **macOS 12**. Guard newer APIs with availability checks and Monterey-compatible fallbacks.
 - Old single-value `onChange` deprecation warnings are expected back-deployment noise.
 
+## Running Instance Identity
+
+Everything in this section exists because of two real misdiagnoses (2026-07-21 "two identical taskbars → a fix that was never actually verified got judged broken and reverted"; 2026-07-26 "minimize feel is off → suspected a version regression, actually a Debug build"). Root cause was a single fact, fixed 2026-07-29.
+
+- **`SMAppService.mainApp.register()` registers whichever bundle is running at that moment** (`App/Composition/LaunchAtLoginService.swift:80`). Ticking 「登录时启动」 while a build-directory app is running pins the login item to `build/DerivedData/.../Debug/` — from then on every boot launches the **dev build**, whose contents get overwritten by the next `build_and_run.sh` and deleted by a clean build. **Never tick it on a dev build.** If `sfltool dumpbtm` shows the entry's URL is not `/Applications/`, the only correct repair is: untick in the running dev instance → quit every instance → launch the `/Applications` copy → tick again there. A fresh registration may sit at `Disposition: disabled` (`requiresApproval`) until the user approves it in 「系统设置 → 通用 → 登录项与扩展」 — that is not a failure.
+- **`AppDelegate.terminateOtherInstances()` is not redundant code.** Two bundles with the same bundle id (installed copy vs build directory) run side by side happily, producing two identical taskbars with no way to tell which one a test just exercised. Keep **later-launch-takes-over** — the reverse (new instance quits itself) would block the dev verification build and contradicts `build_and_run.sh`'s existing pkill. Terminate politely first so the old instance's `stopAndRestore` returns lifted windows to their native frames; only `forceTerminate` after the 3s grace. It logs the losing instance's bundle path — keep that, it is the only forensic trace if this recurs.
+- **Never use `open -n` in `Scripts/build_and_run.sh`.** That flag's entire purpose is forcing an additional instance; the script was manufacturing the very duplicates it was meant to avoid. Wait for the old process to actually exit, then plain `open`.
+- **The version line's provenance suffix (`BuildProvenance`, unit-tested) is not decoration.** The mainline version is not bumped after a release, so a dev build and the user's installed copy print an identical version string; the suffix is the only way to tell them apart by eye. Debug wins over location — a Debug build copied into `/Applications` is still a Debug build, and its feel differs (no compiler optimization). `installedPrefix` keeps its trailing slash so `/ApplicationsOld/…` is not mistaken for installed.
+- Only one copy of the app may live in `/Applications`. A second bundle with the same id (a `*-backup` left beside it) makes LaunchServices' bundle-id resolution nondeterministic.
+
 ## Collaboration Rule
 
 The owner directs product, does not read code, and does not read English comfortably. Reply in Chinese.
