@@ -28,4 +28,22 @@ enum ProcessLiveness {
         if result == 0 { return true }
         return errorCode != ESRCH
     }
+
+    /// 进程**启动时刻**（`KERN_PROC_PID` sysctl 读 `kinfo_proc.kp_proc.p_starttime`）。
+    ///
+    /// 用途：pid 会被复用。异步探测期间进程 A 可能退出、pid 被 B 顶替，此时
+    /// `isTerminated` / `activationPolicy` 都查不出"实例换人"——`pid + 启动时刻` 才是稳定的
+    /// 进程代际身份。**不用 `NSRunningApplication.launchDate`**：它可为 nil，缺失时要么放行
+    /// （把旧进程的 AX element 预载给新进程）要么拒收（某些 App 永远进不了补扫），两头都是坑；
+    /// sysctl 对活进程一定有值。
+    ///
+    /// 返回 nil = 进程已不存在（pid 不存在时 sysctl 返回 0 但把 size 置 0，必须查 size）。
+    static func startTime(pid: pid_t) -> timeval? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        let result = sysctl(&mib, u_int(mib.count), &info, &size, nil, 0)
+        guard result == 0, size > 0 else { return nil }
+        return info.kp_proc.p_starttime
+    }
 }

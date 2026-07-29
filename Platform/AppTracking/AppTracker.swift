@@ -1075,40 +1075,115 @@ final class AppTracker: ObservableObject {
 
     private func scanNonAdmittedApps() {
         guard !isScanningCandidates else { return }
-        let candidatePIDs: [pid_t] = NSWorkspace.shared.runningApplications.compactMap { app in
-            guard isRegularNonSelf(app), !app.isTerminated, apps[app.processIdentifier] == nil else { return nil }
-            return app.processIdentifier
-        }
-        guard !candidatePIDs.isEmpty else { return }
+        // 候选连同**探测时刻的进程代际**一起带走：后台探测期间 pid 可能被复用，回调必须能认出换人。
+        let candidates: [(pid: pid_t, identity: ScanAdmissionDecision.ProcessIdentity)] =
+            NSWorkspace.shared.runningApplications.compactMap { app in
+                let pid = app.processIdentifier
+                guard isRegularNonSelf(app), !app.isTerminated, apps[pid] == nil else { return nil }
+                return (pid, processIdentity(pid: pid, bundleID: app.bundleIdentifier))
+            }
+        guard !candidates.isEmpty else { return }
 
         isScanningCandidates = true
         let reader = self.reader
 
         Task.detached { [weak self] in
-            var found: [pid_t] = []
-            for pid in candidatePIDs {
-                let result = reader.inventoryWindows(forPID: pid, messagingTimeout: 0.1)
-                if case .success(let snaps) = result, !snaps.isEmpty {
-                    found.append(pid)
-                }
+            // 后台只做 AX 读（限时 100ms，挂死 App 不拖主线程）。eligible 过滤放主线程：它依赖
+            // 实例属性 eligibilityPolicy，且只是对已读字段的纯计算，零 AX 往返。
+            var probed: [(pid: pid_t, identity: ScanAdmissionDecision.ProcessIdentity, result: AXWindowReadResult)] = []
+            for candidate in candidates {
+                probed.append((
+                    candidate.pid,
+                    candidate.identity,
+                    reader.inventoryWindows(forPID: candidate.pid, messagingTimeout: 0.1)
+                ))
             }
-            let pidsWithWindows = found
+            let results = probed
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isScanningCandidates = false
-                var admitted = false
-                for pid in pidsWithWindows {
-                    guard self.apps[pid] == nil,
-                          let app = NSRunningApplication(processIdentifier: pid),
-                          !app.isTerminated else { continue }
-                    self.addApp(app, enumerateImmediately: true)
-                    self.logger.info("scan: admitted pid=\(pid) (\(app.localizedName ?? app.bundleIdentifier ?? "?"))")
-                    admitted = true
-                }
-                if admitted { self.rebuildSnapshot() }
+                self.admitScannedApps(results)
             }
         }
+    }
+
+    /// 补扫收编。三条硬规则（都在 `ScanAdmissionDecision` 里被单测锁住）：
+    /// 准入看 **eligible 过滤后**的集合（原始 AX 列表非空 ≠ 有可上任务栏的窗口，误收会留下永久
+    /// `app-*` 卡）；探测结果**必须复用**（禁止再来一次无超时 AX 读，那正是 100ms 限时探测要
+    /// 避开的主线程阻塞）；进程态与进程代际在主线程回调里**重查**（pid 可能已被复用）。
+    private func admitScannedApps(
+        _ probed: [(pid: pid_t, identity: ScanAdmissionDecision.ProcessIdentity, result: AXWindowReadResult)]
+    ) {
+        guard !probed.isEmpty else { return }
+        let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
+        var admitted = false
+
+        for entry in probed {
+            guard let app = NSRunningApplication(processIdentifier: entry.pid) else { continue }
+            let bundleID = app.bundleIdentifier
+            let policy = app.activationPolicy
+
+            let rawWindows: [AXWindowSnapshot]?
+            let readOutcome: InventoryAXReadOutcome
+            switch entry.result {
+            case .success(let snaps):
+                rawWindows = snaps
+                readOutcome = .success(count: snaps.count)
+            case .unread(let error):
+                rawWindows = nil
+                readOutcome = .unread(errorCode: error.rawValue)
+            }
+
+            let prepared = ScanAdmissionDecision.prepare(rawWindows: rawWindows) {
+                isEligible($0, bundleIdentifier: bundleID, activationPolicy: policy)
+            }
+            let verdict = ScanAdmissionDecision.verdict(
+                prepared,
+                probedIdentity: entry.identity,
+                currentIdentity: processIdentity(pid: entry.pid, bundleID: bundleID),
+                isRegularNonSelf: isRegularNonSelf(app),
+                isTerminated: app.isTerminated,
+                alreadyTracked: apps[entry.pid] != nil
+            )
+            guard verdict == .admit else { continue }
+
+            admit(app: app, prepared: prepared, readOutcome: readOutcome, cgSnapshot: cgSnapshot)
+            admitted = true
+        }
+
+        if admitted { rebuildSnapshot(onScreenCGIDs: cgSnapshot.onScreenWindowIDs) }
+    }
+
+    /// 落地一次补扫收编。只接受 `Prepared`——原始 AX 列表不进入这个作用域，从作用域上杜绝
+    /// 把未过滤的数组喂给 `reconcileSeats`。
+    private func admit(
+        app: NSRunningApplication,
+        prepared: ScanAdmissionDecision.Prepared<AXWindowSnapshot>,
+        readOutcome: InventoryAXReadOutcome,
+        cgSnapshot: AppTrackerCGWindowSnapshot
+    ) {
+        let pid = app.processIdentifier
+        addApp(app, enumerateImmediately: false)
+        reconcileSeats(
+            pid: pid,
+            cgSnapshot: cgSnapshot,
+            now: Date(),
+            source: .initialEnumeration,
+            preloadedEligible: prepared.eligible,
+            preloadedReadOutcome: readOutcome
+        )
+        logger.info("scan: admitted pid=\(pid) (\(app.localizedName ?? app.bundleIdentifier ?? "?"))")
+    }
+
+    private func processIdentity(pid: pid_t, bundleID: String?) -> ScanAdmissionDecision.ProcessIdentity {
+        let start = ProcessLiveness.startTime(pid: pid)
+        return ScanAdmissionDecision.ProcessIdentity(
+            pid: pid,
+            startTimeSec: start.map { Int64($0.tv_sec) },
+            startTimeUsec: start.map { $0.tv_usec },
+            bundleID: bundleID
+        )
     }
 
     // MARK: - Snapshot Building

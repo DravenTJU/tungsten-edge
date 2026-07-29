@@ -183,6 +183,9 @@
 		A00000000000000000009E16 /* ProcessLiveness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E03 /* ProcessLiveness.swift */; };
 		A00000000000000000009E17 /* ProcessLiveness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E03 /* ProcessLiveness.swift */; };
 		A00000000000000000009E18 /* ProcessLivenessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E04 /* ProcessLivenessTests.swift */; };
+		A00000000000000000009E19 /* ScanAdmissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E05 /* ScanAdmissionDecision.swift */; };
+		A00000000000000000009E1A /* ScanAdmissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E05 /* ScanAdmissionDecision.swift */; };
+		A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */; };
 		A00000000000000000009A01 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
 		A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
 		A00000000000000000009A11 /* WindowLiftAvoidanceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A10 /* WindowLiftAvoidanceController.swift */; };
@@ -212,6 +215,8 @@
 		A00000000000000000009E02 /* AXWindowReaderResultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXWindowReaderResultTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E03 /* ProcessLiveness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLiveness.swift; sourceTree = "<group>"; };
 		A00000000000000000009E04 /* ProcessLivenessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLivenessTests.swift; sourceTree = "<group>"; };
+		A00000000000000000009E05 /* ScanAdmissionDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAdmissionDecision.swift; sourceTree = "<group>"; };
+		A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAdmissionDecisionTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitor.swift; sourceTree = "<group>"; };
 		A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyMonitorTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009A00 /* WindowLiftAvoidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLiftAvoidance.swift; sourceTree = "<group>"; };
@@ -592,6 +597,7 @@
 				A00000000000000000009600 /* TabFoldDecision.swift */,
 				A00000000000000000009E00 /* WindowInventoryAnomalyLog.swift */,
 				A00000000000000000009E03 /* ProcessLiveness.swift */,
+				A00000000000000000009E05 /* ScanAdmissionDecision.swift */,
 			);
 			path = AppTracking;
 			sourceTree = "<group>";
@@ -722,6 +728,7 @@
 				A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */,
 				A00000000000000000009E02 /* AXWindowReaderResultTests.swift */,
 				A00000000000000000009E04 /* ProcessLivenessTests.swift */,
+				A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */,
 				A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */,
 				A00000000000000000009801 /* CGWindowSnapshotTests.swift */,
 				A00000000000000000009710 /* DragConversionPlanTests.swift */,
@@ -941,6 +948,7 @@
 				A00000000000000000009610 /* TabFoldDecision.swift in Sources */,
 				A00000000000000000009E10 /* WindowInventoryAnomalyLog.swift in Sources */,
 				A00000000000000000009E16 /* ProcessLiveness.swift in Sources */,
+				A00000000000000000009E19 /* ScanAdmissionDecision.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1048,6 +1056,8 @@
 					A00000000000000000009E15 /* AXWindowMatchPolicy.swift in Sources */,
 					A00000000000000000009E17 /* ProcessLiveness.swift in Sources */,
 					A00000000000000000009E18 /* ProcessLivenessTests.swift in Sources */,
+					A00000000000000000009E1A /* ScanAdmissionDecision.swift in Sources */,
+					A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */,
 					A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */,
 					A00000000000000000009A21 /* WindowLiftAvoidanceTests.swift in Sources */,
 					A00000000000000000009811 /* CGWindowSnapshot.swift in Sources */,
