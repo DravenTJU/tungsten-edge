@@ -45,14 +45,18 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 2026-07-29 发布 `v0.7.0@d4f1942`（标签固定在该提交），内容 = v0.6.6 之后的菜单/快捷键调整 + 本轮三块：系统 Dock 彻底隐藏（`d08e8d6`）、扫描准入修复（`42f70eb`）、README 微信群二维码（`203b69c`）。发布提交与 v0.6.6 一样直接打在 `master` 上；发布当时 `master` 未再 bump，因此**发布后的开发构建与已发布包一度同为 `0.7.0 (8)`，靠版本号无法区分**（`cfd6a71` 已把主线构建号推到 `10`，暂时不再撞号；下次发布后会重新撞上，别指望版本号）——这一点在 v0.6.6 已经踩过一次（用户报「菜单里没有『打开系统 Dock 设置…』」，实为发布落后于开发线 14 小时），排查同类问题时先比对提交而非版本号。Homebrew cask 已同步至 `0.7.0`（`moonbai-studio/homebrew-tungsten-edge@d9f9b88`）。
 
+2026-07-30 发布 `v0.7.1@baa2f9f`（**附注标签**，按上文新规矩；`v0.6.5`/`v0.7.0` 那两个轻量标签不追改）。内容 = v0.7.0 之后的「菜单四件事」三批：系统 Dock 滑杆回归 + ⌥⌘D 语义还原（`8e6453e`）、显示中转站开关（`2c0042f`）、任务条四档缩放（`698a266`）。发布提交同样直接打在 `master` 上，版本号 `0.7.1 (13)`。**本版有一条对用户可见的行为反转**：`d08e8d6` 的「彻底隐藏」被撤销，菜单命令回到普通自动隐藏（等价 ⌥⌘D），彻底隐藏改由新滑杆右端「不唤醒」承担——发布说明把这条单独放在最前面。Homebrew cask 已同步至 `0.7.1`（`moonbai-studio/homebrew-tungsten-edge@48f6c2d`）。发布后 `master` 未再 bump，**开发构建与已发布包又一次同为 `0.7.1 (13)`**，排查问题先比对提交。
+
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
+- GitHub `v0.7.1` DMG hash: `3835c0df16c28fdeb0ddf8444374c2374a1c8744e61d7cfc5ff584822d328f84`
+- GitHub `v0.7.1` ZIP hash: `4ea6a75f5a2f59e89b92cd689bd848da23d96c41c4b6925bd7456bbbfc88c5d9`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@48f6c2d` 引用此值；两个哈希均已从 GitHub 重新下载实测比对一致）
 - 当前稳定安装版（4.5）hash: `db4a18e2d4d8bdd4db13fab44e5fee101d1eb0aff6642d66945d250c68417a11`
 - GitHub `v0.7.0` DMG hash: `65e33403a882445815f2215a74dc576bd0f2bec700eeadf5a9c014cb03b42bc8`
 - GitHub `v0.7.0` ZIP hash: `62391c2a05456af1558c870eb0293bcd6c6319209347d37b87dcf49ead22add3`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@d9f9b88` 引用此值）
 - GitHub `v0.6.6` DMG hash: `10a53b8903f5b19238272f6ad154b449b962a224ba47db63aae51f7fda65c04e`
 - GitHub `v0.6.6` ZIP hash: `3ebe3f6758ec8804e78503e5b441b3a071162b83f421b3727132a40eb1475bad`
-- 公开包边界：ad-hoc 签名、未公证；`v0.7.0` 版本号 `0.7.0 (8)`、`v0.6.6` 为 `0.6.6 (7)`，均 arm64 + x86_64
+- 公开包边界：ad-hoc 签名、未公证；`v0.7.1` 版本号 `0.7.1 (13)`、`v0.7.0` 为 `0.7.0 (8)`、`v0.6.6` 为 `0.6.6 (7)`，均 arm64 + x86_64
 - 上一稳定安装版（4.4）备份 hash: `9b1bc1d19ca3c1ccbaade0fdf2b80a64dd0a0f59dd2805ca8279aa47e91befb6`
 - 4.3 备份 hash: `ed98039e4139d2e50ff3f4e7cf6938d5ad2ef1586fb5b82e5494a76bedd4a5ca`
 - 4.2 备份 hash: `6defba5dcb6313ede6961e5e591061fb48850def0005478bcde1bbd95ce93986`
