@@ -92,26 +92,36 @@ git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^
 
 注意别用 `git show <提交> | git apply --check --reverse -` 代替：`git apply` 要求上下文严格对齐，而 `git revert` 走三方合并，前者会给出大量假阳性（2026-07-29 首次复检就被误导过一次）。二进制文件在 `git apply` 下也必然假阳性。
 
-**最近一次全表复检：2026-07-30（`ec930ae` 权限引导重建后）**
+**最近一次全表复检：2026-07-30（`f1efa7c` 浅色模式视觉适配后，本轮 11 条逐条实跑）**
 
 | 条目 | 是否仍可干净回退 | 说明 |
 | --- | --- | --- |
-| `ec930ae` 辅助权限引导重建 | ✅ 单点成立 | 2026-07-30 新增，见下表条目 |
-| `cfd6a71` 主线实例可信 | ⚠️ **当天衰减**（`AppDelegate.swift` + `project.pbxproj`） | 2026-07-29 还是单点，`ec930ae` 重排了 `applicationDidFinishLaunching` 的启动顺序（位置分类要排在接管实例和注册热键之前），正好压在它改的那一段上。要回退得连 `ec930ae` 一起处理，或手工解这两个文件 |
-| `d08e8d6` 彻底隐藏 / `203b69c` 二维码 / `15f8fd6` 文档追平 | ✅ 单点成立 | 2026-07-29 新增，尚未被覆盖 |
-| `42f70eb` 扫描准入 | ⚠️ 不再是单点（仅 `project.pbxproj` 一处） | **当天就衰减了**：早上复检还干净，`cfd6a71` 把 `BuildProvenance.swift` 加进工程文件、又 bump 了构建号，与 `42f70eb` 加 `ScanAdmissionDecision.swift` 的位置相邻。冲突只在 `macos-dock-cc-v2.xcodeproj/project.pbxproj`，**源码零冲突**，手工解一下工程文件即可，代价远小于下面那三条 |
+| `f1efa7c` 浅色模式视觉适配 | ✅ 单点成立 | 2026-07-30 新增，见下表条目 |
+| `ec930ae` 辅助权限引导重建 | ⚠️ **一个提交之内就衰减**（仅 `AGENTS.md`） | 上一次复检写的「✅ 单点成立」**已经不成立**：紧接着的 `f923324`（纯文档，把考据搬去 `Docs/Archive`）只动了 AGENTS.md 10 行，就把它压出冲突。**源码零冲突**，手工解 AGENTS.md 即可 |
+| `cfd6a71` 主线实例可信 | ⚠️ 不再是单点（`AppDelegate.swift` + `project.pbxproj`） | 2026-07-29 还是单点，`ec930ae` 重排了 `applicationDidFinishLaunching` 的启动顺序（位置分类要排在接管实例和注册热键之前），正好压在它改的那一段上。要回退得连 `ec930ae` 一起处理，或手工解这两个文件 |
+| `d08e8d6` 彻底隐藏 / `15f8fd6` 文档追平 | ⚠️ 不再是单点（仅 `AGENTS.md`） | 同 `ec930ae`，被 `f923324` 的 AGENTS.md 搬迁压出冲突；源码零冲突 |
+| `203b69c` 二维码 | ✅ 单点成立 | 只碰 README，跨多个提交仍干净 |
+| `42f70eb` 扫描准入 | ⚠️ 不再是单点（仅 `project.pbxproj` 一处） | **当天就衰减了**：早上复检还干净，`cfd6a71` 把 `BuildProvenance.swift` 加进工程文件、又 bump 了构建号，与 `42f70eb` 加 `ScanAdmissionDecision.swift` 的位置相邻。冲突只在 `macos-dock-cc-v2.xcodeproj/project.pbxproj`，**源码零冲突**，手工解一下工程文件即可，代价远小于下面那三条。（`f1efa7c` 又新增 3 个源文件，冲突范围不变，仍只此一个文件） |
 | `8af961c` 启停首帧位置锚定 | ✅ 单点成立 | 跨多版本仍干净 |
-| `bcef0ed` 菜单与唤醒快捷键调整 | ⛔ **退役，不要再执行** | 已被 `d08e8d6` 取代：它要撤销的「⌥⌘D 作为该命令快捷键展示」在当前代码里已不存在。冲突 6 个文件（含 `NativeDockPreferencesService.swift`）。要回到那个行为，改为回退 `d08e8d6` |
-| `b503fd6` POSIX 判活 + 释放日志 | ⚠️ 不再是单点 | 冲突 `ProcessLiveness.swift` + `project.pbxproj`。起因是 `42f70eb` 为做进程世代校验往 `ProcessLiveness.swift` 加了 `startTime`。真要回退需连 `42f70eb` 一起处理 |
-| `a25add5` 消息纳入统一保留勾选 | ⚠️ 不再是单点 | 冲突 11 个文件，跨版本自然衰减。数据边界（上方 V3 键矩阵）仍然有效 |
+| `bcef0ed` 菜单与唤醒快捷键调整 | ⛔ **退役，不要再执行** | 已被 `d08e8d6` 取代：它要撤销的「⌥⌘D 作为该命令快捷键展示」在当前代码里已不存在。冲突 6 个文件（`AGENTS.md`、`NativeDockPreferencesService.swift`、`Docs/05-known-platform-quirks.md`、两份 README、`AppSettingsStoreTests.swift`）。要回到那个行为，改为回退 `d08e8d6` |
+| `b503fd6` POSIX 判活 + 释放日志 | ⚠️ 不再是单点 | 冲突 `AGENTS.md` + `ProcessLiveness.swift` + `project.pbxproj`。起因是 `42f70eb` 为做进程世代校验往 `ProcessLiveness.swift` 加了 `startTime`。真要回退需连 `42f70eb` 一起处理 |
+| `a25add5` 消息纳入统一保留勾选 | ⚠️ 不再是单点 | 冲突 9 个文件（`AGENTS.md`、`AppMembershipController.swift`、`MessagingAppStore.swift`、`AppDelegate.swift`、`DockStripView.swift`、`LauncherChip.swift`、`project.pbxproj`、两个测试），跨版本自然衰减。数据边界（V3 键矩阵，见上方指针）仍然有效 |
 
 **每次发版前跑一遍这个复检**，把结果日期更新到这里；发现某条退役就明确标掉，别留着让人以为还能用。
 
-衰减比想象的快：`42f70eb` 在**同一天内**就从「单点」变成了「要手工解工程文件」，起因只是又新增了一个源文件（`project.pbxproj` 是最容易互相踩的文件，几乎任何新增文件都会碰它）。所以复检的正确频率不是「想起来时」，而是**每次发版前**，外加**任何一次新增源文件之后**。
+衰减比想象的快，而且有**两个**几乎必然踩到的公共文件：
+
+- `project.pbxproj` —— `42f70eb` 在**同一天内**就从「单点」变成「要手工解工程文件」，起因只是又新增了一个源文件。几乎任何新增文件都会碰它。
+- `AGENTS.md` —— 2026-07-30 这次复检发现的：`ec930ae` / `d08e8d6` / `15f8fd6` 三条在**上一次复检写下「✅ 单点成立」之后的第一个提交**里就全废了，而那个提交（`f923324`）是**纯文档**、只把考据搬去 `Docs/Archive`、AGENTS.md 净变化 10 行。凡是「功能 + 护栏同一提交」的条目都写过 AGENTS.md，所以任何一次 AGENTS.md 重排都会成片压中它们。
+
+所以复检的正确频率不是「想起来时」，而是**每次发版前**，外加**任何一次新增源文件之后**，再加**任何一次改动 AGENTS.md 之后**——包括纯文档提交。
+
+另外记一条方法上的教训：判断「是不是我这次改动造成的衰减」，不要只跑 `HEAD`，要拿**自己提交前的那个 tree** 跑同一遍对照（`git merge-tree --write-tree --merge-base=<提交> <我的提交>^ <提交>^`）。2026-07-30 这次一开始就误判成「浅色适配把三条压坏了」，对照之后才看清真凶是前一个纯文档提交，浅色适配零新增衰减。
 
 | 目标 | 建议逆序 | 会保留什么 | 当前实证 |
 | --- | --- | --- | --- |
-| **撤销辅助权限引导重建** | `git revert ec930ae` | 保留 v0.7.0 全部功能；退回 61 行的基础版权限页。失去三件事：① 不再识别「从 DMG 直接运行 / App Translocation」——那种临时副本会重新去接管正在工作的 `/Applications` 实例并抢注全局热键；② 不再有 8 秒后的条件式排障说明（勾着却不生效时删旧条目重加）；③ **运行期权限失效重新变成静默空任务条**，且最大化避让的窗口快照会在失权瞬间被清掉、永远还不回去 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：删除 `Platform/Permissions/` 下 4 个新文件与 `Tests/Unit/PermissionOnboardingTests.swift`，恢复 `AppDelegate` 启动分支、`WindowLiftAvoidanceController` 的冻结闸门与 `pendingRestorations`、`PanelCoordinator.suspendAndRelease()`。**注意 `cfd6a71` 因本提交衰减为非单点**（见上方复检表），两者的 `AppDelegate` 改动相邻。全量测试 524/524、Debug/Release/window-lab 三项构建通过；owner 于 2026-07-30 在**另一台装有已发布 0.7.0 的 Mac 上覆盖升级实测**走通完整引导（真实的「勾着却已失配」旧记录，`tccutil reset` 复现不出这个状态），并已用 `install_local_release.sh` 装到主力机、`lsappinfo` 确认 `type="UIElement"`（固定证书下 cdhash 变化但授权未丢）。**未覆盖**：可写外置卷放行、macOS 12 文案分支；运行期失效与重启失败重试两条为 owner 主动缩减范围，未实测 |
+| **撤销浅色模式视觉适配** | `git revert f1efa7c` | 保留 v0.7.0 全部功能；**深色观感不受影响**（它的数值本来就是这次冻结进 token 表的历史值）。失去的是浅色模式的单独适配：窗口标题与悬停应用名退回写死的白字、运行小圆点退回白点、区域分隔线退回白线——在浅色底板上全部重新变成看不清；面板描边退回均匀一圈白（浅色下呈现为用户报的那圈灰"方格"）；阴影退回黑 0.35/r15/y8（浅色底上的灰污渍，且会透过半透明底板压暗条的下缘）。`DockVisualEffectView.updateNSView` 退回空实现，外观切换时材质不再更新 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：删除 `Core/Support/DockThemeTokens.swift`、`App/Scenes/DockTheme.swift`、`Tests/Unit/DockThemeTests.swift`，9 个视图文件恢复约 50 处写死字面值，AGENTS.md 去掉 *Light / Dark Appearance* 一节。2026-07-30 `git merge-tree` 实测干净单点。全量测试 SUCCEEDED（含新增 `DockThemeTests` 14 条冻结深色 38 个字段）；**深色未变是逐像素证明的**——已装旧 Release 版与新构建同姿势截图，最大单通道差 11/255、>8 的像素 12/299200（0.004%，残差是两次截图之间背后内容变化）；浅色量化：窗口标题最暗 10% 均值 148.7 → 34.2、运行圆点最亮 237.9 → 最暗 75.1、上沿描边 172 → 216、下沿描边 160 → 140；外观切换实时跟随无需重启。**未覆盖**：抽屉、两个弹窗、tooltip、拖动浮动卡片未逐一截图核对（用的是同一批已验证的 token）；浅色数值待 owner 逐项拍板，属半成品的第一步 |
+| **撤销辅助权限引导重建** | `git revert ec930ae` | 保留 v0.7.0 全部功能；退回 61 行的基础版权限页。失去三件事：① 不再识别「从 DMG 直接运行 / App Translocation」——那种临时副本会重新去接管正在工作的 `/Applications` 实例并抢注全局热键；② 不再有 8 秒后的条件式排障说明（勾着却不生效时删旧条目重加）；③ **运行期权限失效重新变成静默空任务条**，且最大化避让的窗口快照会在失权瞬间被清掉、永远还不回去 | **⚠️ 已衰减为非单点（仅 `AGENTS.md`，源码零冲突）——登记当时是单点，`f923324` 的 AGENTS.md 搬迁压中了它**，无 schema 或 UserDefaults 数据边界：删除 `Platform/Permissions/` 下 4 个新文件与 `Tests/Unit/PermissionOnboardingTests.swift`，恢复 `AppDelegate` 启动分支、`WindowLiftAvoidanceController` 的冻结闸门与 `pendingRestorations`、`PanelCoordinator.suspendAndRelease()`。**注意 `cfd6a71` 因本提交衰减为非单点**（见上方复检表），两者的 `AppDelegate` 改动相邻。全量测试 524/524、Debug/Release/window-lab 三项构建通过；owner 于 2026-07-30 在**另一台装有已发布 0.7.0 的 Mac 上覆盖升级实测**走通完整引导（真实的「勾着却已失配」旧记录，`tccutil reset` 复现不出这个状态），并已用 `install_local_release.sh` 装到主力机、`lsappinfo` 确认 `type="UIElement"`（固定证书下 cdhash 变化但授权未丢）。**未覆盖**：可写外置卷放行、macOS 12 文案分支；运行期失效与重启失败重试两条为 owner 主动缩减范围，未实测 |
 | **撤销主线实例可信改造** | `git revert cfd6a71` | 保留 v0.7.0 全部功能；失去三件事：菜单版本行不再标「· 开发版 / · 非安装位置」、启动时不再终止同 bundle id 的其他实例、`build_and_run.sh` 退回 `open -n`（强制多开）。开发线构建号退回 8，与已发布的 `0.7.0 (8)` 重新撞号 | **↩ 单点，无代码数据边界，但有机器状态边界**：回退**不影响**已经修好的系统侧状态——登录项仍指向 `/Applications/Tungsten Edge.app/`、`/Applications` 里仍是唯一一份 0.7.0，这些是本机操作的结果、不由代码控制。真正失去的是**防复发能力**：回退后若再在开发构建上勾选「登录时启动」，会重新掉进 2026-07-21 / 07-26 那两次误诊。删除 `Core/Support/BuildProvenance.swift` 及其 7 项单测。全量测试 493/493、单实例接管已实机验证（强开第二个实例后 4 秒内只剩新的）、owner 于 2026-07-29 验收 |
 | **撤销系统 Dock 彻底隐藏改造** | `git revert d08e8d6` | 保留 v0.7.0 其余全部功能；菜单命令退回只切 `autohide` 的普通自动隐藏（不再写 `autohide-delay`、不再恢复隐藏前延迟），标题回到动态「隐藏 / 显示系统 Dock」，`⌥⌘D` 重新作为该命令的快捷键展示并恢复菜单追踪期跳过逻辑 | **↩ 单点，有系统侧数据边界**：回退**不会**自动把系统 `com.apple.dock` 的 `autohide-delay` 改回去——若回退时 Dock 正处于彻底隐藏态，用户需手动在系统设置调回唤醒延迟，或回退前先点一次「显示系统 Dock」。应用自身的恢复快照键（`com.tungsten.edge.nativeDock.restoreDelay.*`）会成为孤儿，无害但不再被读取。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
 | **撤销扫描准入 ScanAdmissionDecision 修复** | `git revert 42f70eb` | 保留 v0.7.0 其余全部功能；补扫轮次恢复用原始 `AXWindows` 非空作为准入依据，Tailscale 这类应用会重新出现「永不消失的空图标」 | **↩ 单点，无 schema 或 UserDefaults 数据边界**：移除新增 `Platform/AppTracking/ScanAdmissionDecision.swift` 与其单测，恢复 `AppTracker` 补扫路径的旧准入与第二次无超时 AX 读取。注意误准入是**永久性**的——`reconcile()` 只清理已死进程，回退后已产生的空图标要重启钨极才会消失。全量测试 486/486、owner 于 2026-07-29 实机验收通过 |
