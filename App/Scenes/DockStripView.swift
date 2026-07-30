@@ -263,10 +263,17 @@ struct DockStripView: View {
         ZStack {
             // 探路中：`DOCK_LIQUID_GLASS=1` 且系统 ≥ 26 时换成原生 Liquid Glass，否则原样毛玻璃。
             // 只有任务条这一个调用点接了探路装置（见 DockGlassBackdrop）。
-            DockGlassBackdrop(material: theme.panelMaterial, cornerRadius: Style.cornerRadius)
+            DockGlassBackdrop(material: theme.effectivePanelMaterial, cornerRadius: Style.cornerRadius)
+                .dockBackdropSaturation(theme.panelBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()
+
+            // 玻璃厚度感：材质之上、内容之下。深色不画（drawsPanelThickness == false），
+            // 整层不进视图树，保证深色逐像素冻结。
+            if theme.drawsPanelThickness {
+                theme.panelThicknessLayer(cornerRadius: Style.cornerRadius)
+            }
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: 8) {
@@ -1400,7 +1407,8 @@ struct DrawerCapsuleButton: View {
         // 拖动时 hover 让位给拖入反馈：draggingPayload 非空则不弹（drag 优先）。
         let showsHover = isHovering && dragController.draggingPayload == nil
         return ZStack {
-            DockVisualEffectView(material: theme.panelMaterial)
+            DockVisualEffectView(material: theme.effectivePanelMaterial)
+                .dockBackdropSaturation(theme.panelBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()

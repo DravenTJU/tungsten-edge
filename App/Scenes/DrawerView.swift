@@ -94,7 +94,8 @@ struct DrawerView: View {
         // 底部对齐：抽屉面板向上长时,内容底边钉死在锚点(胶囊上方)、只向上揭开,
         // 不会像顶部对齐那样底边先垂到锚点下方(向下压胶囊)再升回来（owner 2026-06-21：避让该直接向上扩展）。
         ZStack(alignment: .bottomLeading) {
-            DockVisualEffectView(material: theme.panelMaterial)
+            DockVisualEffectView(material: theme.effectivePanelMaterial)
+                .dockBackdropSaturation(theme.panelBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()

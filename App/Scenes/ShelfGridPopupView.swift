@@ -31,7 +31,8 @@ struct ShelfGridPopupView: View {
         let availableGridHeight = min(max(140, maxContentHeight), Style.maxGridHeight)
 
         ZStack(alignment: .bottomLeading) {
-            DockVisualEffectView(material: theme.panelMaterial)
+            DockVisualEffectView(material: theme.effectivePanelMaterial)
+                .dockBackdropSaturation(theme.panelBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()

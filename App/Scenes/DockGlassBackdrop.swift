@@ -36,8 +36,11 @@ struct DockGlassBackdrop: View {
 
     var body: some View {
         resolved
-            // 探路诊断挂在 onAppear 而不是 body 里，免得每次求值都打一行。
-            .onAppear { DockGlassSwitch.logResolvedPath() }
+            // 诊断挂在 onAppear 而不是 body 里，免得每次求值都打一行。
+            .onAppear {
+                DockGlassSwitch.logResolvedPath()
+                DockMaterialOverride.logIfOverridden(resolved: material)
+            }
     }
 
     @ViewBuilder

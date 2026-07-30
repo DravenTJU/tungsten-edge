@@ -45,6 +45,82 @@ final class DockThemeTests: XCTestCase {
         XCTAssertEqual(dark.panelMaterial, .popover)
     }
 
+    /// 厚度层是 2026-07-30 第二轮新增的。深色必须**整层不画**——不是"画一层全透明的"，
+    /// 而是 `drawsPanelThickness == false` 让它根本不进视图树（`.blur(radius: 0)` 仍可能
+    /// 触发离屏渲染，多一层就可能破坏深色的逐像素冻结）。
+    func testDarkDrawsNoThicknessLayer() {
+        XCTAssertFalse(dark.drawsPanelThickness)
+        XCTAssertEqual(dark.panelInnerHighlight, .white(0))
+        XCTAssertEqual(dark.panelInnerHighlightWidth, 0)
+        XCTAssertEqual(dark.panelInnerHighlightBlur, 0)
+        XCTAssertEqual(dark.panelInnerShadow, .black(0))
+        XCTAssertEqual(dark.panelInnerShadowWidth, 0)
+        XCTAssertEqual(dark.panelInnerShadowBlur, 0)
+    }
+
+    /// 背景提饱和：深色必须是恒等 1.0（连修饰符都不挂），浅色要真的 > 1。
+    /// 2026-07-30 实测这条路可行——`.saturation` 作用在合成结果上，模糊保留；
+    /// 而 `.opacity` 是死路（露出没模糊的原始桌面），别再拿它当通透度旋钮。
+    func testBackdropSaturation() {
+        XCTAssertEqual(dark.panelBackdropSaturation, 1.0, "深色不加滤镜")
+        XCTAssertGreaterThan(light.panelBackdropSaturation, 1.0, "浅色要提饱和")
+        XCTAssertLessThanOrEqual(light.panelBackdropSaturation, 2.0, "别调成实验用的极端值")
+    }
+
+    /// 浅色反过来必须真画，否则这一轮等于没做。
+    func testLightDrawsThicknessLayer() {
+        XCTAssertTrue(light.drawsPanelThickness)
+        XCTAssertEqual(light.panelInnerHighlight.base, .white, "上内沿是亮线")
+        XCTAssertEqual(light.panelInnerShadow.base, .black, "下内沿是暗收")
+        XCTAssertGreaterThan(light.panelInnerHighlightWidth, 0)
+        XCTAssertGreaterThan(light.panelInnerShadowWidth, 0)
+    }
+
+    /// 「要画」需要颜色和线宽同时成立：任一为 0 都等于看不见，此时就不该多挂一层。
+    func testThicknessGateNeedsBothColorAndWidth() {
+        let off = DockTint.white(0)
+        func gate(_ h: DockTint, _ hw: CGFloat, _ s: DockTint = .black(0), _ sw: CGFloat = 0) -> Bool {
+            DockThemeTokens.drawsThickness(highlight: h, highlightWidth: hw, shadow: s, shadowWidth: sw)
+        }
+        XCTAssertFalse(gate(off, 0), "全 0 → 不画")
+        XCTAssertFalse(gate(.white(0.5), 0), "有颜色但线宽 0 → 不画")
+        XCTAssertFalse(gate(off, 2), "有线宽但全透明 → 不画")
+        XCTAssertTrue(gate(.white(0.5), 2), "两者都有 → 画")
+        XCTAssertTrue(gate(off, 0, .black(0.06), 2), "只有下内沿暗收也算要画")
+    }
+
+    // MARK: - 材质环境覆盖（调参用，不能崩）
+
+    func testMaterialOverrideParsesKnownNames() {
+        for material in DockPanelMaterial.all {
+            let env = ["DOCK_PANEL_MATERIAL": "\(material)"]
+            XCTAssertEqual(DockPanelMaterial.resolved(from: env, fallback: .popover), material)
+        }
+    }
+
+    func testMaterialOverrideIsCaseInsensitiveAndTrimmed() {
+        XCTAssertEqual(DockPanelMaterial.resolved(from: ["DOCK_PANEL_MATERIAL": "HUDWindow"], fallback: .popover),
+                       .hudWindow)
+        XCTAssertEqual(DockPanelMaterial.resolved(from: ["DOCK_PANEL_MATERIAL": "  sidebar \n"], fallback: .popover),
+                       .sidebar)
+    }
+
+    /// 手滑打错名字不该让应用起不来，也不该静默变成别的材质——回落到 token 原值。
+    func testMaterialOverrideFallsBackOnUnknownOrEmpty() {
+        for raw in ["", "   ", "nope", "popver", "0"] {
+            XCTAssertEqual(DockPanelMaterial.resolved(from: ["DOCK_PANEL_MATERIAL": raw], fallback: .menu), .menu,
+                           "非法值 \"\(raw)\" 必须回落")
+        }
+        XCTAssertEqual(DockPanelMaterial.resolved(from: [:], fallback: .menu), .menu, "没设环境变量就用 token 值")
+    }
+
+    /// 候选表要覆盖枚举全部 case——漏一个，对照表就少拍一张，owner 可能正好错过想要的那个。
+    func testMaterialAllCoversEveryCase() {
+        XCTAssertEqual(Set(DockPanelMaterial.all).count, DockPanelMaterial.all.count, "候选表不能重复")
+        XCTAssertTrue(DockPanelMaterial.all.contains(.popover))
+        XCTAssertEqual(DockPanelMaterial.all.count, 14, "系统材质候选共 14 种；新增 case 时同步这里")
+    }
+
     // 标题胶囊：底 white 0.08 / 悬停 0.14；描边渐变上 white 0.15（悬停 0.25）→ 下 white 0.02。
     func testDarkChipPillMatchesLegacyLiterals() {
         XCTAssertEqual(dark.chipPillFill, DockTintPair(normal: .white(0.08), emphasized: .white(0.14)))
@@ -184,6 +260,7 @@ private extension DockThemeTokens {
     /// 遍历用：本表里所有着色值（含阴影自带的着色）。
     var allTints: [DockTint] {
         [panelRimTop, panelRimBottom, panelRimHighlighted,
+         panelInnerHighlight, panelInnerShadow,
          stripShadow.tint, popupShadow.tint,
          chipPillFill.normal, chipPillFill.emphasized,
          chipPillRimTop.normal, chipPillRimTop.emphasized, chipPillRimBottom,

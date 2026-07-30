@@ -54,7 +54,35 @@ extension DockPanelMaterial {
         case .menu: return .menu
         case .underWindowBackground: return .underWindowBackground
         case .sidebar: return .sidebar
+        case .titlebar: return .titlebar
+        case .selection: return .selection
+        case .headerView: return .headerView
+        case .fullScreenUI: return .fullScreenUI
+        case .toolTip: return .toolTip
+        case .sheet: return .sheet
+        case .windowBackground: return .windowBackground
+        case .contentBackground: return .contentBackground
+        case .underPageBackground: return .underPageBackground
         }
+    }
+}
+
+extension DockThemeTokens {
+    /// 实际生效的材质：`DOCK_PANEL_MATERIAL` 覆盖 token 值（调参用，认不出的名字回落，不崩）。
+    /// 读一次就固定——调参期间改环境变量重启一次即可，也避免一次会话里前后不一致。
+    var effectivePanelMaterial: DockPanelMaterial {
+        DockPanelMaterial.resolved(from: DockMaterialOverride.environment, fallback: panelMaterial)
+    }
+}
+
+enum DockMaterialOverride {
+    static let environment = ProcessInfo.processInfo.environment
+
+    /// 调参诊断：只有真的设了环境变量才打一行。打的是**解析后**的值，所以名字打错
+    /// （回落到 token 值）当场就看得出来，不会拿着一张其实没换材质的对照表瞎比。
+    static func logIfOverridden(resolved: DockPanelMaterial) {
+        guard let raw = environment["DOCK_PANEL_MATERIAL"] else { return }
+        print("[material] DOCK_PANEL_MATERIAL=\"\(raw)\" → 实际生效 \(resolved)")
     }
 }
 
@@ -76,6 +104,36 @@ extension DockThemeTokens {
         highlighted ? panelRimHighlightedLineWidth : panelRimLineWidth
     }
 
+    /// 玻璃厚度层：上内沿一条亮线（光从上方进入介质）+ 下内沿一道暗收（介质底部自阴影）。
+    /// 画在材质**之上**、内容**之下**，是我们自己的像素——所以不受「拿不到窗口背后像素」
+    /// 那条限制（折射与背景饱和度就是卡在那里）。
+    ///
+    /// 调用方必须先判 `drawsPanelThickness`：深色时整层不进视图树，见该属性的注释。
+    @ViewBuilder
+    func panelThicknessLayer(cornerRadius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        ZStack {
+            shape
+                .strokeBorder(
+                    LinearGradient(colors: [panelInnerHighlight.color, panelInnerHighlight.transparent],
+                                   startPoint: .top, endPoint: .center),
+                    lineWidth: panelInnerHighlightWidth
+                )
+                .blur(radius: panelInnerHighlightBlur)
+            shape
+                .strokeBorder(
+                    LinearGradient(colors: [panelInnerShadow.transparent, panelInnerShadow.color],
+                                   startPoint: .center, endPoint: .bottom),
+                    lineWidth: panelInnerShadowWidth
+                )
+                .blur(radius: panelInnerShadowBlur)
+        }
+        // 模糊会溢出形状，必须裁回来，否则厚度层会糊到面板外面去。
+        .clipShape(shape)
+        // 纯装饰层，绝不能抢 chip 的点击（面板是 nonactivatingPanel，chip 全靠 onTapGesture）。
+        .allowsHitTesting(false)
+    }
+
     /// 标题胶囊的描边：同样是上亮下暗。
     /// - Parameter emphasized: 悬停中。
     func chipPillRimStyle(emphasized: Bool) -> LinearGradient {
@@ -86,6 +144,13 @@ extension DockThemeTokens {
 }
 
 extension View {
+    /// 给毛玻璃底板加背景提饱和。**1.0 时整个修饰符都不挂**——`.saturation(1.0)` 虽是恒等，
+    /// 但仍可能触发离屏渲染，多一层就可能破坏深色的逐像素冻结（同厚度层的理由）。
+    @ViewBuilder
+    func dockBackdropSaturation(_ amount: Double) -> some View {
+        if amount == 1.0 { self } else { self.saturation(amount) }
+    }
+
     /// 应用一个 `DockShadow`（x 恒为 0）。
     func dockShadow(_ shadow: DockShadow) -> some View {
         self.shadow(color: shadow.tint.color, radius: shadow.radius, x: 0, y: shadow.y)

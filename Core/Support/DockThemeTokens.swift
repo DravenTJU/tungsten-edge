@@ -62,6 +62,33 @@ enum DockPanelMaterial: Equatable {
     case menu
     case underWindowBackground
     case sidebar
+    case titlebar
+    case selection
+    case headerView
+    case fullScreenUI
+    case toolTip
+    case sheet
+    case windowBackground
+    case contentBackground
+    case underPageBackground
+
+    /// 调参用：`DOCK_PANEL_MATERIAL=<名字>` 可以在**不重新构建**的前提下换材质，
+    /// 一轮迭代约 8 秒，方便一次拍完整张候选对照表。名字就是上面这些 case（大小写不敏感）。
+    /// 认不出的名字**回落到传入的默认值**，绝不崩——调参时手滑打错不该让应用起不来。
+    static func resolved(from environment: [String: String], fallback: DockPanelMaterial) -> DockPanelMaterial {
+        guard let raw = environment["DOCK_PANEL_MATERIAL"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !raw.isEmpty else { return fallback }
+        return all.first { "\($0)".lowercased() == raw } ?? fallback
+    }
+
+    /// 候选全集，供解析与对照表遍历。系统材质全部 macOS 10.14+，我们最低 12，无需可用性分支。
+    static let all: [DockPanelMaterial] = [
+        .popover, .hudWindow, .menu, .underWindowBackground, .sidebar,
+        .titlebar, .selection, .headerView, .fullScreenUI, .toolTip,
+        .sheet, .windowBackground, .contentBackground, .underPageBackground,
+    ]
 }
 
 /// 与外观无关的形状常量。原先 `cornerRadius: 16` 在 `DockStripView` 的 private `Style` 里，
@@ -87,6 +114,32 @@ struct DockThemeTokens: Equatable {
     let panelRimHighlighted: DockTint
     let panelRimLineWidth: CGFloat
     let panelRimHighlightedLineWidth: CGFloat
+
+    // MARK: 玻璃厚度感（内高光 + 内阴影）
+    //
+    // 真玻璃的「厚」来自边缘两道信号：上内沿一条亮线（光从上方进入介质）+ 下内沿一道暗收
+    // （介质底部的自阴影）。这两层画在材质**之上**、内容**之下**，是我们自己的像素，
+    // 因此不受「拿不到窗口背后像素」那条限制——折射和背景饱和度做不到，厚度感能做。
+    //
+    // **深色一律 opacity 0 + width 0**，渲染上等价于不画，深色继续逐像素冻结。
+
+    let panelInnerHighlight: DockTint
+    let panelInnerHighlightWidth: CGFloat
+    let panelInnerHighlightBlur: CGFloat
+    let panelInnerShadow: DockTint
+    let panelInnerShadowWidth: CGFloat
+    let panelInnerShadowBlur: CGFloat
+
+    /// 背景饱和度倍数。**1.0 = 不加滤镜**（此时整个修饰符都不挂，同厚度层的理由）。
+    ///
+    /// 2026-07-30 实测：SwiftUI 的 `.saturation()` 作用在毛玻璃的**合成结果**上（材质 + 已模糊
+    /// 的背景），所以能真的把背景颜色提浓，而且**模糊保留**——彩色靶实测条内饱和度
+    /// 0.221 → 0.534，条外对照 0.398 不变。
+    ///
+    /// 对比之下 `.opacity()` 是**死路**，别再试：它把材质本身抹掉一部分、露出**没模糊过**的
+    /// 原始桌面（实测条内过渡带从 115px 塌成 0.9px，和条外一样锐利），观感廉价，
+    /// 不是"更透的玻璃"而是"挖了个洞的玻璃"。通透度只能靠换材质。
+    let panelBackdropSaturation: Double
     /// 任务条 + 抽屉胶囊的落地阴影。
     let stripShadow: DockShadow
     /// 抽屉 + 两个弹窗的落地阴影（比任务条略收，因为它们悬在更高处）。
@@ -169,6 +222,21 @@ struct DockThemeTokens: Equatable {
     // MARK: 拖动浮动副本
 
     let carrierShadow: DockShadow
+
+    /// 这一套值到底画不画厚度层。**深色必须是 `false`**——不是"画一层全透明的"，而是
+    /// 整层根本不进视图树。`.blur(radius: 0)` 在 SwiftUI 里仍可能触发离屏渲染，
+    /// 多一层就可能让深色的逐像素比对出现差异，冻结就不再是严格的。
+    var drawsPanelThickness: Bool {
+        Self.drawsThickness(highlight: panelInnerHighlight, highlightWidth: panelInnerHighlightWidth,
+                            shadow: panelInnerShadow, shadowWidth: panelInnerShadowWidth)
+    }
+
+    /// 上面那条判断的纯函数形式（单测直接打这个，不用为了试 4 个值去构造整张 44 字段的表）。
+    /// 颜色透明**或**线宽为 0 都等于看不见，两个条件必须同时满足才算"要画"。
+    static func drawsThickness(highlight: DockTint, highlightWidth: CGFloat,
+                               shadow: DockTint, shadowWidth: CGFloat) -> Bool {
+        (highlight.opacity > 0 && highlightWidth > 0) || (shadow.opacity > 0 && shadowWidth > 0)
+    }
 }
 
 // MARK: - 深色（冻结：逐项 = 改造前散落在各视图里的字面值）
@@ -180,6 +248,14 @@ extension DockThemeTokens {
         panelRimHighlighted: .white(0.45),
         panelRimLineWidth: 0.5,
         panelRimHighlightedLineWidth: 1,
+        // 深色不画厚度层（2026-07-30 冻结）：全 0 = 渲染上等价于这一层不存在。
+        panelInnerHighlight: .white(0),
+        panelInnerHighlightWidth: 0,
+        panelInnerHighlightBlur: 0,
+        panelInnerShadow: .black(0),
+        panelInnerShadowWidth: 0,
+        panelInnerShadowBlur: 0,
+        panelBackdropSaturation: 1.0,
         stripShadow: DockShadow(tint: .black(0.35), radius: 15, y: 8),
         popupShadow: DockShadow(tint: .black(0.35), radius: 12, y: 5),
         panelMaterial: .popover,
@@ -239,8 +315,18 @@ extension DockThemeTokens {
         panelRimHighlighted: .black(0.35),
         panelRimLineWidth: 0.5,
         panelRimHighlightedLineWidth: 1,
+        // 厚度感初值（保守，待 owner 拍板）：上内沿一条亮线 + 下内沿一道暗收。
+        panelInnerHighlight: .white(0.5),
+        panelInnerHighlightWidth: 1.5,
+        panelInnerHighlightBlur: 2,
+        panelInnerShadow: .black(0.06),
+        panelInnerShadowWidth: 2,
+        panelInnerShadowBlur: 3,
+        // 背景提饱和的保守初值。3.0 是实验用的极端值，日常这个量级即可，待 owner 拍板。
+        panelBackdropSaturation: 1.25,
         stripShadow: DockShadow(tint: .black(0.14), radius: 8, y: 3),
         popupShadow: DockShadow(tint: .black(0.14), radius: 8, y: 3),
+        // 通透度候选待 owner 从对照表里指定；在那之前保持 .popover。
         panelMaterial: .popover,
 
         chipPillFill: DockTintPair(normal: .black(0.05), emphasized: .black(0.09)),

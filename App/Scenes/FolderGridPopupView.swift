@@ -175,7 +175,8 @@ struct FolderGridPopupView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            DockVisualEffectView(material: theme.panelMaterial)
+            DockVisualEffectView(material: theme.effectivePanelMaterial)
+                .dockBackdropSaturation(theme.panelBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()
