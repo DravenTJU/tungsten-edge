@@ -261,7 +261,9 @@ struct DockStripView: View {
 
     var body: some View {
         ZStack {
-            DockVisualEffectView(material: theme.panelMaterial)
+            // 探路中：`DOCK_LIQUID_GLASS=1` 且系统 ≥ 26 时换成原生 Liquid Glass，否则原样毛玻璃。
+            // 只有任务条这一个调用点接了探路装置（见 DockGlassBackdrop）。
+            DockGlassBackdrop(material: theme.panelMaterial, cornerRadius: Style.cornerRadius)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()

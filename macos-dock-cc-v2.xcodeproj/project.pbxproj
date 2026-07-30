@@ -54,6 +54,7 @@
 		A0000000000000000000FB02 /* DockThemeTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FB00 /* DockThemeTokens.swift */; };
 		A0000000000000000000FC01 /* DockTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FC00 /* DockTheme.swift */; };
 		A0000000000000000000FC02 /* DockTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FC00 /* DockTheme.swift */; };
+		A0000000000000000000FE01 /* DockGlassBackdrop.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FE00 /* DockGlassBackdrop.swift */; };
 		A0000000000000000000FD01 /* DockThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FD00 /* DockThemeTests.swift */; };
 		A00000000000000000009591 /* AppMembershipMenuPlanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009590 /* AppMembershipMenuPlanTests.swift */; };
 		A00000000000000000009581 /* AppMembershipMenuPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009580 /* AppMembershipMenuPlan.swift */; };
@@ -340,6 +341,7 @@
 		A0000000000000000000FA10 /* LauncherChipVisualPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherChipVisualPlanTests.swift; sourceTree = "<group>"; };
 		A0000000000000000000FB00 /* DockThemeTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockThemeTokens.swift; sourceTree = "<group>"; };
 		A0000000000000000000FC00 /* DockTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockTheme.swift; sourceTree = "<group>"; };
+		A0000000000000000000FE00 /* DockGlassBackdrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockGlassBackdrop.swift; sourceTree = "<group>"; };
 		A0000000000000000000FD00 /* DockThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockThemeTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009590 /* AppMembershipMenuPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMembershipMenuPlanTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009310 /* ShelfStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfStore.swift; sourceTree = "<group>"; };
@@ -495,6 +497,7 @@
 				A00000000000000000009320 /* ShelfChip.swift */,
 				A00000000000000000009330 /* ShelfGridPopupView.swift */,
 				A0000000000000000000FC00 /* DockTheme.swift */,
+				A0000000000000000000FE00 /* DockGlassBackdrop.swift */,
 			);
 			path = Scenes;
 			sourceTree = "<group>";
@@ -944,6 +947,7 @@
 					A0000000000000000000FA01 /* LauncherChipVisualPlan.swift in Sources */,
 					A0000000000000000000FB01 /* DockThemeTokens.swift in Sources */,
 					A0000000000000000000FC01 /* DockTheme.swift in Sources */,
+					A0000000000000000000FE01 /* DockGlassBackdrop.swift in Sources */,
 					A00000000000000000009581 /* AppMembershipMenuPlan.swift in Sources */,
 					A00000000000000000009701 /* DragConversionPlan.swift in Sources */,
 					A00000000000000000000A101 /* MessagingZoneAdmission.swift in Sources */,
