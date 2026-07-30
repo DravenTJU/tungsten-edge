@@ -79,6 +79,20 @@ final class AppSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testShowShelfDefaultsToOnAndPersists() {
+        let defaults = makeDefaults()
+        XCTAssertTrue(AppSettingsStore(defaults: defaults).showShelf, "默认显示中转格，升级不改变现有观感")
+
+        let store = AppSettingsStore(defaults: defaults)
+        store.setShowShelf(false)
+        XCTAssertFalse(store.showShelf)
+        XCTAssertFalse(AppSettingsStore(defaults: defaults).showShelf, "关掉后要跨重启保持")
+
+        store.setShowShelf(true)
+        XCTAssertTrue(AppSettingsStore(defaults: defaults).showShelf)
+    }
+
+    @MainActor
     func testNativeDockSliderCommandsCoverResidentFiniteAndNeverWake() {
         // 常驻档只关 autohide，不写延迟——此时延迟没有意义，写了反而覆盖用户原值。
         let resident = NativeDockPreferencesService.commands(for: AppSettingsStore.neverHideDelay)

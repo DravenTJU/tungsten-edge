@@ -160,6 +160,7 @@ final class PanelCoordinator: NSObject {
     private var dragSpringSubscription: AnyCancellable?
     private var dragInhibitorSubscription: AnyCancellable?
     private var edgeDelaySubscription: AnyCancellable?
+    private var showShelfSubscription: AnyCancellable?
     /// 抽屉拖回任务条·"松手才变长"：转正进行中冻结任务条宽度，转正态结束（松手落定 / 拖出还原）再 relayout。
     private var convertReleaseSubscription: AnyCancellable?
     private var springOpenTimer: Timer?
@@ -1185,7 +1186,7 @@ final class PanelCoordinator: NSObject {
             onWindowTitleTooltipEvent: { [weak self] event in
                 self?.handleWindowTitleTooltipEvent(event)
             }
-        ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(keptAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController))
+        ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(keptAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController).environmentObject(settingsStore))
         hosting.autoresizingMask = [.width, .height]
         // Prevent NSHostingView from adding its own opaque background over the blur
         hosting.wantsLayer = true
@@ -1324,6 +1325,17 @@ final class PanelCoordinator: NSObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.reconcilePanelVisibility()
+            }
+        // 中转格显隐会改变任务条内容宽度：只让 chip 消失不重排，面板会停在旧宽度，
+        // 胶囊和打开着的抽屉也跟着停在旧位置。relayout 必须等 SwiftUI 这一轮布局跑完
+        // （fittingSize 那时才是新值），所以再推一轮主队列。
+        showShelfSubscription = settingsStore.$showShelf
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.folderPopupWantsOpen, self.openPopupContent == .shelf { self.closeFolderPopup() }
+                DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
             }
     }
 

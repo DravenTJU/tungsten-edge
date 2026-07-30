@@ -48,6 +48,7 @@ struct DockStripView: View {
     @EnvironmentObject var pinnedFolderStore: PinnedFolderStore
     @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
     @EnvironmentObject var shelfStore: ShelfStore
+    @EnvironmentObject var settingsStore: AppSettingsStore
     @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
@@ -243,8 +244,10 @@ struct DockStripView: View {
         let byID = Dictionary(liveNatural.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let orderedLive = order.compactMap { byID[$0] }
         // 三区布局：[消息区][divider][文件夹区][divider][窗口区]，空区连同相邻分隔线一起省略。
-        // 中转格固定在文件夹区头位 → 文件夹区恒非空,分隔线恒在。
-        let folderEntries = [StripEntry.shelf] + pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
+        // 中转格显示时固定在文件夹区头位；用户关掉它、又一个文件夹都没固定时，整个文件夹区
+        // 连同分隔线一起消失（此时任务条上没有外部拖放落点，回路是菜单里把它勾回来）。
+        let folderEntries = (settingsStore.showShelf ? [StripEntry.shelf] : [])
+            + pinnedFolderStore.folderPaths.map { StripEntry.pinnedFolder(path: $0) }
         var zones = [messaging, folderEntries, orderedLive].filter { !$0.isEmpty }
         guard !zones.isEmpty else { return [] }
         var out = zones.removeFirst()
@@ -321,7 +324,9 @@ struct DockStripView: View {
         // DropDelegate 的 location 要与 folderChipFrames/shelfFrame 同源,挂到 .padding(shadowPadding)
         // 之后坐标就错位（评审拍板）。路由是纯函数 StripDropRouting.route,落点见 handleExternalDrop。
         .onDrop(of: [UTType.fileURL], delegate: StripFileDropDelegate(
-            shelfFrame: shelfFrame,
+            // 关掉中转格后直接传 nil：ShelfFramePreferenceKey.reduce 刻意忽略 .zero，
+            // 旧帧不会被清掉，只看帧的话落在原位置仍会误判成暂存。
+            shelfFrame: settingsStore.showShelf ? shelfFrame : nil,
             folderFrames: folderChipFrames,
             orderedPaths: pinnedFolderStore.folderPaths,
             onHoverBegan: { externalDropHoverBegan($0) },
@@ -368,6 +373,12 @@ struct DockStripView: View {
             let validIDs = Set(["shelf"] + currentPaths.map { "folder-\($0)" })
             animatedEntryIDs.formIntersection(validIDs)
         }
+        // 中转格显隐会改变整个固定区的落点几何：正在进行的外部拖放悬停立即收掉，不留高亮。
+        // 入场动画只摘 "shelf" 这一个 id——整片清掉会让重新勾上时所有文件夹 chip 一起重放入场。
+        .onChange(of: settingsStore.showShelf) { visible in
+            if !visible { animatedEntryIDs.remove("shelf") }
+            externalDropHoverEnded()
+        }
         // No .frame(maxWidth: .infinity) here — lets NSHostingView.fittingSize reflect
         // the natural content width so AppDelegate can read it for panel sizing.
     }
@@ -392,15 +403,24 @@ struct DockStripView: View {
 
     /// 固定区右边界（"strip" 局部坐标）：中转格 + 所有文件夹 chip 里最靠右的那个的右缘。
     /// 拖动中的 chip 本身位置不受隐藏影响（opacity 不改变布局），帧照常报,不需要排除自身。
-    private var folderZoneMaxX: CGFloat {
-        folderChipFrames.values.map(\.maxX).max() ?? shelfFrame.maxX
+    ///
+    /// nil = 边界算不出来（首帧未测量，或中转格关着且暂无文件夹帧）。**不能把 nil 当成 0 或
+    /// 当成"没有固定区"**：拖文件夹时固定区必然存在，边界缺失只说明还没量到，此时若判成
+    /// 窗口区，原位松手会误删固定并打开 Finder。调用方遇到 nil 直接不装 geometry。
+    private var folderZoneMaxX: CGFloat? {
+        if let framesMaxX = folderChipFrames.values.map(\.maxX).max() { return framesMaxX }
+        guard settingsStore.showShelf, shelfFrame != .zero else { return nil }
+        return shelfFrame.maxX
     }
 
     /// 文件夹 chip 拖动中的实时落点分类,写进 DragController 供载体视图（跨 SwiftUI 树）读取做淡出。
     /// 最终落定也复用同一份屏幕坐标几何,由 DragController.endDrag 的 mouseUp/轮询兜底路径提交。
     private func updateFolderDragZone() {
         guard let p = dragController.draggingPayload, p.source == .folder,
-              stripRootScreenRect != .zero else {
+              stripRootScreenRect != .zero,
+              // 边界没量到就别装 geometry：DragController 对 nil geometry 回退 .folderZone（原位无动作），
+              // 那是这里唯一安全的默认。
+              let folderZoneMaxX else {
             dragController.setFolderDragZone(nil)
             dragController.setFolderDropGeometry(nil)
             return
@@ -1554,7 +1574,8 @@ struct ShelfFramePreferenceKey: PreferenceKey {
 /// 本 delegate 只负责:悬停期间把目标发布给视图做高亮、松手后异步取齐 URL 再回主线程提交。
 /// 挂载点必须与 "strip" coordinateSpace 同层（坐标同源,评审拍板）。
 struct StripFileDropDelegate: DropDelegate {
-    let shelfFrame: CGRect
+    /// nil = 中转格被用户关掉（不是「帧还没量到」，后者仍传 `.zero`）。
+    let shelfFrame: CGRect?
     let folderFrames: [String: CGRect]
     let orderedPaths: [String]
     /// dropEntered = 悬停会话开始;dropUpdated = 会话进行中移动;performDrop/dropExited = 会话结束。

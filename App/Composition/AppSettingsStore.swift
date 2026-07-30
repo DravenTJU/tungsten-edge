@@ -14,6 +14,8 @@ final class AppSettingsStore: ObservableObject {
     nonisolated static let defaultEdgeAutoHideDelay: Double = 0.1
 
     @Published private(set) var launchAtLogin: Bool
+    /// 中转格是否显示在固定文件夹区头位。关掉后它不再渲染，暂存的文件不受影响。
+    @Published private(set) var showShelf: Bool
     @Published private(set) var nativeDockAutoHideDelay: Double
     @Published private(set) var edgeAutoHideDelay: Double
     /// 「自动隐藏」切换（菜单/全局快捷键）从常驻恢复时要回到的延迟值。
@@ -43,11 +45,13 @@ final class AppSettingsStore: ObservableObject {
         // 从未写过时由下面的播种逻辑决定，而不是静默拿到一个注册出来的假历史值。
         defaults.register(defaults: [
             Keys.launchAtLogin: false,
+            Keys.showShelf: true,
             Keys.nativeDockAutoHideDelay: Self.defaultNativeDockAutoHideDelay,
             Keys.edgeAutoHideDelay: Self.defaultEdgeAutoHideDelay,
         ])
 
         launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
+        showShelf = defaults.bool(forKey: Keys.showShelf)
         let nativeDelay = Self.sanitizedStoredDelay(
             defaults.object(forKey: Keys.nativeDockAutoHideDelay),
             fallback: Self.defaultNativeDockAutoHideDelay
@@ -78,6 +82,12 @@ final class AppSettingsStore: ObservableObject {
         defaults.set(lastEnabledNativeDockAutoHideDelay, forKey: Keys.nativeDockAutoHideLastEnabledDelay)
         defaults.set(edgeDelay, forKey: Keys.edgeAutoHideDelay)
         defaults.set(lastEnabledEdgeAutoHideDelay, forKey: Keys.edgeAutoHideLastEnabledDelay)
+    }
+
+    func setShowShelf(_ value: Bool) {
+        guard showShelf != value else { return }
+        showShelf = value
+        defaults.set(value, forKey: Keys.showShelf)
     }
 
     func setLaunchAtLogin(_ value: Bool) {
@@ -192,6 +202,7 @@ final class AppSettingsStore: ObservableObject {
 
 private enum Keys {
     static let launchAtLogin = "com.tungsten.edge.launchAtLogin"
+    static let showShelf = "com.tungsten.edge.showShelf"
     static let nativeDockAutoHideEnabled = "com.tungsten.edge.autoHide.nativeDock.enabled"
     static let nativeDockAutoHideDelay = "com.tungsten.edge.autoHide.nativeDock.delay"
     static let nativeDockAutoHideLastEnabledDelay = "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay"

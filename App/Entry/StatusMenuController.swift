@@ -154,6 +154,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let openLoginItemsSettingsItem = NSMenuItem(title: "打开登录项设置…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
     private let checkForUpdatesItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
     private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
+    private let showShelfItem = NSMenuItem(title: "显示中转站", action: #selector(toggleShowShelf), keyEquivalent: "")
     private let nativeDockToggleItem = NSMenuItem(title: "", action: #selector(toggleNativeDockAutoHideFromMenu), keyEquivalent: "")
     private let openNativeDockSettingsItem = NSMenuItem(title: "打开系统 Dock 设置…", action: #selector(openNativeDockSettings), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
@@ -256,6 +257,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         let edgeItem = NSMenuItem()
         edgeItem.view = edgeSliderView
         menu.addItem(edgeItem)
+
+        // 钨极自己的外观开关跟在钨极这一组里（标题恒定，状态用勾表达，同「登录时启动」）。
+        showShelfItem.target = self
+        menu.addItem(showShelfItem)
 
         menu.addItem(.separator())
         #if DEBUG
@@ -395,6 +400,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func refreshCheckmarks() {
         refreshLaunchAtLoginState()
+        showShelfItem.state = store.showShelf ? .on : .off
+    }
+
+    @objc private func toggleShowShelf() {
+        store.setShowShelf(!store.showShelf)
+        refreshCheckmarks()
     }
 
     private func refreshLaunchAtLoginState() {

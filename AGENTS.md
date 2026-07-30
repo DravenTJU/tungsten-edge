@@ -139,7 +139,7 @@
 
 ## Pinned Folders And External File Drop
 
-- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]` (kept-app placeholders live in the live zone, not the messaging zone); empty zones drop adjacent dividers, while shelf keeps the folder zone non-empty.
+- Strip layout is `[messaging][divider][shelf + pinned folders][divider][live windows]` (kept-app placeholders live in the live zone, not the messaging zone); empty zones drop adjacent dividers. The shelf no longer guarantees a non-empty folder zone — `AppSettingsStore.showShelf` (menu 「显示中转站」, default on) can hide it, and with no pinned folders the whole zone plus its divider disappears. That state has **no external drop target and no 「添加文件夹…」 entry point at all** (both live only on shelf/folder chip context menus); the way back is the menu checkbox. Accepted boundary, owner 2026-07-30 — do not add a compensating entry point without an owner decision.
 - Folder chips drag via `DragController` source `.folder`; keep it isolated from strip/drawer stash semantics.
 - Fixed-folder primary click behavior must route through `FolderInteraction.primaryAction`; do not scatter left-click policy across views. Current default is preview toggle, with Finder open available from the menu.
 - Folder reorder and popup anchoring use `folderChipFrames`. Never merge folder ids into `ChipFramePreferenceKey`/`chipFrames`.
@@ -151,7 +151,8 @@
 - `FolderCover.isThumbnail` decides rendering: thumbnails get square-crop + border; icons render fit.
 - `DirectoryWatcher.stop()` is idempotent; the fd closes only in the dispatch source cancel handler.
 - The strip `.onDrop` for external files must stay on the same view level that declares the `"strip"` coordinate space, before shadow padding.
-- External drop routing stays in unit-tested `StripDropRouting.route`: shelf hit -> stash, pinned-folder chip horizontal-band hit -> move into that folder, chip gaps / folder-zone tail slack -> pin, else reject.
+- External drop routing stays in unit-tested `StripDropRouting.route`: shelf hit -> stash, pinned-folder chip horizontal-band hit -> move into that folder, chip gaps / folder-zone tail slack -> pin, else reject. `shelfFrame` is `CGRect?` and the caller must pass `showShelf ? frame : nil` — **never rely on the preference key clearing the stale frame**, because `ShelfFramePreferenceKey.reduce` deliberately ignores `.zero`, so a hidden shelf's old rect would keep answering `.stash`. `nil` shelf derives the zone's left edge from the first folder frame minus `headSlack` (8pt); that slack is the **only** way to reach `.pin(insertIndex: 0)`, since the first chip's whole band resolves to `.moveInto` first. `.zero` still means "frame not measured yet" and rejects everything.
+- `DockStripView.folderZoneMaxX` is optional and `nil` must **not** be treated as "no folder zone" — a folder drag implies the zone exists, so `nil` only means the frames are not measured yet. Classifying it as live zone makes an in-place release delete the pin and open Finder. Skip installing `FolderChipDropGeometry` instead; `DragController` already falls back to `.folderZone` (a no-op) for nil geometry.
 - Only directories can pin; files dropped in chip gaps / folder-zone tail slack are a silent no-op. Re-dropping an already-pinned folder in a gap repositions it; dropping it on a folder chip moves it into that folder.
 - Moving external files into a pinned folder never overwrites an existing destination. Move only when both volume identifiers are known and equal; otherwise copy through a hidden temporary item, preserve the source, and remove the temporary item on failure.
 - External drop hover cleanup must not rely only on `performDrop` / `dropExited` or `folderPaths` changes. Keep `dropEntered` gating plus `.common` Timer watchdog for missing terminal callbacks and post-drop hover flicker.
@@ -160,7 +161,7 @@
 ## Shelf And Folder Popup
 
 - Shelf stores references only, newest first. Never move/copy files implicitly. `ShelfStore.prune()` runs when opening the shelf popup.
-- Shelf chip is a fixed head of the pinned-folder zone: click + drop target only, never draggable and never a `DragController` source.
+- Shelf chip is a fixed head of the pinned-folder zone: click + drop target only, never draggable and never a `DragController` source. It renders only while `showShelf` is on. Toggling it changes the strip's content width, so `PanelCoordinator` must subscribe `$showShelf` and `relayout` **on the next main-loop turn** (SwiftUI has to finish layout before `fittingSize` reports the new width) — otherwise the panel, capsule and an open drawer all stay at the old geometry. The same subscription closes the shelf popup when it is the open one; hover cleanup belongs to `DockStripView.onChange(showShelf)` (`externalDropHoverEnded`), and `animatedEntryIDs` must drop only `"shelf"`, never the whole set, or every folder chip replays its entrance animation on re-enable.
 - Folder and shelf share one popup panel through `PanelCoordinator.PopupContent`; preserve the one-popup-at-a-time invariant.
 - Popup lifecycle stays in `PanelCoordinator`: plain `NSView` container, pinned `NSHostingView`, alpha fade, local/global left-mouse monitors.
 - `dismissFolderPopupIfOutside` must exclude the anchor chip rect with tolerance so clicking the same chip does not close-then-reopen.

@@ -92,4 +92,71 @@ final class StripDropRoutingTests: XCTestCase {
                                             shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths)
         XCTAssertEqual(target, .none)
     }
+
+    // MARK: - 中转格关掉（shelfFrame = nil）
+
+    func testHiddenShelfStillMovesIntoFolders() {
+        let paths = ["/a", "/b"]
+        let target = StripDropRouting.route(location: CGPoint(x: 160, y: 26),
+                                            shelfFrame: nil, folderFrames: frames(paths), orderedPaths: paths)
+        XCTAssertEqual(target, .moveInto(path: "/a"))
+    }
+
+    func testHiddenShelfKeepsHeadSlackForInsertAtZero() {
+        let paths = ["/a", "/b"]
+        // 首个 chip 左缘 152，headSlack 8 → 144..152 是「插到最前面」的唯一落点。
+        // 没有这段的话首个 chip 整段先被判成 moveInto，插 0 位就永远做不到了。
+        let target = StripDropRouting.route(location: CGPoint(x: 147, y: 26),
+                                            shelfFrame: nil, folderFrames: frames(paths), orderedPaths: paths)
+        XCTAssertEqual(target, .pin(insertIndex: 0))
+    }
+
+    func testHiddenShelfRejectsLeftOfHeadSlack() {
+        let paths = ["/a"]
+        let target = StripDropRouting.route(location: CGPoint(x: 120, y: 26),
+                                            shelfFrame: nil, folderFrames: frames(paths), orderedPaths: paths)
+        XCTAssertEqual(target, .none, "中转格关掉后，它原来的位置不能再接收任何拖放")
+    }
+
+    func testHiddenShelfStillPinsInGapAndTailSlack() {
+        let paths = ["/a", "/b"]
+        XCTAssertEqual(
+            StripDropRouting.route(location: CGPoint(x: 208, y: 26),
+                                   shelfFrame: nil, folderFrames: frames(paths), orderedPaths: paths),
+            .pin(insertIndex: 1)
+        )
+        XCTAssertEqual(
+            StripDropRouting.route(location: CGPoint(x: 276, y: 26),
+                                   shelfFrame: nil, folderFrames: frames(paths), orderedPaths: paths),
+            .pin(insertIndex: 2)
+        )
+    }
+
+    func testHiddenShelfWithNoFoldersRejectsEverything() {
+        // 中转格关掉 + 一个固定文件夹都没有 → 文件夹区整体不存在，任务条上没有任何落点。
+        // 这是已接受的边界：回路是菜单里把「显示中转站」勾回来。
+        for x in [CGFloat(50), 120, 160, 400] {
+            XCTAssertEqual(
+                StripDropRouting.route(location: CGPoint(x: x, y: 26),
+                                       shelfFrame: nil, folderFrames: [:], orderedPaths: []),
+                .none
+            )
+        }
+    }
+
+    func testHiddenShelfIgnoresStaleShelfCoordinates() {
+        // 视图侧必须传 nil 而不是旧帧：这条锁住「传了 nil 就绝不会再命中 stash」。
+        let paths = ["/a"]
+        let onShelfSpot = CGPoint(x: 120, y: 26)
+        XCTAssertEqual(
+            StripDropRouting.route(location: onShelfSpot,
+                                   shelfFrame: shelf, folderFrames: frames(paths), orderedPaths: paths),
+            .stash
+        )
+        XCTAssertEqual(
+            StripDropRouting.route(location: onShelfSpot,
+                                   shelfFrame: nil, folderFrames: frames(paths), orderedPaths: paths),
+            .none
+        )
+    }
 }
