@@ -116,8 +116,8 @@ final class DockThemeTests: XCTestCase {
             XCTAssertLessThanOrEqual(tokens.iconDimHidden.grayscale, tokens.iconDimNotRunning.grayscale,
                                      "\(name)：隐藏档要比退出档留更多颜色")
         }
-        XCTAssertEqual(light.iconDimNotRunning.grayscale, 1.0, "退出档全灰 = 「不在了」")
-        XCTAssertLessThan(light.iconDimHidden.grayscale, 1.0, "隐藏档要留一点品牌色 = 「在，只是没露面」")
+        XCTAssertLessThan(light.iconDimNotRunning.grayscale, 1.0,
+                          "退出档**不该**抽成灰色剪影：是否运行由白点表达，图标不必再扛一遍（owner 2026-07-30 第二次微调推翻了「退出 = 全灰」）")
     }
 
     /// 「要画」需要颜色和线宽同时成立：任一为 0 都等于看不见，此时就不该多挂一层。

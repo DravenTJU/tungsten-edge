@@ -402,12 +402,14 @@ extension DockThemeTokens {
 
         iconShadow: DockShadow(tint: .black(0.12), radius: 2, y: 1),
         // 图标淡化：把「变淡」从褪透明改成去饱和 + 略压暗，图标保持「实」，不糊成一片灰。
-        // 两档的区分也从「0.45 vs 0.35 的透明度差」换成「留色 vs 全灰」——
-        // 隐藏 = 留一点品牌色（在，只是没露面），退出 = 全灰（不在了），一眼能分。
         // **owner 2026-07-30 实机验收通过，这就是默认观感**（曾短暂挂在 `DOCK_ICON_DIM=1`
         // 后面，验收后开关即删——不再是候选，和下面那三个仍未验收的效果不是一回事）。
+        //
+        // 两档差得很近，是**故意的**（owner 同日第二次微调，推翻了第一版的「退出 = 全灰」）：
+        // 「是否运行」由图标下方的白点表达（退出无点），图标本身不必再扛一遍这个区分，
+        // 抽成灰色剪影反而死气。退出档只需要比隐藏档「稍微再灰一点」。
         iconDimHidden: DockIconDim(opacity: 0.80, grayscale: 0.45, brightness: -0.02),
-        iconDimNotRunning: DockIconDim(opacity: 0.60, grayscale: 1.00, brightness: -0.05),
+        iconDimNotRunning: DockIconDim(opacity: 0.72, grayscale: 0.58, brightness: -0.03),
 
         shelfPlateFill: DockTintPair(normal: .black(0.05), emphasized: .black(0.12)),
         shelfPlateRim: DockTintPair(normal: .black(0.1), emphasized: .black(0.28)),
