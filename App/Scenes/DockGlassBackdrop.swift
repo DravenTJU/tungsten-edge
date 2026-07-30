@@ -33,13 +33,18 @@ struct DockGlassBackdrop: View {
     /// 回退路径用的材质（`DockThemeTokens.panelMaterial`）。玻璃不可用时就是它。
     let material: DockPanelMaterial
     var cornerRadius: CGFloat = DockShape.panelCornerRadius
+    /// 只为启动那一行诊断日志携带——底板自己不用这两个值，它们作用在外层修饰符与兄弟图层上。
+    var saturation: Double = 1.0
+    var thicknessEnabled: Bool = false
 
     var body: some View {
         resolved
             // 诊断挂在 onAppear 而不是 body 里，免得每次求值都打一行。
             .onAppear {
                 DockGlassSwitch.logResolvedPath()
-                DockMaterialOverride.logIfOverridden(resolved: material)
+                DockEffectSwitches.logActiveOverrides(material: material,
+                                                      saturation: saturation,
+                                                      thickness: thicknessEnabled)
             }
     }
 

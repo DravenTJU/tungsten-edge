@@ -67,22 +67,70 @@ extension DockPanelMaterial {
     }
 }
 
+// MARK: - 未验收效果的开关
+//
+// **默认值 = owner 已认可的观感；未验收的效果一律 opt-in。**
+//
+// 这条是 2026-07-30 订正出来的：玻璃探路当时做成了默认关 + `DOCK_LIQUID_GLASS=1` 才开，
+// 但同一天加的提饱和与厚度层却默认生效了——同样是没验收的效果，两套标准。结果 owner
+// 眼前的观感在他不知情的情况下偏离了他点过头的那一版，是他自己发现的。
+//
+// 所以下面三样统一 opt-in。调参时一次重启切一样，也顺带解决「三个变量叠一起归不了因」。
+// 候选数值仍然只有一张表（`DockThemeTokens.light`），开关只决定用不用它。
+
 extension DockThemeTokens {
-    /// 实际生效的材质：`DOCK_PANEL_MATERIAL` 覆盖 token 值（调参用，认不出的名字回落，不崩）。
-    /// 读一次就固定——调参期间改环境变量重启一次即可，也避免一次会话里前后不一致。
+    /// 实际生效的材质：`DOCK_PANEL_MATERIAL` 覆盖 token 值（认不出的名字回落，不崩）。
     var effectivePanelMaterial: DockPanelMaterial {
-        DockPanelMaterial.resolved(from: DockMaterialOverride.environment, fallback: panelMaterial)
+        DockPanelMaterial.resolved(from: DockEffectSwitches.environment, fallback: panelMaterial)
+    }
+
+    /// 实际生效的背景饱和度。未开 → `1.0`（桥接层的 `dockBackdropSaturation` 会整个跳过修饰符）。
+    /// 开了才用表里的候选值，也可以直接在环境变量里给一个数覆盖它。
+    var effectiveBackdropSaturation: Double {
+        DockEffectSwitches.saturation(from: DockEffectSwitches.environment, candidate: panelBackdropSaturation)
+    }
+
+    /// 厚度层到底画不画：**先看开关**，再看纯条件（`drawsPanelThickness`，颜色与线宽都得非零）。
+    /// 深色两层保险——候选值本来就是 0，开关打开也不画。
+    var drawsEffectiveThickness: Bool {
+        DockEffectSwitches.thicknessEnabled(from: DockEffectSwitches.environment) && drawsPanelThickness
     }
 }
 
-enum DockMaterialOverride {
+enum DockEffectSwitches {
+    /// 读一次就固定——调参期间改环境变量重启一次即可，也避免一次会话里前后不一致。
     static let environment = ProcessInfo.processInfo.environment
 
-    /// 调参诊断：只有真的设了环境变量才打一行。打的是**解析后**的值，所以名字打错
-    /// （回落到 token 值）当场就看得出来，不会拿着一张其实没换材质的对照表瞎比。
-    static func logIfOverridden(resolved: DockPanelMaterial) {
-        guard let raw = environment["DOCK_PANEL_MATERIAL"] else { return }
-        print("[material] DOCK_PANEL_MATERIAL=\"\(raw)\" → 实际生效 \(resolved)")
+    /// `DOCK_PANEL_SATURATION=1.25`。未设 / 非数字 / 超出合理范围 → `1.0`（= 不加滤镜）。
+    /// 特例：`1` 也当"开，用表里的候选值"讲不通——数字就是倍数本身，`1` 就是不提饱和。
+    /// 想用表里的候选值就写 `candidate`。
+    static func saturation(from environment: [String: String], candidate: Double) -> Double {
+        guard let raw = environment["DOCK_PANEL_SATURATION"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !raw.isEmpty else { return 1.0 }
+        if raw == "candidate" { return candidate }
+        guard let value = Double(raw), value > 0, value <= 5 else { return 1.0 }
+        return value
+    }
+
+    /// `DOCK_PANEL_THICKNESS=1` 才开。其余一切（含未设、`0`、乱填）都是关。
+    static func thicknessEnabled(from environment: [String: String]) -> Bool {
+        environment["DOCK_PANEL_THICKNESS"]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+    }
+
+    /// 调参诊断：只有真的设了某个开关才打一行，打的是**解析后**的值——
+    /// 名字或数字写错（被回落）当场就看得出来，不会拿着一张其实没生效的对照图瞎比。
+    static func logActiveOverrides(material: DockPanelMaterial, saturation: Double, thickness: Bool) {
+        if let raw = environment["DOCK_PANEL_MATERIAL"] {
+            print("[panel] DOCK_PANEL_MATERIAL=\"\(raw)\" → 实际生效 \(material)")
+        }
+        if let raw = environment["DOCK_PANEL_SATURATION"] {
+            print("[panel] DOCK_PANEL_SATURATION=\"\(raw)\" → 实际生效 \(saturation)")
+        }
+        if let raw = environment["DOCK_PANEL_THICKNESS"] {
+            print("[panel] DOCK_PANEL_THICKNESS=\"\(raw)\" → 厚度层\(thickness ? "开" : "关")")
+        }
     }
 }
 
@@ -108,7 +156,7 @@ extension DockThemeTokens {
     /// 画在材质**之上**、内容**之下**，是我们自己的像素——所以不受「拿不到窗口背后像素」
     /// 那条限制（折射与背景饱和度就是卡在那里）。
     ///
-    /// 调用方必须先判 `drawsPanelThickness`：深色时整层不进视图树，见该属性的注释。
+    /// 调用方必须先判 `drawsEffectiveThickness`（开关 + 纯条件）：深色与未开时整层不进视图树。
     @ViewBuilder
     func panelThicknessLayer(cornerRadius: CGFloat) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

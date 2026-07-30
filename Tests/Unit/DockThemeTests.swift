@@ -58,18 +58,18 @@ final class DockThemeTests: XCTestCase {
         XCTAssertEqual(dark.panelInnerShadowBlur, 0)
     }
 
-    /// 背景提饱和：深色必须是恒等 1.0（连修饰符都不挂），浅色要真的 > 1。
+    /// 背景提饱和的**候选值**（默认不生效，靠 `DOCK_PANEL_SATURATION` 开）。
     /// 2026-07-30 实测这条路可行——`.saturation` 作用在合成结果上，模糊保留；
     /// 而 `.opacity` 是死路（露出没模糊的原始桌面），别再拿它当通透度旋钮。
-    func testBackdropSaturation() {
-        XCTAssertEqual(dark.panelBackdropSaturation, 1.0, "深色不加滤镜")
-        XCTAssertGreaterThan(light.panelBackdropSaturation, 1.0, "浅色要提饱和")
-        XCTAssertLessThanOrEqual(light.panelBackdropSaturation, 2.0, "别调成实验用的极端值")
+    func testBackdropSaturationCandidate() {
+        XCTAssertEqual(dark.panelBackdropSaturation, 1.0, "深色连候选都是恒等")
+        XCTAssertGreaterThan(light.panelBackdropSaturation, 1.0, "浅色候选要真的提饱和")
+        XCTAssertLessThanOrEqual(light.panelBackdropSaturation, 2.0, "别把实验用的极端值写进表")
     }
 
-    /// 浅色反过来必须真画，否则这一轮等于没做。
-    func testLightDrawsThicknessLayer() {
-        XCTAssertTrue(light.drawsPanelThickness)
+    /// 厚度层的**候选值**成立（同样默认不生效，靠 `DOCK_PANEL_THICKNESS=1` 开）。
+    func testLightThicknessCandidateIsWellFormed() {
+        XCTAssertTrue(light.drawsPanelThickness, "候选值本身要构成一个能画的配置")
         XCTAssertEqual(light.panelInnerHighlight.base, .white, "上内沿是亮线")
         XCTAssertEqual(light.panelInnerShadow.base, .black, "下内沿是暗收")
         XCTAssertGreaterThan(light.panelInnerHighlightWidth, 0)
@@ -87,6 +87,45 @@ final class DockThemeTests: XCTestCase {
         XCTAssertFalse(gate(off, 2), "有线宽但全透明 → 不画")
         XCTAssertTrue(gate(.white(0.5), 2), "两者都有 → 画")
         XCTAssertTrue(gate(off, 0, .black(0.06), 2), "只有下内沿暗收也算要画")
+    }
+
+    // MARK: - 三个开关：默认必须是「owner 已认可的观感」
+
+    /// 这一组是本轮的核心约束。2026-07-30 出过一次事故：提饱和与厚度层默认生效，
+    /// owner 眼前的观感在他不知情的情况下偏离了他点过头的那版，是他自己发现的。
+    /// **未验收的效果一律 opt-in**，这几条断言就是那条规矩的机械保证。
+    func testAllEffectsAreOffByDefault() {
+        let empty: [String: String] = [:]
+        XCTAssertEqual(DockEffectSwitches.saturation(from: empty, candidate: 1.25), 1.0,
+                       "没设环境变量 → 不提饱和")
+        XCTAssertFalse(DockEffectSwitches.thicknessEnabled(from: empty), "没设环境变量 → 不画厚度层")
+        XCTAssertEqual(DockPanelMaterial.resolved(from: empty, fallback: .popover), .popover,
+                       "没设环境变量 → 用 token 里的材质")
+    }
+
+    func testSaturationSwitch() {
+        func s(_ raw: String) -> Double {
+            DockEffectSwitches.saturation(from: ["DOCK_PANEL_SATURATION": raw], candidate: 1.25)
+        }
+        XCTAssertEqual(s("1.4"), 1.4, accuracy: 0.0001, "数字就是倍数本身")
+        XCTAssertEqual(s(" 1.4 "), 1.4, accuracy: 0.0001, "两端空白要吃掉")
+        XCTAssertEqual(s("candidate"), 1.25, accuracy: 0.0001, "candidate = 用表里的候选值")
+        XCTAssertEqual(s("CANDIDATE"), 1.25, accuracy: 0.0001, "大小写不敏感")
+        XCTAssertEqual(s("1"), 1.0, accuracy: 0.0001, "1 就是不提饱和，不是「开」")
+        for bad in ["", "  ", "abc", "0", "-2", "99"] {
+            XCTAssertEqual(s(bad), 1.0, accuracy: 0.0001, "非法值 \"\(bad)\" 必须回落到不加滤镜")
+        }
+    }
+
+    func testThicknessSwitch() {
+        func t(_ raw: String) -> Bool {
+            DockEffectSwitches.thicknessEnabled(from: ["DOCK_PANEL_THICKNESS": raw])
+        }
+        XCTAssertTrue(t("1"))
+        XCTAssertTrue(t(" 1 "), "两端空白要吃掉")
+        for off in ["0", "", "true", "yes", "2", "on"] {
+            XCTAssertFalse(t(off), "只认 1；\"\(off)\" 一律当关")
+        }
     }
 
     // MARK: - 材质环境覆盖（调参用，不能崩）

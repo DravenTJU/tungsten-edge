@@ -95,7 +95,7 @@ struct DrawerView: View {
         // 不会像顶部对齐那样底边先垂到锚点下方(向下压胶囊)再升回来（owner 2026-06-21：避让该直接向上扩展）。
         ZStack(alignment: .bottomLeading) {
             DockVisualEffectView(material: theme.effectivePanelMaterial)
-                .dockBackdropSaturation(theme.panelBackdropSaturation)
+                .dockBackdropSaturation(theme.effectiveBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()

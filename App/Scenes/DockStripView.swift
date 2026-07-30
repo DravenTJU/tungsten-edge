@@ -263,15 +263,19 @@ struct DockStripView: View {
         ZStack {
             // 探路中：`DOCK_LIQUID_GLASS=1` 且系统 ≥ 26 时换成原生 Liquid Glass，否则原样毛玻璃。
             // 只有任务条这一个调用点接了探路装置（见 DockGlassBackdrop）。
-            DockGlassBackdrop(material: theme.effectivePanelMaterial, cornerRadius: Style.cornerRadius)
-                .dockBackdropSaturation(theme.panelBackdropSaturation)
+            DockGlassBackdrop(material: theme.effectivePanelMaterial,
+                              cornerRadius: Style.cornerRadius,
+                              saturation: theme.effectiveBackdropSaturation,
+                              thicknessEnabled: theme.drawsEffectiveThickness)
+                .dockBackdropSaturation(theme.effectiveBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()
 
-            // 玻璃厚度感：材质之上、内容之下。深色不画（drawsPanelThickness == false），
+            // 玻璃厚度感：材质之上、内容之下。**默认关**，`DOCK_PANEL_THICKNESS=1` 才开
+            //（未验收的效果一律 opt-in，见 DockEffectSwitches）。深色则两层保险都不画，
             // 整层不进视图树，保证深色逐像素冻结。
-            if theme.drawsPanelThickness {
+            if theme.drawsEffectiveThickness {
                 theme.panelThicknessLayer(cornerRadius: Style.cornerRadius)
             }
 
@@ -1408,7 +1412,7 @@ struct DrawerCapsuleButton: View {
         let showsHover = isHovering && dragController.draggingPayload == nil
         return ZStack {
             DockVisualEffectView(material: theme.effectivePanelMaterial)
-                .dockBackdropSaturation(theme.panelBackdropSaturation)
+                .dockBackdropSaturation(theme.effectiveBackdropSaturation)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()

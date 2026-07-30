@@ -315,14 +315,18 @@ extension DockThemeTokens {
         panelRimHighlighted: .black(0.35),
         panelRimLineWidth: 0.5,
         panelRimHighlightedLineWidth: 1,
-        // 厚度感初值（保守，待 owner 拍板）：上内沿一条亮线 + 下内沿一道暗收。
+        // ⚠️ 下面两组是**候选值，默认不生效**——owner 还没验收，按「未验收一律 opt-in」
+        // 的规矩由环境变量开（`DOCK_PANEL_THICKNESS=1` / `DOCK_PANEL_SATURATION=candidate`，
+        // 见 `DockEffectSwitches`）。数值留在表里是为了调参时只有一张表可改。
+        //
+        // 厚度感候选：上内沿一条亮线 + 下内沿一道暗收。
         panelInnerHighlight: .white(0.5),
         panelInnerHighlightWidth: 1.5,
         panelInnerHighlightBlur: 2,
         panelInnerShadow: .black(0.06),
         panelInnerShadowWidth: 2,
         panelInnerShadowBlur: 3,
-        // 背景提饱和的保守初值。3.0 是实验用的极端值，日常这个量级即可，待 owner 拍板。
+        // 背景提饱和候选。3.0 是实验用的极端值，日常这个量级即可。
         panelBackdropSaturation: 1.25,
         stripShadow: DockShadow(tint: .black(0.14), radius: 8, y: 3),
         popupShadow: DockShadow(tint: .black(0.14), radius: 8, y: 3),
