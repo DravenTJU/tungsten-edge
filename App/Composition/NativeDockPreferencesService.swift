@@ -11,11 +11,15 @@ struct NativeDockAutohideState: Equatable {
     var delay: Double?
 }
 
+/// 写系统 Dock 有两条**不可混用**的路径（owner 2026-07-30 定）：
+/// - `setAutohideEnabled` 是菜单显隐命令，严格等价系统 ⌥⌘D，只切 `autohide`，绝不碰 `autohide-delay`；
+/// - `apply(delay:)` 是滑块，既写 `autohide` 也写 `autohide-delay`。
+/// 混用会让「隐藏系统 Dock」顺手改掉用户的唤醒延迟，就不再等价 ⌥⌘D 了。
 @MainActor
 protocol NativeDockPreferencesServicing {
     var isAvailable: Bool { get }
-    var hasPendingRestore: Bool { get }
-    func setCompletelyHidden(_ hidden: Bool) throws
+    func setAutohideEnabled(_ enabled: Bool) throws
+    func apply(delay: Double) throws
     /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
     /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
     func currentAutohideState() -> NativeDockAutohideState?
@@ -38,28 +42,25 @@ struct SandboxEnvironment {
 
 @MainActor
 final class NativeDockPreferencesService: NativeDockPreferencesServicing {
-    static let completeHideDelay = 999.0
+    /// 系统 Dock 的「不唤醒」落值。刻意用 999 而不是极端浮点，Dock 偏好对后者解析不稳定。
+    static let noWakeDelay = 999.0
 
     private let sandbox: SandboxEnvironment
     private let runner: ShellRunner
     private let autohideReader: @MainActor () -> NativeDockAutohideState?
     private let urlOpener: URLOpener
-    private let defaults: UserDefaults
 
     init(sandbox: SandboxEnvironment = .current,
          runner: @escaping ShellRunner = NativeDockPreferencesService.runProcess,
          autohideReader: @escaping @MainActor () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem,
-         urlOpener: @escaping URLOpener = NativeDockPreferencesService.openURL,
-         defaults: UserDefaults = .standard) {
+         urlOpener: @escaping URLOpener = NativeDockPreferencesService.openURL) {
         self.sandbox = sandbox
         self.runner = runner
         self.autohideReader = autohideReader
         self.urlOpener = urlOpener
-        self.defaults = defaults
     }
 
     var isAvailable: Bool { !sandbox.isSandboxed }
-    var hasPendingRestore: Bool { defaults.bool(forKey: RestoreKeys.captured) }
 
     func currentAutohideState() -> NativeDockAutohideState? {
         guard isAvailable else { return nil }
@@ -133,78 +134,42 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         return NativeDockAutohideState(enabled: enabled, delay: delay)
     }
 
-    func setCompletelyHidden(_ hidden: Bool) throws {
+    /// 菜单显隐命令：严格等价 ⌥⌘D。**只写 `autohide`**，用户自己设的唤醒延迟原样保留。
+    func setAutohideEnabled(_ enabled: Bool) throws {
         guard isAvailable else { throw NativeDockPreferencesError.sandboxed }
-
-        let commands: [(executable: String, arguments: [String])]
-        if hidden {
-            captureRestoreDelayIfNeeded(currentState: currentAutohideState())
-            commands = Self.completeHideCommands()
-        } else {
-            commands = Self.showCommands(restoreDelay: capturedRestoreDelay())
-        }
-
-        for command in commands {
+        for command in Self.autohideCommands(enabled: enabled) {
             try runner(command.executable, command.arguments)
         }
-        if !hidden { clearCapturedRestoreDelay() }
     }
 
-    static func isCompletelyHidden(_ state: NativeDockAutohideState?) -> Bool {
-        guard let state, state.enabled, let delay = state.delay else { return false }
-        return delay >= completeHideDelay
+    /// 滑块：整档写入。常驻档只关 `autohide`，不写延迟——延迟此时无意义，写了反而覆盖用户原值。
+    func apply(delay: Double) throws {
+        guard isAvailable else { throw NativeDockPreferencesError.sandboxed }
+        for command in Self.commands(for: delay) {
+            try runner(command.executable, command.arguments)
+        }
     }
 
-    static func completeHideCommands() -> [(executable: String, arguments: [String])] {
+    static func autohideCommands(enabled: Bool) -> [(executable: String, arguments: [String])] {
         [
-            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "true"]),
-            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide-delay", "-float", String(Int(completeHideDelay))]),
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", enabled ? "true" : "false"]),
             ("/usr/bin/killall", ["Dock"]),
         ]
     }
 
-    static func showCommands(restoreDelay: Double?) -> [(executable: String, arguments: [String])] {
-        var commands: [(executable: String, arguments: [String])] = [
-            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "false"]),
+    static func commands(for delay: Double) -> [(executable: String, arguments: [String])] {
+        if delay <= AppSettingsStore.neverHideDelay {
+            return autohideCommands(enabled: false)
+        }
+
+        let effectiveDelay = delay >= AppSettingsStore.neverWakeDelay
+            ? noWakeDelay
+            : AppSettingsStore.snapDelay(delay, fallbackForNonFinite: AppSettingsStore.defaultNativeDockAutoHideDelay)
+        return [
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide", "-bool", "true"]),
+            ("/usr/bin/defaults", ["write", "com.apple.dock", "autohide-delay", "-float", String(format: "%.1f", effectiveDelay)]),
+            ("/usr/bin/killall", ["Dock"]),
         ]
-        if let restoreDelay {
-            commands.append((
-                "/usr/bin/defaults",
-                ["write", "com.apple.dock", "autohide-delay", "-float", String(restoreDelay)]
-            ))
-        } else {
-            commands.append(("/usr/bin/defaults", ["delete", "com.apple.dock", "autohide-delay"]))
-        }
-        commands.append(("/usr/bin/killall", ["Dock"]))
-        return commands
-    }
-
-    private func captureRestoreDelayIfNeeded(currentState: NativeDockAutohideState?) {
-        guard !hasPendingRestore else { return }
-        defaults.set(true, forKey: RestoreKeys.captured)
-        if let delay = currentState?.delay {
-            defaults.set(true, forKey: RestoreKeys.hadDelay)
-            defaults.set(delay, forKey: RestoreKeys.delay)
-        } else {
-            defaults.set(false, forKey: RestoreKeys.hadDelay)
-            defaults.removeObject(forKey: RestoreKeys.delay)
-        }
-    }
-
-    private func capturedRestoreDelay() -> Double? {
-        guard defaults.bool(forKey: RestoreKeys.captured),
-              defaults.bool(forKey: RestoreKeys.hadDelay),
-              let number = defaults.object(forKey: RestoreKeys.delay) as? NSNumber,
-              number.doubleValue.isFinite else {
-            return nil
-        }
-        return number.doubleValue
-    }
-
-    private func clearCapturedRestoreDelay() {
-        defaults.removeObject(forKey: RestoreKeys.captured)
-        defaults.removeObject(forKey: RestoreKeys.hadDelay)
-        defaults.removeObject(forKey: RestoreKeys.delay)
     }
 
     private static func runProcess(executable: String, arguments: [String]) throws {
@@ -236,11 +201,14 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
     }
 }
 
-private enum RestoreKeys {
-    static let captured = "com.tungsten.edge.nativeDock.restoreDelay.captured"
-    static let hadDelay = "com.tungsten.edge.nativeDock.restoreDelay.present"
-    static let delay = "com.tungsten.edge.nativeDock.restoreDelay.value"
-}
+/// 冻结键：`d08e8d6` 的「彻底隐藏」曾用这三个键记录隐藏前的精确 delay。滑块回归后这套快照
+/// 不再需要，但**不读、不写、也不删**——已有用户机器上可能存着精确旧值（如 0.75，滑块 0.1 步进
+/// 本来就表达不了），删掉既丢值又破坏 `git revert d08e8d6` 的数据边界。留作孤儿键，无害。
+/// 要做有损迁移必须先问 owner。这里只保留名字，防止将来撞键。
+///
+/// - `com.tungsten.edge.nativeDock.restoreDelay.captured`
+/// - `com.tungsten.edge.nativeDock.restoreDelay.present`
+/// - `com.tungsten.edge.nativeDock.restoreDelay.value`
 
 enum NativeDockPreferencesError: LocalizedError {
     case sandboxed

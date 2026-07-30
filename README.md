@@ -108,7 +108,7 @@ Tungsten Edge needs **Accessibility** permission to read and manage your windows
 Tungsten Edge lives in the macOS menu bar. Its menu currently includes:
 
 - **Launch at login** — available on macOS 13 and later. If macOS asks for approval, open Login Items in System Settings and approve Tungsten Edge there.
-- **Hide/Show System Dock** — hiding enables auto-hide *and* sets the edge wake delay to “never wake”, so the native Dock stays fully out of the way and no longer pops up when the pointer reaches the screen edge; showing disables auto-hide and restores the wake delay that was present before hiding. macOS's `⌥⌘D` only toggles ordinary auto-hide (the Dock still pops up at the edge), so it is not presented as a shortcut for this command.
+- **Hide/Show System Dock** — equivalent to macOS's own `⌥⌘D`: it toggles the native Dock's auto-hide only and never touches the wake delay you configured. The menu shows `⌥⌘D` as its shortcut hint (macOS owns that shortcut, so it always works). The compact slider immediately below controls the native Dock's wake delay: `常驻` (always visible), `0.1s`–`3.0s`, or `不唤醒` (never wake) — drag it to `不唤醒` and the Dock stays fully out of the way, no longer popping up when the pointer reaches the screen edge. The slider applies on release, since every write restarts Dock.
 - **Open System Dock Settings…** — opens Desktop & Dock on Ventura and later, or Dock & Menu Bar on macOS 12. It only opens System Settings; it never writes Dock preferences or restarts Dock.
 - **Hide/Show Tungsten Edge 钨极** — switches between always visible and your last auto-hide wake delay. The compact slider immediately below it controls the wake delay: `常驻`, `0.1s`–`3.0s`, or `不唤醒`. When the status menu is closed, the global `⌥⇧⌘D` shortcut performs the same switch; if registration fails, the menu hides its key hint but the command remains clickable. Adding Shift mirrors the system Dock's `⌥⌘D` while releasing the old `⌥⌘E` shortcut back to Safari and Finder.
 - **检查更新…** — manually checks the latest stable GitHub release. When an update is available, Tungsten Edge opens that release page for you to download and install it.
@@ -121,7 +121,7 @@ If your native Dock lives on the **side or top** of the screen, minimizing a win
 
 - **System Settings → Desktop & Dock → Position on screen → Bottom**, and turn on **Automatically hide and show the Dock**.
 
-After choosing **Hide System Dock**, hovering at the screen edge no longer wakes the native Dock. Choosing **Show System Dock** restores the previous wake delay.
+To keep the native Dock from ever reappearing, drag the system Dock slider in the status menu to `不唤醒` (never wake): hovering at the screen edge will no longer wake it.
 
 ## Roadmap
 

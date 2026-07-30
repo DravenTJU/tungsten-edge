@@ -19,75 +19,115 @@ enum AutoHideToggleMenuModel {
             : "隐藏 Tungsten Edge 钨极"
     }
 
-    /// 系统 Dock 状态优先读系统真值；读不到时用本地镜像兜底。
-    static func nativeIsCompletelyHidden(
-        liveState: NativeDockAutohideState?,
-        hasPendingRestore: Bool,
-        storeDelay: Double
-    ) -> Bool {
-        if hasPendingRestore { return true }
-        if let liveState { return NativeDockPreferencesService.isCompletelyHidden(liveState) }
-        return storeDelay >= NativeDockPreferencesService.completeHideDelay
+    /// 系统 Dock 是否处于自动隐藏。优先读系统真值（用户随时可用 ⌥⌘D / 系统设置改），
+    /// 读不到才回退本地镜像推导。
+    static func nativeIsAutoHideEnabled(liveAutohide: Bool?, storeDelay: Double) -> Bool {
+        liveAutohide ?? isAutoHideEnabled(delay: storeDelay)
     }
 
-    static func nativeTitle(
-        liveState: NativeDockAutohideState?,
-        hasPendingRestore: Bool,
-        storeDelay: Double
-    ) -> String {
-        nativeIsCompletelyHidden(
-            liveState: liveState,
-            hasPendingRestore: hasPendingRestore,
-            storeDelay: storeDelay
-        )
+    static func nativeTitle(liveAutohide: Bool?, storeDelay: Double) -> String {
+        nativeIsAutoHideEnabled(liveAutohide: liveAutohide, storeDelay: storeDelay)
             ? "显示系统 Dock"
-            // 标题按 owner 决定保持简短；命令实际执行的仍是彻底隐藏（含关闭底边唤醒）。
             : "隐藏系统 Dock"
     }
 
-    static func nativeToggleTargetHidden(
-        liveState: NativeDockAutohideState?,
-        hasPendingRestore: Bool,
-        storeDelay: Double
-    ) -> Bool {
-        !nativeIsCompletelyHidden(
-            liveState: liveState,
-            hasPendingRestore: hasPendingRestore,
-            storeDelay: storeDelay
-        )
+    /// 命令翻转方向必须由**实际状态**（live 优先）决定，不能盲翻本地镜像——镜像可能已被外部改动甩在身后。
+    static func nativeToggleTargetEnabled(liveAutohide: Bool?, storeDelay: Double) -> Bool {
+        !nativeIsAutoHideEnabled(liveAutohide: liveAutohide, storeDelay: storeDelay)
+    }
+
+    /// 系统 ⌥⌘D 在菜单追踪期间仍由 macOS 处理；菜单 action 只跳过这一条精确 keyDown，
+    /// 否则系统和菜单项各执行一次，等于连按两下。
+    static func shouldSkipNativeDockMenuAction(eventType: NSEvent.EventType?,
+                                               keyCode: UInt16?,
+                                               modifierFlags: NSEvent.ModifierFlags,
+                                               isSystemShortcutAvailable: Bool) -> Bool {
+        guard isSystemShortcutAvailable,
+              eventType == .keyDown else { return false }
+        let shortcut = GlobalHotKeyShortcut.nativeDockAutoHide
+        guard let keyCode, UInt32(keyCode) == shortcut.keyCode else { return false }
+        let normalized = modifierFlags.intersection([.command, .option, .control, .shift])
+        return normalized == shortcut.keyEquivalentModifierMask
     }
 
     /// autohide-delay 键不存在时系统 Dock 的实际默认延迟。
     static let systemDefaultAutohideDelay = 0.5
 
-    /// 菜单打开时把系统实际状态回灌进本地镜像，让读取失败时的标题和点击方向仍有可靠兜底。
-    /// 外部通过 ⌥⌘D 或系统设置修改后，本地镜像不能继续保留过期状态。
+    /// 系统真值 → 本地镜像应有的档位值。
+    static func storeDelay(systemEnabled: Bool, systemDelay: Double?) -> Double {
+        guard systemEnabled else { return AppSettingsStore.neverHideDelay }
+        let rawDelay = systemDelay ?? systemDefaultAutohideDelay
+        // 系统开关已经明确为开；负 delay 只能视为外部自定义的极短延迟，
+        // 不能穿透 snapDelay 被误解释成本 App 的「常驻」哨兵 -1。
+        let enabledDelay = rawDelay.isFinite
+            ? max(rawDelay, AppSettingsStore.finiteDelayMin)
+            : AppSettingsStore.defaultNativeDockAutoHideDelay
+        return AppSettingsStore.snapDelay(
+            enabledDelay,
+            fallbackForNonFinite: AppSettingsStore.defaultNativeDockAutoHideDelay
+        )
+    }
+
+    /// 菜单打开时把系统实际状态回灌进本地镜像，让滑块、标题、点击方向从同一真值出发。
     /// 返回 nil = 已一致，无需改动。
     static func reconciledStoreDelay(systemEnabled: Bool, systemDelay: Double?, currentStoreDelay: Double) -> Double? {
-        let target: Double
-        if systemEnabled {
-            let rawDelay = systemDelay ?? systemDefaultAutohideDelay
-            // 系统开关已经明确为开；负 delay 只能视为外部自定义的极短延迟，
-            // 不能穿透 snapDelay 被误解释成本 App 的「常驻」哨兵 -1。
-            let enabledDelay = rawDelay.isFinite
-                ? max(rawDelay, AppSettingsStore.finiteDelayMin)
-                : AppSettingsStore.defaultNativeDockAutoHideDelay
-            target = AppSettingsStore.snapDelay(
-                enabledDelay,
-                fallbackForNonFinite: AppSettingsStore.defaultNativeDockAutoHideDelay
-            )
-        } else {
-            target = AppSettingsStore.neverHideDelay
-        }
+        let target = storeDelay(systemEnabled: systemEnabled, systemDelay: systemDelay)
         return currentStoreDelay == target ? nil : target
     }
 
+    /// 写系统之后本地镜像该落什么值。四象限，**不能一律「失败就回 previous」**：
+    /// 写成功但读不回来时回滚，会让 UI 显示得和已经生效的系统设置相反。
+    ///
+    /// |            | 系统可读     | 系统不可读   |
+    /// |------------|--------------|--------------|
+    /// | **写成功** | 按读到的值   | 保留 target  |
+    /// | **写失败** | 按读到的值（可能是部分写入的结果） | 保留 previous |
+    static func resolvedStoreDelay(writeSucceeded: Bool,
+                                   systemState: NativeDockAutohideState?,
+                                   target: Double,
+                                   previous: Double) -> Double {
+        if let systemState {
+            return storeDelay(systemEnabled: systemState.enabled, systemDelay: systemState.delay)
+        }
+        return writeSucceeded ? target : previous
+    }
+
     /// keyEquivalent 提示只在对应全局热键真实生效时显示。
+    /// （系统 Dock 行传 true：⌥⌘D 由 macOS 持有，恒生效，无注册环节。）
     static func keyEquivalentPresentation(isHotKeyRegistered: Bool,
                                           shortcut: GlobalHotKeyShortcut) -> (key: String, mask: NSEvent.ModifierFlags) {
         isHotKeyRegistered ? (shortcut.keyEquivalent, shortcut.keyEquivalentModifierMask) : ("", [])
     }
 
+}
+
+/// 系统 Dock 滑块的提交去重。三个触发源会互相撞车——鼠标松手、键盘/辅助功能调整的 debounce、
+/// 菜单关闭——各跑一次 `apply` 就是两次 `killall Dock`。pending 必须被**原子消费**：
+/// 谁先 `consume()` 谁负责提交，其余全部拿到 nil。
+struct PreferenceSliderCommitTracker {
+    private var baseline: Double?
+    private var pending: Double?
+
+    var hasPending: Bool { pending != nil }
+
+    /// 记录草稿起点。一轮调整里只认第一次，中途重复调用不覆盖（拖动过程中会反复触发）。
+    mutating func begin(currentDelay: Double) {
+        if baseline == nil { baseline = currentDelay }
+    }
+
+    mutating func stage(_ value: Double) {
+        pending = value
+    }
+
+    /// 原子取出待提交值。无起点、无变化、或已被别人消费过 → nil。
+    mutating func consume() -> (previous: Double, target: Double)? {
+        defer {
+            baseline = nil
+            pending = nil
+        }
+        guard let baseline, let pending, baseline != pending else { return nil }
+        return (baseline, pending)
+    }
 }
 
 @MainActor
@@ -116,6 +156,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
     private let nativeDockToggleItem = NSMenuItem(title: "", action: #selector(toggleNativeDockAutoHideFromMenu), keyEquivalent: "")
     private let openNativeDockSettingsItem = NSMenuItem(title: "打开系统 Dock 设置…", action: #selector(openNativeDockSettings), keyEquivalent: "")
+    private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
     private var updateCheckState = UpdateCheckMenuState()
 
@@ -139,14 +180,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         self.onQuit = onQuit
         self.toggleHotKeyShortcut = toggleHotKeyShortcut
         self.isToggleHotKeyRegistered = isToggleHotKeyRegistered
+        nativeDockSliderView = PreferenceSliderMenuItemView(accessibilityTitle: "系统 Dock 唤醒时间")
         edgeSliderView = PreferenceSliderMenuItemView(accessibilityTitle: "Tungsten Edge 钨极唤醒时间")
         super.init()
         configureStatusItem()
         configureMenu()
         refreshCheckmarks()
         refreshUpdateCheckItem()
-        // 动态命令与滑块同处一个打开着的菜单：拖动时要实时同步标题。
+        // 钨极组：动态命令与滑块同处一个打开着的菜单，拖动时要实时同步标题（本地值即时生效）。
         // sink 用 publisher 发出的新值：@Published 在赋值完成前发布，此刻回读 store 是旧值。
+        //
+        // 系统 Dock 组刻意**没有**同款订阅：它的标题描述的是系统真值，而草稿在松手写进系统之前
+        // 系统没变，标题就不该变。滑块位置由 menuWillOpen 与提交完成后各同步一次。
         edgeDelaySubscription = store.$edgeAutoHideDelay
             .removeDuplicates()
             .sink { [weak self] delay in
@@ -181,10 +226,24 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         nativeDockToggleItem.target = self
-        // ⌥⌘D 只能切普通自动隐藏，不能表达「彻底隐藏」，因此不再作为本命令快捷键展示。
-        nativeDockToggleItem.keyEquivalent = ""
-        nativeDockToggleItem.keyEquivalentModifierMask = []
+        // ⌥⌘D 由 macOS 自己持有、恒生效，提示恒显示（不同于钨极行的注册门控）。
+        let nativeHint = AutoHideToggleMenuModel.keyEquivalentPresentation(
+            isHotKeyRegistered: true,
+            shortcut: .nativeDockAutoHide
+        )
+        nativeDockToggleItem.keyEquivalent = nativeHint.key
+        nativeDockToggleItem.keyEquivalentModifierMask = nativeHint.mask
         menu.addItem(nativeDockToggleItem)
+
+        // 系统 Dock 滑块刻意不接 onDelayChange：草稿只留在视图里。setNativeDockAutoHideDelay
+        // 一调用就把 active + remembered 一起落盘，而系统那边还没写，拖到一半的值不该变成持久状态。
+        nativeDockSliderView.onDelayCommit = { [weak self] previous, target in
+            self?.commitNativeDockDelay(previous: previous, target: target)
+        }
+        let nativeDockSliderItem = NSMenuItem()
+        nativeDockSliderItem.view = nativeDockSliderView
+        menu.addItem(nativeDockSliderItem)
+
         openNativeDockSettingsItem.target = self
         menu.addItem(openNativeDockSettingsItem)
         menu.addItem(.separator())
@@ -251,10 +310,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         reconcileNativeDockStoreWithSystem()
         refreshCheckmarks()
         refreshUpdateCheckItem()
+        nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
         // 钨极行刷注册门控；系统 Dock 行每次都重新读取系统真值。
         refreshEdgeAutoHideToggleItem(delay: store.edgeAutoHideDelay)
         refreshNativeDockToggleItem(storeDelay: store.nativeDockAutoHideDelay)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        // 键盘 / VoiceOver 改滑块走不到 mouseUp，靠 debounce 提交；菜单先关掉时在这里兜底。
+        // 已被松手或 timer 消费过的 pending 在这里拿到 nil，不会重复写系统。
+        nativeDockSliderView.flushPendingCommit()
     }
 
     /// 只改本地存值让 UI 对齐系统真值，绝不反向应用（菜单打开不许 killall Dock）。
@@ -281,10 +347,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func refreshNativeDockToggleItem(storeDelay: Double) {
-        let live = nativeDockPreferencesService.currentAutohideState()
+        let live = nativeDockPreferencesService.currentAutohideState()?.enabled
         nativeDockToggleItem.title = AutoHideToggleMenuModel.nativeTitle(
-            liveState: live,
-            hasPendingRestore: nativeDockPreferencesService.hasPendingRestore,
+            liveAutohide: live,
             storeDelay: storeDelay
         )
         nativeDockToggleItem.state = .off
@@ -295,12 +360,27 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleNativeDockAutoHideFromMenu() {
-        let targetHidden = AutoHideToggleMenuModel.nativeToggleTargetHidden(
-            liveState: nativeDockPreferencesService.currentAutohideState(),
-            hasPendingRestore: nativeDockPreferencesService.hasPendingRestore,
+        let event = NSApp.currentEvent
+        let isKeyEvent = event?.type == .keyDown
+        if AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
+            eventType: event?.type,
+            keyCode: isKeyEvent ? event?.keyCode : nil,
+            modifierFlags: event?.modifierFlags ?? [],
+            isSystemShortcutAvailable: true // ⌥⌘D 由 macOS 持有，恒生效
+        ) { return }
+
+        let targetEnabled = AutoHideToggleMenuModel.nativeToggleTargetEnabled(
+            liveAutohide: nativeDockPreferencesService.currentAutohideState()?.enabled,
             storeDelay: store.nativeDockAutoHideDelay
         )
-        scheduleNativeDockVisibilityChange(hidden: targetHidden)
+        // 命令严格等价 ⌥⌘D：只切 autohide。target 只是本地镜像的预期值，
+        // 真正落什么以写完之后重读到的系统真值为准。
+        scheduleNativeDockWrite(
+            previous: store.nativeDockAutoHideDelay,
+            target: targetEnabled ? store.lastEnabledNativeDockAutoHideDelay : AppSettingsStore.neverHideDelay
+        ) { [nativeDockPreferencesService] in
+            try nativeDockPreferencesService.setAutohideEnabled(targetEnabled)
+        }
     }
 
     @objc private func openNativeDockSettings() {
@@ -408,27 +488,53 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         NSWorkspace.shared.open(url)
     }
 
-    private func scheduleNativeDockVisibilityChange(hidden: Bool) {
-        menu.cancelTrackingWithoutAnimation()
-        DispatchQueue.main.async { [weak self] in
-            self?.applyNativeDockVisibility(hidden: hidden)
+    private func commitNativeDockDelay(previous: Double, target: Double) {
+        scheduleNativeDockWrite(previous: previous, target: target) { [nativeDockPreferencesService] in
+            try nativeDockPreferencesService.apply(delay: target)
         }
     }
 
-    private func applyNativeDockVisibility(hidden: Bool) {
+    /// 系统 Dock 的两条写入路径都走这里。先收菜单——写入以 `killall Dock` 收尾，
+    /// 菜单不该在系统 Dock 重启时还开着；下一轮再执行。
+    private func scheduleNativeDockWrite(previous: Double,
+                                         target: Double,
+                                         write: @escaping @MainActor () throws -> Void) {
+        menu.cancelTrackingWithoutAnimation()
+        DispatchQueue.main.async { [weak self] in
+            self?.applyNativeDockWrite(previous: previous, target: target, write: write)
+        }
+    }
+
+    private func applyNativeDockWrite(previous: Double,
+                                      target: Double,
+                                      write: @MainActor () throws -> Void) {
         guard nativeDockPreferencesService.isAvailable else {
             presentError(title: "系统 Dock 设置失败", message: NativeDockPreferencesError.sandboxed.localizedDescription)
             return
         }
 
+        // defaults/killall 是多步非事务序列，写完一律重读系统真值再决定本地镜像落什么
+        // （四象限见 AutoHideToggleMenuModel.resolvedStoreDelay）。
+        var writeError: Error?
         do {
-            try nativeDockPreferencesService.setCompletelyHidden(hidden)
-            reconcileNativeDockStoreWithSystem()
-            refreshNativeDockToggleItem(storeDelay: store.nativeDockAutoHideDelay)
+            try write()
         } catch {
-            // defaults/killall 是多步非事务序列；失败后重读系统真值校准动态标题。
-            reconcileNativeDockStoreWithSystem()
-            presentError(title: "系统 Dock 设置失败", message: error.localizedDescription)
+            writeError = error
+        }
+
+        let resolved = AutoHideToggleMenuModel.resolvedStoreDelay(
+            writeSucceeded: writeError == nil,
+            systemState: nativeDockPreferencesService.currentAutohideState(),
+            target: target,
+            previous: previous
+        )
+        store.setNativeDockAutoHideDelay(resolved)
+        nativeDockSliderView.sync(delay: resolved)
+        refreshNativeDockToggleItem(storeDelay: resolved)
+
+        // 只有写失败才提示。写成功但读不回来时弹窗会让用户以为没生效，其实系统已经改了。
+        if let writeError {
+            presentError(title: "系统 Dock 设置失败", message: writeError.localizedDescription)
         }
     }
 
@@ -461,10 +567,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
 @MainActor
 final class PreferenceSliderMenuItemView: NSView {
+    /// 每一格变化。即时生效型滑块（钨极，本地值）在这里直接写 store。
     var onDelayChange: ((Double) -> Void)?
+    /// 落定回调。**设了它就启用提交机制**（系统 Dock：每次应用都要 `killall Dock`，
+    /// 逐格触发会把系统 Dock 反复重启）。三个触发源经 `PreferenceSliderCommitTracker` 去重。
+    var onDelayCommit: ((_ previous: Double, _ target: Double) -> Void)?
 
     private let accessibilityTitle: String
     private var delay = 0.0
+    private var commitTracker = PreferenceSliderCommitTracker()
+    private var keyboardCommitTimer: Timer?
+    /// 键盘 / VoiceOver 每按一下方向键就是一格，攒一小会儿再提交。
+    private static let keyboardCommitDelay: TimeInterval = 0.2
     private var displayString = "0.0s"
     private let leftEndpointDot = EndpointDotView()
     private let rightEndpointDot = EndpointDotView()
@@ -535,6 +649,13 @@ final class PreferenceSliderMenuItemView: NSView {
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
+        slider.onTrackingStarted = { [weak self] in
+            guard let self else { return }
+            self.commitTracker.begin(currentDelay: self.delay)
+        }
+        slider.onTrackingEnded = { [weak self] in
+            self?.commitPendingDelay()
+        }
         addSubview(slider)
 
         setAccessibilityRole(.group)
@@ -564,9 +685,41 @@ final class PreferenceSliderMenuItemView: NSView {
     @objc private func sliderChanged(_ sender: NSSlider) {
         let index = min(max(Int(sender.doubleValue.rounded()), 0), AppSettingsStore.sliderIndexMax)
         sender.integerValue = index
+        let previousDelay = delay
         delay = AppSettingsStore.delayFromSliderIndex(index)
         updateDisplay()
         onDelayChange?(delay)
+
+        guard onDelayCommit != nil else { return }
+        // 键盘 / VoiceOver 调整不经过 mouseDown，没有 tracking 起点，这里补一个
+        // （鼠标路径里 begin 已由 onTrackingStarted 调过，重复调用不覆盖起点）。
+        commitTracker.begin(currentDelay: previousDelay)
+        commitTracker.stage(delay)
+        if !slider.isMouseTracking {
+            scheduleKeyboardCommit()
+        }
+    }
+
+    private func scheduleKeyboardCommit() {
+        keyboardCommitTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.keyboardCommitDelay, repeats: false) { _ in
+            MainActor.assumeIsolated { [weak self] in self?.commitPendingDelay() }
+        }
+        // 菜单追踪期 run loop 在 .eventTracking 模式，.default 的 timer 不会触发。
+        RunLoop.main.add(timer, forMode: .common)
+        keyboardCommitTimer = timer
+    }
+
+    /// 菜单先于 debounce 关掉时的兜底提交。已被别的触发源消费过就是空操作。
+    func flushPendingCommit() {
+        commitPendingDelay()
+    }
+
+    private func commitPendingDelay() {
+        keyboardCommitTimer?.invalidate()
+        keyboardCommitTimer = nil
+        guard let commit = commitTracker.consume() else { return }
+        onDelayCommit?(commit.previous, commit.target)
     }
 
     private func updateDisplay() {
@@ -619,8 +772,21 @@ final class EndpointDotView: NSView {
 
 final class MenuTrackingSlider: NSSlider {
     var displayString = "0.0s"
+    var onTrackingStarted: (() -> Void)?
+    var onTrackingEnded: (() -> Void)?
+    /// `mouseDown` 在拖动全程不返回，因此这个标志就是「当前是不是鼠标拖动」的准确答案，
+    /// 用来把键盘 / 辅助功能路径分流到 debounce 提交。
+    private(set) var isMouseTracking = false
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        isMouseTracking = true
+        onTrackingStarted?()
+        super.mouseDown(with: event)
+        isMouseTracking = false
+        onTrackingEnded?()
+    }
 
     override func accessibilityValue() -> Any? {
         displayString
