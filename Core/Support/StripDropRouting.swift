@@ -8,6 +8,9 @@ import Foundation
 /// 绝不能挂到 `.padding(shadowPadding)` 之后的内外层）。只做水平路由：拖到任务条上即算
 /// 有效高度，垂直命中由 onDrop 挂载层保证。
 enum StripDropRouting {
+    /// 中档基线。任务条缩放后调用方传 `defaultHeadSlack * scale`。
+    static let defaultHeadSlack: CGFloat = 8
+
     enum Target: Equatable {
         /// 落在中转格 → 暂存（任何文件/文件夹，引用不搬家）。
         case stash
@@ -35,7 +38,7 @@ enum StripDropRouting {
                       shelfFrame: CGRect?,
                       folderFrames: [String: CGRect],
                       orderedPaths: [String],
-                      headSlack: CGFloat = 8,
+                      headSlack: CGFloat = defaultHeadSlack,
                       tailSlack: CGFloat = 24) -> Target {
         let frames = orderedPaths.compactMap { folderFrames["folder-" + $0] }
 

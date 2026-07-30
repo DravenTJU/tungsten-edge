@@ -16,6 +16,8 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var launchAtLogin: Bool
     /// 中转格是否显示在固定文件夹区头位。关掉后它不再渲染，暂存的文件不受影响。
     @Published private(set) var showShelf: Bool
+    /// 任务条尺寸档位。面板几何与条内所有 chip 尺寸都由它派生。
+    @Published private(set) var dockSize: DockSize
     @Published private(set) var nativeDockAutoHideDelay: Double
     @Published private(set) var edgeAutoHideDelay: Double
     /// 「自动隐藏」切换（菜单/全局快捷键）从常驻恢复时要回到的延迟值。
@@ -52,6 +54,9 @@ final class AppSettingsStore: ObservableObject {
 
         launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         showShelf = defaults.bool(forKey: Keys.showShelf)
+        // 坏值（手改过、旧版本残留、类型不对）一律回退中档并**立刻重写**，
+        // 否则每次启动都要重新走一遍回退，且 UI 上勾选的档位和存的值对不上。
+        dockSize = DockSize(rawValue: defaults.string(forKey: Keys.dockSize) ?? "") ?? .default
         let nativeDelay = Self.sanitizedStoredDelay(
             defaults.object(forKey: Keys.nativeDockAutoHideDelay),
             fallback: Self.defaultNativeDockAutoHideDelay
@@ -78,10 +83,17 @@ final class AppSettingsStore: ObservableObject {
         } else {
             lastEnabledEdgeAutoHideDelay = edgeDelay
         }
+        defaults.set(dockSize.rawValue, forKey: Keys.dockSize)
         defaults.set(nativeDelay, forKey: Keys.nativeDockAutoHideDelay)
         defaults.set(lastEnabledNativeDockAutoHideDelay, forKey: Keys.nativeDockAutoHideLastEnabledDelay)
         defaults.set(edgeDelay, forKey: Keys.edgeAutoHideDelay)
         defaults.set(lastEnabledEdgeAutoHideDelay, forKey: Keys.edgeAutoHideLastEnabledDelay)
+    }
+
+    func setDockSize(_ value: DockSize) {
+        guard dockSize != value else { return }
+        dockSize = value
+        defaults.set(value.rawValue, forKey: Keys.dockSize)
     }
 
     func setShowShelf(_ value: Bool) {
@@ -109,8 +121,8 @@ final class AppSettingsStore: ObservableObject {
         defaults.set(snapped, forKey: Keys.nativeDockAutoHideDelay)
     }
 
-    // 系统 Dock 组刻意不提供盲翻的 toggle 方法：它的翻转方向必须由系统实际完整隐藏状态决定
-    // （AutoHideToggleMenuModel.nativeToggleTargetHidden）——系统状态可被外部改（⌥⌘D / 系统设置），
+    // 系统 Dock 组刻意不提供盲翻的 toggle 方法：它的翻转方向必须由系统实际 autohide 状态决定
+    // （AutoHideToggleMenuModel.nativeToggleTargetEnabled）——系统状态可被外部改（⌥⌘D / 系统设置），
     // 盲翻本地存值会在两者脱节时翻错方向。
 
     func setEdgeAutoHideDelay(_ value: Double) {
@@ -203,6 +215,7 @@ final class AppSettingsStore: ObservableObject {
 private enum Keys {
     static let launchAtLogin = "com.tungsten.edge.launchAtLogin"
     static let showShelf = "com.tungsten.edge.showShelf"
+    static let dockSize = "com.tungsten.edge.dockSize"
     static let nativeDockAutoHideEnabled = "com.tungsten.edge.autoHide.nativeDock.enabled"
     static let nativeDockAutoHideDelay = "com.tungsten.edge.autoHide.nativeDock.delay"
     static let nativeDockAutoHideLastEnabledDelay = "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay"

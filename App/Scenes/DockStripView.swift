@@ -49,6 +49,11 @@ struct DockStripView: View {
     @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
     @EnvironmentObject var shelfStore: ShelfStore
     @EnvironmentObject var settingsStore: AppSettingsStore
+
+    /// 当前尺寸档位派生的面板几何与缩放系数。**条内不写裸尺寸数字**——凡是随任务条一起
+    /// 放大缩小的值都乘 `dockScale`；发丝线（分隔线宽、描边）保持 1pt 不缩。
+    private var metrics: PanelLayoutMetrics { settingsStore.dockSize.metrics }
+    private var dockScale: CGFloat { settingsStore.dockSize.scale }
     @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
@@ -267,41 +272,41 @@ struct DockStripView: View {
             // 探路中：`DOCK_LIQUID_GLASS=1` 且系统 ≥ 26 时换成原生 Liquid Glass，否则原样毛玻璃。
             // 只有任务条这一个调用点接了探路装置（见 DockGlassBackdrop）。
             DockGlassBackdrop(material: theme.effectivePanelMaterial,
-                              cornerRadius: Style.cornerRadius,
+                              cornerRadius: Style.cornerRadius * dockScale,
                               saturation: theme.effectiveBackdropSaturation,
                               thicknessEnabled: theme.drawsEffectiveThickness)
                 .dockBackdropSaturation(theme.effectiveBackdropSaturation)
                 .padding(-2)
-                .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius * dockScale, style: .continuous))
                 .ignoresSafeArea()
 
             // 玻璃厚度感：材质之上、内容之下。**默认关**，`DOCK_PANEL_THICKNESS=1` 才开
             //（未验收的效果一律 opt-in，见 DockEffectSwitches）。深色则两层保险都不画，
             // 整层不进视图树，保证深色逐像素冻结。
             if theme.drawsEffectiveThickness {
-                theme.panelThicknessLayer(cornerRadius: Style.cornerRadius)
+                theme.panelThicknessLayer(cornerRadius: Style.cornerRadius * dockScale)
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .center, spacing: 8) {
+                HStack(alignment: .center, spacing: Style.chipSpacing * dockScale) {
                     ForEach(stripEntries) { entry in
                         chipWithReorder(entry)
                             .transition(.scale(scale: 0.88).combined(with: .opacity))
                     }
                 }
-                .padding(.horizontal, Style.chipContentInset)
-                .frame(height: PanelCoordinator.panelHeight)
+                .padding(.horizontal, Style.chipContentInset * dockScale)
+                .frame(height: metrics.panelHeight)
                 .animation(.spring(response: 0.28, dampingFraction: 0.82), value: stripLayoutKeys)
             }
-            .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius * dockScale, style: .continuous))
             .compatLeadingScrollAnchor()
             .mask(alignment: .center) {
                 HStack(spacing: 0) {
                     LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: Style.edgeFadeWidth)
+                        .frame(width: Style.edgeFadeWidth * dockScale)
                     Color.black
                     LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
-                        .frame(width: Style.edgeFadeWidth)
+                        .frame(width: Style.edgeFadeWidth * dockScale)
                 }
             }
             .overlay(alignment: .topLeading) {
@@ -312,7 +317,7 @@ struct DockStripView: View {
         // 抽屉图标拖到任务条上方 = 移出抽屉的投放反馈：整条任务条高亮描边（对称于胶囊的收纳高亮）。
         // 外部拖目录悬停文件夹区（pin 落点）复用同一条高亮。
         .overlay {
-            RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
+            RoundedRectangle(cornerRadius: Style.cornerRadius * dockScale, style: .continuous)
                 .strokeBorder(theme.panelRimStyle(highlighted: stripHighlighted),
                               lineWidth: theme.panelRimLineWidth(highlighted: stripHighlighted))
         }
@@ -329,6 +334,9 @@ struct DockStripView: View {
             shelfFrame: settingsStore.showShelf ? shelfFrame : nil,
             folderFrames: folderChipFrames,
             orderedPaths: pinnedFolderStore.folderPaths,
+            // chip 间距随档位缩放，「插到最前面」那段 slack 也得跟着缩，否则小档时它相对更宽、
+            // 会吃掉首个文件夹左半边的移入区。
+            headSlack: StripDropRouting.defaultHeadSlack * dockScale,
             onHoverBegan: { externalDropHoverBegan($0) },
             onHoverMoved: { externalDropHoverMoved($0) },
             onHoverEnded: { externalDropHoverEnded() },
@@ -861,6 +869,7 @@ struct DockStripView: View {
         switch entry {
         case let .window(item):
             ChipView(item: item,
+                     scale: dockScale,
                      showRunningDot: true,
                      forceHover: dragging,
                      pulseNonce: chipPulseNonces[item.id] ?? 0,
@@ -868,8 +877,9 @@ struct DockStripView: View {
         case .divider:
             Rectangle()
                 .fill(theme.zoneDivider.color)
-                .frame(width: 1, height: 20)
-                .padding(.horizontal, 2)
+                // 宽度是发丝线，恒 1pt 不缩；只有高度跟着档位走。
+                .frame(width: 1, height: Style.dividerHeight * dockScale)
+                .padding(.horizontal, 2 * dockScale)
         case let .pinnedFolder(path):
             let index = 1 + (pinnedFolderStore.folderPaths.firstIndex(of: path) ?? 0)
             let delay = Double(min(index, 6)) * 0.018
@@ -883,13 +893,15 @@ struct DockStripView: View {
                 onAddFolder: onAddFolder,
                 onRemove: { pinnedFolderStore.remove(path) },
                 onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) },
-                isDropTarget: externalDropTarget == .moveInto(path: path)
+                isDropTarget: externalDropTarget == .moveInto(path: path),
+                scale: dockScale
             )
             .stripEntrance(id: entry.id, delay: delay, animatedEntryIDs: $animatedEntryIDs)
         case .shelf:
             ShelfChip(
                 itemCount: shelfStore.itemPaths.count,
                 isDropTargeted: externalDropTarget == .stash,
+                scale: dockScale,
                 onTap: { shelfChipTapped() },
                 onClear: { shelfStore.clear() },
                 onAddFolder: onAddFolder
@@ -910,7 +922,7 @@ struct DockStripView: View {
                     LauncherChip(bundleID: bid,
                                  isRunning: running,
                                  isHidden: running && isHiddenInSnapshot(bundleID: bid),
-                                 scale: 1.0,
+                                 scale: dockScale,
                                  dimsWhenHidden: false,
                                  membershipItems: LauncherMembershipItem.items(
                                     surface: .strip,
@@ -938,7 +950,7 @@ struct DockStripView: View {
                 bundleID: bid,
                 isRunning: isRunning,
                 isHidden: runningApplicationStore.isHidden(bid),
-                scale: 1.0,
+                scale: dockScale,
                 membershipItems: keptAppMembershipItems(bundleID: bid),
                 onTap: reopen,
                 onLaunch: { runtime.beginLaunch(bid) },
@@ -1233,7 +1245,7 @@ struct ChipView: View {
                 .font(.system(size: max(10, 12 * scale), weight: .medium, design: .rounded))
                 .foregroundStyle(titleColor)
                 .lineLimit(1)
-                .frame(maxWidth: 140, alignment: .leading)
+                .frame(maxWidth: WindowTitleTextMetrics.maximumWidth(for: scale), alignment: .leading)
         }
         .padding(.horizontal, 10 * scale)
         .frame(height: pillHeight)
@@ -1397,6 +1409,7 @@ struct DrawerCapsuleButton: View {
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var drawerOrderStore: DrawerOrderStore
+    @EnvironmentObject var settingsStore: AppSettingsStore
     /// 拖卡进抽屉的投放反馈：手指压在投放区时胶囊放大 + 高亮描边。
     @EnvironmentObject var dragController: DragController
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
@@ -1408,8 +1421,14 @@ struct DrawerCapsuleButton: View {
     /// 点击确认脉冲：按压回弹，纯视图层信号，不喂 planner/frontmost（照搬 ChipView）。
     @State private var isTapPressed = false
 
+    // 九宫格 3 列：3×icon + 2×spacing + 2×padding 必须塞得进胶囊宽度（= 面板高度）。
+    // 中档 3×9 + 2×4 + 2×6 = 47pt，小档胶囊只有 44pt，所以这三个值都必须跟着缩。
     private static let iconSize: CGFloat = 9
     private static let gridSpacing: CGFloat = 4
+    private static let gridPadding: CGFloat = 6
+
+    private var iconSize: CGFloat { Self.iconSize * dockScale }
+    private var gridSpacing: CGFloat { Self.gridSpacing * dockScale }
 
     private var folderIDs: [String] {
         let placements = AppMembershipProjection.drawerMembers(drawerIDs: drawerStore.bundleIDs)
@@ -1420,6 +1439,10 @@ struct DrawerCapsuleButton: View {
             runningIDs: runningApplicationStore.runningBundleIDs
         )
     }
+
+    /// 胶囊是**另一棵**长期存活的 NSHostingView 根视图，必须自己观察同一个 store，
+    /// 否则换档时任务条变了、胶囊里的九宫格还停在旧尺寸。
+    private var dockScale: CGFloat { settingsStore.dockSize.scale }
 
     /// 短促按压(0.93)后由 spring 回弹;90ms 后复位状态,动画由 value 变化声明式触发（ChipView 同款）。
     private func fireTapPulse() {
@@ -1434,7 +1457,7 @@ struct DrawerCapsuleButton: View {
             DockVisualEffectView(material: theme.effectivePanelMaterial)
                 .dockBackdropSaturation(theme.effectiveBackdropSaturation)
                 .padding(-2)
-                .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius * dockScale, style: .continuous))
                 .ignoresSafeArea()
 
             // 悬停 + 点击反馈只作用在内层预览内容（九宫格 / 空态符号）上，外框（毛玻璃 + 描边）不动。
@@ -1442,22 +1465,22 @@ struct DrawerCapsuleButton: View {
             Group {
                 if folderIDs.isEmpty {
                     Image(systemName: "square.grid.2x2")
-                        .font(.system(size: 20, weight: .medium))
+                        .font(.system(size: 20 * dockScale, weight: .medium))
                         .foregroundStyle(theme.capsuleGlyph.color)
                 } else {
                     LazyVGrid(
-                        columns: Array(repeating: GridItem(.fixed(Self.iconSize), spacing: Self.gridSpacing), count: 3),
-                        spacing: Self.gridSpacing
+                        columns: Array(repeating: GridItem(.fixed(iconSize), spacing: gridSpacing), count: 3),
+                        spacing: gridSpacing
                     ) {
                         ForEach(folderIDs, id: \.self) { id in
                             Image(nsImage: AppIconResolver.icon(for: id))
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: Self.iconSize, height: Self.iconSize)
-                                .clipShape(RoundedRectangle(cornerRadius: Self.iconSize / 4, style: .continuous))
+                                .frame(width: iconSize, height: iconSize)
+                                .clipShape(RoundedRectangle(cornerRadius: iconSize / 4, style: .continuous))
                         }
                     }
-                    .padding(6)
+                    .padding(Self.gridPadding * dockScale)
                 }
             }
             .scaleEffect(showsHover ? 1.07 : 1.0)
@@ -1466,10 +1489,10 @@ struct DrawerCapsuleButton: View {
             .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
+            RoundedRectangle(cornerRadius: Style.cornerRadius * dockScale, style: .continuous)
                 .strokeBorder(theme.panelRimStyle, lineWidth: theme.panelRimLineWidth)
         }
-        // 反馈仅作用于内层预览内容（见上方 Group）；这里的 52pt 可见层只负责 hover 命中——
+        // 反馈仅作用于内层预览内容（见上方 Group）；这里与面板同高的可见层只负责 hover 命中——
         // 鼠标移到胶囊任意处都触发，动的是里面的九宫格，外框保持静止。
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
@@ -1578,6 +1601,7 @@ struct StripFileDropDelegate: DropDelegate {
     let shelfFrame: CGRect?
     let folderFrames: [String: CGRect]
     let orderedPaths: [String]
+    var headSlack: CGFloat = StripDropRouting.defaultHeadSlack
     /// dropEntered = 悬停会话开始;dropUpdated = 会话进行中移动;performDrop/dropExited = 会话结束。
     /// 视图侧据此做「高亮只能由 dropEntered 点亮 + 拖放结束看门狗」（见 externalDropHover*）。
     let onHoverBegan: (StripDropRouting.Target) -> Void
@@ -1589,7 +1613,8 @@ struct StripFileDropDelegate: DropDelegate {
         StripDropRouting.route(location: info.location,
                                shelfFrame: shelfFrame,
                                folderFrames: folderFrames,
-                               orderedPaths: orderedPaths)
+                               orderedPaths: orderedPaths,
+                               headSlack: headSlack)
     }
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -1656,6 +1681,8 @@ private enum Style {
     // Content layout
     static let chipContentInset: CGFloat = 20  // horizontal padding inside blur; > cornerRadius avoids corner-clip
     static let edgeFadeWidth: CGFloat    = 16  // scroll edge fade-out width (pt)
+    static let chipSpacing: CGFloat      = 8   // gap between chips (pt)
+    static let dividerHeight: CGFloat    = 20  // zone divider height (pt)
 
     // 描边的「顶强底弱」高光已由 DockThemeTokens.panelRimTop / panelRimBottom 正式接管
     //（原先这里的两个常量是零引用的死代码，实际画的是均匀一圈白 0.15）。

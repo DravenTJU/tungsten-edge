@@ -70,10 +70,13 @@ private struct UnitBezierEase {
 
 @MainActor
 final class PanelCoordinator: NSObject {
-    private static let layoutMetrics = PanelLayoutMetrics.tungstenEdge
-    static let panelHeight: CGFloat = layoutMetrics.panelHeight
-    static let shadowPadding: CGFloat = layoutMetrics.shadowPadding
-    static let windowHeight: CGFloat = layoutMetrics.windowHeight
+    /// 面板几何随尺寸档位变，所以这些**不能再是 static**：换档时要跟着 store 走。
+    /// `shadowPadding` 例外——它固定 20，视图侧（抽屉、两个弹窗）继续静态引用。
+    private var layoutMetrics: PanelLayoutMetrics { settingsStore.dockSize.metrics }
+    private var panelHeight: CGFloat { layoutMetrics.panelHeight }
+    private var windowHeight: CGFloat { layoutMetrics.windowHeight }
+    private var capsuleWidth: CGFloat { layoutMetrics.capsuleWidth }
+    static let shadowPadding: CGFloat = PanelLayoutMetrics.shadowPadding
 
     private let runtime: AppRuntime
     private let drawerStore: DrawerStore
@@ -161,6 +164,9 @@ final class PanelCoordinator: NSObject {
     private var dragInhibitorSubscription: AnyCancellable?
     private var edgeDelaySubscription: AnyCancellable?
     private var showShelfSubscription: AnyCancellable?
+    private var dockSizeSubscription: AnyCancellable?
+    /// 换档事务代次：吞掉换档过程中被其它路径排队的动画布局（见 beginDockSizeChange）。
+    private var dockSizeChangeGeneration: UInt64 = 0
     /// 抽屉拖回任务条·"松手才变长"：转正进行中冻结任务条宽度，转正态结束（松手落定 / 拖出还原）再 relayout。
     private var convertReleaseSubscription: AnyCancellable?
     private var springOpenTimer: Timer?
@@ -325,8 +331,8 @@ final class PanelCoordinator: NSObject {
             screenFrame: screen.frame,
             visibleFrame: screen.visibleFrame,
             taskbarTop: screen.frame.minY
-                + Self.layoutMetrics.bottomGap
-                + Self.layoutMetrics.panelHeight
+                + layoutMetrics.bottomGap
+                + layoutMetrics.panelHeight
         )
         return WindowLiftAvoidanceContext(
             geometry: geometry,
@@ -577,7 +583,7 @@ final class PanelCoordinator: NSObject {
         let screen = panelCurrentScreen(panel: mainPanel)
         let screenGeometry = Self.screenGeometry(screen)
         let maxContentHeight = PanelGeometry.maxFolderPopupContentHeight(
-            anchorVisibleRect: anchorVisibleRect, on: screenGeometry, metrics: Self.layoutMetrics)
+            anchorVisibleRect: anchorVisibleRect, on: screenGeometry, metrics: layoutMetrics)
 
         let hosting = makeHosting(maxContentHeight)
         hosting.wantsLayer = true
@@ -605,7 +611,7 @@ final class PanelCoordinator: NSObject {
             lastPopupSize = sync
         }
         let initialFrame = PanelGeometry.folderPopupTargetFrame(
-            anchorVisibleRect: anchorVisibleRect, size: lastPopupSize, on: screenGeometry, metrics: Self.layoutMetrics)
+            anchorVisibleRect: anchorVisibleRect, size: lastPopupSize, on: screenGeometry, metrics: layoutMetrics)
         lastPopupTargetFrame = initialFrame
 
         if isSwitching {
@@ -658,7 +664,7 @@ final class PanelCoordinator: NSObject {
         lastPopupSize = size
         let screen = panelCurrentScreen(panel: dock)
         let target = PanelGeometry.folderPopupTargetFrame(
-            anchorVisibleRect: popupAnchorVisibleRect, size: size, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
+            anchorVisibleRect: popupAnchorVisibleRect, size: size, on: Self.screenGeometry(screen), metrics: layoutMetrics)
         lastPopupTargetFrame = target
 
         if folderPopupFrameTimer != nil {
@@ -828,7 +834,8 @@ final class PanelCoordinator: NSObject {
                                folderCoverStore = self.folderCoverStore,
                                keptAppStore = self.keptAppStore,
                                runningApplicationStore = self.runningApplicationStore,
-                               appMembershipController = self.appMembershipController] controller in
+                               appMembershipController = self.appMembershipController,
+                               settingsStore = self.settingsStore] controller in
                 NSHostingView(rootView: DragCarrierView(controller: controller)
                     .environmentObject(runtime)
                     .environmentObject(drawerStore)
@@ -836,7 +843,8 @@ final class PanelCoordinator: NSObject {
                     .environmentObject(folderCoverStore)
                     .environmentObject(keptAppStore)
                     .environmentObject(runningApplicationStore)
-                    .environmentObject(appMembershipController))
+                    .environmentObject(appMembershipController)
+                    .environmentObject(settingsStore))
             }
         )
         // 文件夹 chip 拖动落定：几何由 DockStripView 写入 DragController，最终 mouseUp/轮询兜底在
@@ -1158,7 +1166,7 @@ final class PanelCoordinator: NSObject {
         let s = screen.frame
 
         let panel = NonConstrainingPanel(
-            contentRect: NSRect(x: s.minX, y: s.minY + Self.layoutMetrics.bottomGap - Self.shadowPadding, width: s.width, height: Self.windowHeight),
+            contentRect: NSRect(x: s.minX, y: s.minY + layoutMetrics.bottomGap - Self.shadowPadding, width: s.width, height: windowHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -1209,7 +1217,7 @@ final class PanelCoordinator: NSObject {
 
     private func setupCapsulePanel() {
         let panel = NonConstrainingPanel(
-            contentRect: NSRect(origin: .zero, size: CGSize(width: Self.capsuleWidth + Self.shadowPadding * 2, height: Self.capsuleWidth + Self.shadowPadding * 2)),
+            contentRect: NSRect(origin: .zero, size: CGSize(width: capsuleWidth + Self.shadowPadding * 2, height: capsuleWidth + Self.shadowPadding * 2)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -1231,6 +1239,7 @@ final class PanelCoordinator: NSObject {
                 .environmentObject(runningApplicationStore)
                 .environmentObject(drawerOrderStore)
                 .environmentObject(dragController)
+                .environmentObject(settingsStore)
         )
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
@@ -1279,7 +1288,13 @@ final class PanelCoordinator: NSObject {
                     if self.frozenDockContentWidth == nil { self.frozenDockContentWidth = self.lastDesiredWidth }
                 } else {
                     self.frozenDockContentWidth = nil
-                    DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
+                    // 换档事务里 cancelDrag() 也会走到这里排队一次带动画的布局；用代次吞掉它，
+                    // 否则会先按新 metrics 动画一次、再被事务的无动画布局跳一次。
+                    let generation = self.dockSizeChangeGeneration
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, generation == self.dockSizeChangeGeneration else { return }
+                        self.relayout(animated: true)
+                    }
                 }
             }
     }
@@ -1337,6 +1352,38 @@ final class PanelCoordinator: NSObject {
                 if self.folderPopupWantsOpen, self.openPopupContent == .shelf { self.closeFolderPopup() }
                 DispatchQueue.main.async { [weak self] in self?.relayout(animated: true) }
             }
+        dockSizeSubscription = settingsStore.$dockSize
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.beginDockSizeChange() }
+    }
+
+    /// 换档是一次**事务**，不是普通的内容变化：面板高度、胶囊宽度、条内每个 chip 的尺寸同时变，
+    /// 中途任何一次动画布局都会把三个面板摆到半新半旧的几何上。
+    ///
+    /// 顺序是有讲究的：
+    /// 1. 先收掉所有依附在旧几何上的东西——拖动载体（尺寸随档位）、抽屉（`maxContentHeight`
+    ///    是开抽屉时一次性传进根视图的，只挪外框会裁掉内容）、弹窗与 tooltip（锚点已作废）。
+    /// 2. `cancelDrag()` 会经 `subscribeConvertRelease` 排队一次**带动画**的 relayout，
+    ///    用 generation 门控把它吞掉，否则先按新 metrics 动画一次、再瞬时跳一次。
+    /// 3. 等 SwiftUI 用新档位跑完一轮布局（`fittingSize` 那时才是新宽度），再一次性无动画提交。
+    ///    换档是瞬时的，不做过渡动画。
+    ///
+    /// 最大化避让不需要在这里做任何事：`taskbarTop` 由 `panelHeight` 算出、在 Equatable 的
+    /// `WindowLiftAvoidanceContext` 里，档位一变 `reconcileContext` 就走既有的还原→重抬路径。
+    private func beginDockSizeChange() {
+        dockSizeChangeGeneration &+= 1
+        let generation = dockSizeChangeGeneration
+
+        dragController.cancelDrag()
+        dismissWindowTitleTooltip()
+        closeFolderPopup(immediately: true)
+        if drawerWantsOpen { closeDrawer() }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, generation == self.dockSizeChangeGeneration else { return }
+            self.relayout(animated: false)
+        }
     }
 
     // MARK: - 目标 frame 驱动布局
@@ -1349,12 +1396,12 @@ final class PanelCoordinator: NSObject {
 
     /// 任务条目标 frame（按内容宽度、居中、限宽）。
     private func dockTargetFrame(contentWidth: CGFloat, on screen: NSScreen) -> NSRect {
-        PanelGeometry.dockTargetFrame(contentWidth: contentWidth, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
+        PanelGeometry.dockTargetFrame(contentWidth: contentWidth, on: Self.screenGeometry(screen), metrics: layoutMetrics)
     }
 
     /// 胶囊目标 frame（贴任务条右边、纵向居中）。只依赖传入的 dock **目标** frame。
     private func capsuleTargetFrame(forDock dockFrame: NSRect, on screen: NSScreen) -> NSRect {
-        PanelGeometry.capsuleTargetFrame(forDock: dockFrame, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
+        PanelGeometry.capsuleTargetFrame(forDock: dockFrame, on: Self.screenGeometry(screen), metrics: layoutMetrics)
     }
 
     /// 抽屉目标 frame（右边贴胶囊右边、**底边硬锚在胶囊上方、向上长**）。只依赖传入的胶囊 **目标** frame + 抽屉尺寸。
@@ -1363,7 +1410,7 @@ final class PanelCoordinator: NSObject {
     private func drawerTargetFrame(forCapsule capsuleFrame: NSRect, size: CGSize, on screen: NSScreen) -> NSRect {
         // 底部/左右定位使用 screen.frame，切断与原生 Dock visibleFrame 的耦合；
         // 顶部高度仍由 topUsableY 封顶，避免菜单栏和刘海遮挡。
-        PanelGeometry.drawerTargetFrame(forCapsule: capsuleFrame, size: size, on: Self.screenGeometry(screen), metrics: Self.layoutMetrics)
+        PanelGeometry.drawerTargetFrame(forCapsule: capsuleFrame, size: size, on: Self.screenGeometry(screen), metrics: layoutMetrics)
     }
 
     /// 统一布局入口：算齐三个目标 frame、存好（给 drop zone / 开抽屉读），三面板同组动画到目标。
@@ -1512,7 +1559,7 @@ final class PanelCoordinator: NSObject {
         // adjacent screen in multi-monitor setups (e.g. vertically stacked 3-screen layouts).
         let visualCenter = CGPoint(
             x: panel.frame.midX,
-            y: panel.frame.minY + Self.shadowPadding + Self.panelHeight / 2
+            y: panel.frame.minY + Self.shadowPadding + panelHeight / 2
         )
         return NSScreen.screens.first(where: { $0.frame.contains(visualCenter) })
             ?? NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
@@ -1685,7 +1732,7 @@ final class PanelCoordinator: NSObject {
         let actualWidth = PanelGeometry.dockTargetFrame(
             contentWidth: lastDesiredWidth,
             on: Self.screenGeometry(targetScreen),
-            metrics: Self.layoutMetrics
+            metrics: layoutMetrics
         ).width - Self.shadowPadding * 2
         closeFolderPopup()   // 切屏后旧锚点在旧屏,弹窗收起
         dismissWindowTitleTooltip(suppressCurrentUntilExit: true)
@@ -1907,9 +1954,9 @@ final class PanelCoordinator: NSObject {
 
     // MARK: - Frame Helpers
 
-    private static let outerMargin: CGFloat = layoutMetrics.outerMargin
-    private static let capsuleWidth: CGFloat = layoutMetrics.capsuleWidth
-    private static let capsuleGap: CGFloat = layoutMetrics.capsuleGap
+    // 这两个不随档位缩放，保持静态常量。
+    private static let outerMargin: CGFloat = PanelLayoutMetrics.tungstenEdge.outerMargin
+    private static let capsuleGap: CGFloat = PanelLayoutMetrics.tungstenEdge.capsuleGap
 
     private static func screenGeometry(_ screen: NSScreen) -> PanelScreenGeometry {
         PanelScreenGeometry(frame: screen.frame, visibleFrame: screen.visibleFrame, safeAreaTop: screen.safeAreaInsets.top)

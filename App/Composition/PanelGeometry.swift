@@ -1,5 +1,57 @@
 import CoreGraphics
 
+/// 任务条尺寸档位。**按面板高度定档，缩放系数反推**——反过来（先定 0.85 这类系数再算高度）
+/// 会得到 44.2 这种高度，圆角、图标和分隔线全落在半像素上。
+enum DockSize: String, CaseIterable {
+    case small
+    case medium
+    case large
+    case extraLarge
+
+    static let `default` = DockSize.medium
+
+    var panelHeight: CGFloat {
+        switch self {
+        case .small: return 44
+        case .medium: return 52
+        case .large: return 60
+        case .extraLarge: return 68
+        }
+    }
+
+    /// 所有随档位缩放的尺寸都乘它。中档恒为 `1.0`，也就是历史观感逐像素不变。
+    var scale: CGFloat { panelHeight / DockSize.medium.panelHeight }
+
+    var title: String {
+        switch self {
+        case .small: return "小"
+        case .medium: return "中"
+        case .large: return "大"
+        case .extraLarge: return "特大"
+        }
+    }
+
+    /// 面板几何的唯一来源：AppKit 侧（PanelCoordinator）和 SwiftUI 侧都从这里取，
+    /// 不各自算一份。
+    var metrics: PanelLayoutMetrics {
+        PanelLayoutMetrics(
+            panelHeight: panelHeight,
+            // 阴影边距**不随档位缩放**：阴影 token 是冻结的（深色那套本来就已经超预算 3pt），
+            // 跟着缩会动到已经定稿的观感。
+            shadowPadding: PanelLayoutMetrics.shadowPadding,
+            // 写成表达式而不是字面值：以前 52 + 2×20 = 92 这层关系只存在于注释里，
+            // 改高度时极易漏掉窗口高度。
+            windowHeight: panelHeight + 2 * PanelLayoutMetrics.shadowPadding,
+            bottomGap: 8,
+            outerMargin: 12,
+            capsuleWidth: panelHeight,
+            capsuleGap: 8,
+            minimumDockWidth: 120 * scale,
+            minimumDrawerExtent: 120
+        )
+    }
+}
+
 struct PanelLayoutMetrics: Equatable {
     var panelHeight: CGFloat
     var shadowPadding: CGFloat
@@ -11,17 +63,11 @@ struct PanelLayoutMetrics: Equatable {
     var minimumDockWidth: CGFloat
     var minimumDrawerExtent: CGFloat
 
-    static let tungstenEdge = PanelLayoutMetrics(
-        panelHeight: 52,
-        shadowPadding: 20,
-        windowHeight: 92,
-        bottomGap: 8,
-        outerMargin: 12,
-        capsuleWidth: 52,
-        capsuleGap: 8,
-        minimumDockWidth: 120,
-        minimumDrawerExtent: 120
-    )
+    /// 固定值，不随档位变（见 `DockSize.metrics` 的说明）。
+    static let shadowPadding: CGFloat = 20
+
+    /// 中档，仅作为既有默认参数与单测的基线；真正的取值走 `DockSize.metrics`。
+    static let tungstenEdge = DockSize.medium.metrics
 }
 
 struct PanelScreenGeometry: Equatable {

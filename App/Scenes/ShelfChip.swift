@@ -8,6 +8,8 @@ import SwiftUI
 struct ShelfChip: View {
     let itemCount: Int
     let isDropTargeted: Bool
+    /// 任务条尺寸档位的缩放系数。中档 = 1.0，此时所有尺寸与历史字面值逐像素相同。
+    var scale: CGFloat = 1.0
     let onTap: () -> Void
     let onClear: () -> Void
     let onAddFolder: () -> Void
@@ -19,20 +21,20 @@ struct ShelfChip: View {
     @State private var isHovering = false
 
     var body: some View {
-        let coverSize: CGFloat = isHovering ? 24 : 36
-        VStack(spacing: 2) {
+        let coverSize: CGFloat = (isHovering ? 24 : 36) * scale
+        VStack(spacing: 2 * scale) {
             Spacer(minLength: 0)
             shelfIcon(size: coverSize)
             if isHovering {
                 Text(itemCount > 0 ? "中转 · \(itemCount)" : "中转")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .font(.system(size: 10 * scale, weight: .medium, design: .rounded))
                     .foregroundStyle(theme.labelHover.color)
                     .lineLimit(1)
                     .transition(.opacity)
             }
             Spacer(minLength: 0)
         }
-        .frame(width: 44, height: 52)
+        .frame(width: 44 * scale, height: 52 * scale)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
@@ -45,7 +47,8 @@ struct ShelfChip: View {
     /// 固定入口图标：外层保持普通 app chip 的 36/24 槽位，内部半透明底板缩到视觉尺寸。
     /// 投放反馈：在内部底板进行提亮与加亮描边，消除外层大框。
     private func shelfIcon(size: CGFloat) -> some View {
-        let innerSize: CGFloat = size > 30 ? 32 : 22
+        // 判据用缩放前的槽位，避免小档时 36×0.85=30.6 掉进「悬停态」分支。
+        let innerSize: CGFloat = (size / scale > 30 ? 32 : 22) * scale
 
         return ZStack {
             RoundedRectangle(cornerRadius: innerSize / 4, style: .continuous)

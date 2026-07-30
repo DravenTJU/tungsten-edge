@@ -155,6 +155,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let checkForUpdatesItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
     private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
     private let showShelfItem = NSMenuItem(title: "显示中转站", action: #selector(toggleShowShelf), keyEquivalent: "")
+    private let dockSizeItem = NSMenuItem(title: "任务条大小", action: nil, keyEquivalent: "")
+    private var dockSizeItems: [DockSize: NSMenuItem] = [:]
     private let nativeDockToggleItem = NSMenuItem(title: "", action: #selector(toggleNativeDockAutoHideFromMenu), keyEquivalent: "")
     private let openNativeDockSettingsItem = NSMenuItem(title: "打开系统 Dock 设置…", action: #selector(openNativeDockSettings), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
@@ -261,6 +263,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         // 钨极自己的外观开关跟在钨极这一组里（标题恒定，状态用勾表达，同「登录时启动」）。
         showShelfItem.target = self
         menu.addItem(showShelfItem)
+
+        let dockSizeMenu = NSMenu()
+        for size in DockSize.allCases {
+            let item = NSMenuItem(title: size.title, action: #selector(selectDockSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = size.rawValue
+            dockSizeMenu.addItem(item)
+            dockSizeItems[size] = item
+        }
+        dockSizeItem.submenu = dockSizeMenu
+        menu.addItem(dockSizeItem)
 
         menu.addItem(.separator())
         #if DEBUG
@@ -401,10 +414,19 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func refreshCheckmarks() {
         refreshLaunchAtLoginState()
         showShelfItem.state = store.showShelf ? .on : .off
+        for (size, item) in dockSizeItems {
+            item.state = store.dockSize == size ? .on : .off
+        }
     }
 
     @objc private func toggleShowShelf() {
         store.setShowShelf(!store.showShelf)
+        refreshCheckmarks()
+    }
+
+    @objc private func selectDockSize(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let size = DockSize(rawValue: raw) else { return }
+        store.setDockSize(size)
         refreshCheckmarks()
     }
 

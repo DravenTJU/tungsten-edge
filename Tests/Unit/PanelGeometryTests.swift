@@ -189,6 +189,69 @@ final class PanelGeometryTests: XCTestCase {
         XCTAssertEqual(bubble.maxY, screen.topUsableY)
     }
 
+    // MARK: - 尺寸档位
+
+    func testDockSizeTiersKeepIntegerHeightsAndDerivedWindowHeight() {
+        let expected: [DockSize: CGFloat] = [.small: 44, .medium: 52, .large: 60, .extraLarge: 68]
+        for size in DockSize.allCases {
+            let m = size.metrics
+            XCTAssertEqual(m.panelHeight, expected[size], "\(size) 面板高度")
+            XCTAssertEqual(m.panelHeight.rounded(), m.panelHeight, "档位高度必须是整数，否则圆角和图标落在半像素上")
+            // 这层关系以前只写在注释里，改高度时最容易漏掉窗口高度。
+            XCTAssertEqual(m.windowHeight, m.panelHeight + 2 * m.shadowPadding)
+            XCTAssertEqual(m.shadowPadding, 20, "阴影边距不随档位缩放——阴影 token 是冻结的")
+            XCTAssertEqual(m.capsuleWidth, m.panelHeight, "胶囊是正方形，边长跟面板高度")
+        }
+    }
+
+    func testMediumTierIsPixelIdenticalToHistoricalBaseline() {
+        // 中档必须逐字段等于历史字面值，否则「不改档位的老用户」观感会被本轮改动带偏。
+        XCTAssertEqual(DockSize.medium.scale, 1.0)
+        XCTAssertEqual(DockSize.medium.metrics, PanelLayoutMetrics(
+            panelHeight: 52, shadowPadding: 20, windowHeight: 92,
+            bottomGap: 8, outerMargin: 12, capsuleWidth: 52, capsuleGap: 8,
+            minimumDockWidth: 120, minimumDrawerExtent: 120
+        ))
+    }
+
+    func testCapsuleGridContentFitsEveryTier() {
+        // 九宫格 3 列：3×icon + 2×spacing + 2×padding 必须塞进胶囊宽度。
+        // 中档 3×9 + 2×4 + 2×6 = 47pt，小档胶囊只有 44pt——不跟着缩就会被裁。
+        for size in DockSize.allCases {
+            let s = size.scale
+            let content = (3 * 9 + 2 * 4 + 2 * 6) * s
+            XCTAssertLessThanOrEqual(content, size.metrics.capsuleWidth, "\(size) 胶囊内容超宽")
+        }
+    }
+
+    func testEveryTierLaysOutBottomAnchoredAndCentered() {
+        let screen = screen(frame: CGRect(x: -1512, y: -400, width: 1512, height: 982))
+        for size in DockSize.allCases {
+            let m = size.metrics
+            let dock = PanelGeometry.dockTargetFrame(contentWidth: 620, on: screen, metrics: m)
+            let capsule = PanelGeometry.capsuleTargetFrame(forDock: dock, on: screen, metrics: m)
+            // 非零原点屏幕也必须贴物理底边，且面板高度跟着档位走。
+            XCTAssertEqual(dock.minY, screen.frame.minY + m.bottomGap - m.shadowPadding, "\(size) 底边")
+            XCTAssertEqual(dock.height, m.windowHeight, "\(size) 面板高度")
+            XCTAssertEqual(dock.midX, screen.frame.midX, accuracy: 0.5, "\(size) 居中")
+            // 胶囊与任务条垂直居中对齐（两者等高时中心重合）。
+            XCTAssertEqual(capsule.midY, dock.midY, accuracy: 0.5, "\(size) 胶囊垂直对齐")
+        }
+    }
+
+    func testLiftTargetTracksTierHeight() {
+        // 最大化避让的 taskbarTop = 屏幕底 + bottomGap + panelHeight，换档必须跟着变，
+        // 否则被抬起的窗口底边和新任务条对不上。
+        let screenMinY: CGFloat = -400
+        var tops: [CGFloat] = []
+        for size in DockSize.allCases {
+            let m = size.metrics
+            tops.append(screenMinY + m.bottomGap + m.panelHeight)
+        }
+        XCTAssertEqual(tops, [-348, -340, -332, -324])
+        XCTAssertEqual(Set(tops).count, DockSize.allCases.count, "四档的抬升目标必须两两不同")
+    }
+
     private func layout(
         on screen: PanelScreenGeometry,
         contentWidth: CGFloat = 620,

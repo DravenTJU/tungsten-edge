@@ -19,6 +19,8 @@ struct PinnedFolderChip: View {
     let onRemove: () -> Void
     let onSetSortOrder: (FolderSortOrder) -> Void
     var isDropTarget = false
+    /// 任务条尺寸档位的缩放系数。中档 = 1.0，此时所有尺寸与历史字面值逐像素相同。
+    var scale: CGFloat = 1.0
 
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
@@ -31,25 +33,25 @@ struct PinnedFolderChip: View {
     }
 
     var body: some View {
-        let coverSize: CGFloat = 26
-        VStack(spacing: 2) {
+        let coverSize: CGFloat = 26 * scale
+        VStack(spacing: 2 * scale) {
             Spacer(minLength: 0)
             coverImage(size: coverSize)
                 .dockShadow(theme.iconShadow)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
                         .strokeBorder(theme.folderDropRing.color(active: isDropTarget), lineWidth: 1.5)
                 }
                 .scaleEffect(isDropTarget ? 1.08 : 1)
             Text(folderName)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.system(size: 10 * scale, weight: .medium, design: .rounded))
                 .foregroundStyle(theme.labelHover.color)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 48)
+                .frame(maxWidth: 48 * scale)
             Spacer(minLength: 0)
         }
-        .frame(width: 52, height: 52)
+        .frame(width: 52 * scale, height: 52 * scale)
         .contentShape(Rectangle())
         // 悬停：整个 chip 放大上顶（原生 Dock 手感）。anchor .bottom 让底部名称基本不动、封面往上顶起。
         // scaleEffect 只是渲染变换，不改布局 frame——拖放命中读的是 .background GeometryReader 上报的未缩放 frame，不受影响。

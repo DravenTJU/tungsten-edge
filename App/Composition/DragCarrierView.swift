@@ -9,6 +9,12 @@ struct DragCarrierView: View {
     @ObservedObject var controller: DragController
     /// 文件夹 chip 副本的封面来源（PanelCoordinator 的 carrierFactory 注入）。
     @EnvironmentObject var folderCoverStore: PinnedFolderCoverStore
+    /// 载体是**第三棵**长期存活的根视图（另两棵是任务条和胶囊），必须自己观察同一个 store：
+    /// 载体尺寸要和它离开的那个 chip 一致，否则起拖瞬间会跳大小。
+    @EnvironmentObject var settingsStore: AppSettingsStore
+
+    /// 来自任务条的载体用档位缩放；**未转正的抽屉图标不缩**——它离开的是抽屉，抽屉本轮不随档位缩放。
+    private var dockScale: CGFloat { settingsStore.dockSize.scale }
 
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
@@ -32,7 +38,7 @@ struct DragCarrierView: View {
         // 抽屉拖回任务条·转正后:载体改画**代表卡**整张(与条内载体同款),让"拖回来"和"条内拖动"观感一致。
         // 代表卡由 DockStripView 在窗口卡实体化后写入;未实体化前 nil → 仍按 visualKind 画(抽屉里就是小图标)。
         if let rep = controller.convertedRepresentative {
-            ChipView(item: rep, showRunningDot: true, forceHover: false)
+            ChipView(item: rep, scale: dockScale, showRunningDot: true, forceHover: false)
                 .dockShadow(theme.carrierShadow)
         } else {
             switch p.visualKind {
@@ -40,18 +46,19 @@ struct DragCarrierView: View {
                 if let item = p.item {
                     // forceHover: false —— 悬停态会在图标下方带出 app 名,拖动时不想要（owner 2026-06-21）。
                     // 非悬停态 = 干净的大图标(单窗口卡),贴近抽屉拖动的观感。代价是起拖瞬间图标略放大,可接受。
-                    ChipView(item: item, showRunningDot: true, forceHover: false)
+                    ChipView(item: item, scale: dockScale, showRunningDot: true, forceHover: false)
                         .dockShadow(theme.carrierShadow)
                 }
             case .drawerIcon:
                 DrawerDragIconView(bundleID: p.bundleID)
                     .dockShadow(theme.carrierShadow)
             case .keptAppIcon:
-                DrawerDragIconView(bundleID: p.bundleID)
+                // 保留应用图标住在任务条里，载体跟任务条档位走（不是抽屉的 0.7）。
+                DrawerDragIconView(bundleID: p.bundleID, scale: dockScale)
                     .dockShadow(theme.carrierShadow)
             case .messagingIcon:
-                // 消息区 chip 在条内是 1.0 缩放的 app 图标，载体同尺寸,免得起拖瞬间跳大小。
-                DrawerDragIconView(bundleID: p.bundleID, scale: 1.0)
+                // 消息区 chip 在条内是任务条档位缩放的 app 图标，载体同尺寸,免得起拖瞬间跳大小。
+                DrawerDragIconView(bundleID: p.bundleID, scale: dockScale)
                     .dockShadow(theme.carrierShadow)
             case .folderChip:
                 // 文件夹 chip 副本：复用 PinnedFolderChip 视觉（封面从 coverStore 取）,闭包全空——
@@ -62,7 +69,8 @@ struct DragCarrierView: View {
                                  cover: folderCoverStore.covers[p.id],
                                  sortOrder: .default,
                                  onTap: {}, onPreview: {}, onOpenInFinder: {}, onAddFolder: {}, onRemove: {},
-                                 onSetSortOrder: { _ in })
+                                 onSetSortOrder: { _ in },
+                                 scale: dockScale)
                     .dockShadow(theme.carrierShadow)
                     .opacity(aboutToRemove ? 0.35 : 1.0)
                     .scaleEffect(aboutToRemove ? 1.1 : 1.0)

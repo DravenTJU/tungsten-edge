@@ -44,7 +44,7 @@ Unlike a plain Windows-style task switcher, single-window apps stay collapsed as
 - **Pinned messaging apps + badges** — messaging apps (WeChat, Feishu, …) get a persistent pinned entry and mirror the Dock's red unread badge.
 - **App drawer** — stash rarely-used apps into a drawer on the right to keep the strip clean; pin favorites in the drawer to use it as a launcher.
 - **Drag to organize** — reorder cards by dragging; drag a card into the drawer to stash it; drag it back out and it lands exactly where you drop it.
-- **Menu bar controls** — the status menu controls launch at login, native Dock visibility and wake timing, Tungsten Edge wake timing, and whether the shelf is shown.
+- **Menu bar controls** — the status menu controls launch at login, native Dock visibility and wake timing, Tungsten Edge wake timing, whether the shelf is shown, and the taskbar size.
 - **Edge auto-hide** — Tungsten Edge can hide itself and wake from the bottom edge after the delay you choose; moving away hides it again after about 0.2s.
 - **Frosted-glass look** — native-grade translucency that blends into the desktop.
 - **Multi-display follow** — resting the pointer on another screen's bottom edge moves the taskbar there automatically.
@@ -112,6 +112,7 @@ Tungsten Edge lives in the macOS menu bar. Its menu currently includes:
 - **Open System Dock Settings…** — opens Desktop & Dock on Ventura and later, or Dock & Menu Bar on macOS 12. It only opens System Settings; it never writes Dock preferences or restarts Dock.
 - **Hide/Show Tungsten Edge 钨极** — switches between always visible and your last auto-hide wake delay. The compact slider immediately below it controls the wake delay: `常驻`, `0.1s`–`3.0s`, or `不唤醒`. When the status menu is closed, the global `⌥⇧⌘D` shortcut performs the same switch; if registration fails, the menu hides its key hint but the command remains clickable. Adding Shift mirrors the system Dock's `⌥⌘D` while releasing the old `⌥⌘E` shortcut back to Safari and Finder.
 - **显示中转站** — a checkbox that shows or hides the shelf chip. Unchecking it only hides the chip; stashed file references are kept and come back when you check it again. Note that with the shelf hidden *and* no pinned folders, the whole folder zone disappears, so the strip has no external-file drop target and no 「添加文件夹…」 entry — check it back on to get them.
+- **任务条大小 ▸** — four tiers (小 / 中 / 大 / 特大) that scale the taskbar and its capsule together: icons, labels, spacing, corner radius and bar height all follow. 中 is the default and is pixel-identical to previous versions. Switching applies instantly with no transition animation; an open drawer closes so it can be re-measured at the new size. The drawer's own contents and the folder / shelf popups keep their current size.
 - **检查更新…** — manually checks the latest stable GitHub release. When an update is available, Tungsten Edge opens that release page for you to download and install it.
 
 Changing native Dock visibility from this menu requires a non-sandboxed build because sandboxed apps cannot write Dock preferences or restart Dock. Opening the settings pane works in either environment.

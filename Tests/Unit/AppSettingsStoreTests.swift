@@ -93,6 +93,34 @@ final class AppSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDockSizeDefaultsToMediumAndPersists() {
+        let defaults = makeDefaults()
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).dockSize, .medium)
+
+        let store = AppSettingsStore(defaults: defaults)
+        store.setDockSize(.extraLarge)
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).dockSize, .extraLarge, "档位要跨重启保持")
+    }
+
+    @MainActor
+    func testDockSizeRewritesCorruptStoredValueToMedium() {
+        let defaults = makeDefaults()
+        defaults.set("gigantic", forKey: "com.tungsten.edge.dockSize")
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).dockSize, .medium)
+        // 必须**立刻重写**，否则每次启动都要重走一遍回退，存值和 UI 勾选也一直对不上。
+        XCTAssertEqual(defaults.string(forKey: "com.tungsten.edge.dockSize"), DockSize.medium.rawValue)
+
+        defaults.set(42, forKey: "com.tungsten.edge.dockSize")
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).dockSize, .medium, "类型不对也要回退")
+    }
+
+    func testDockSizeRawValuesAreStableAcrossReleases() {
+        // raw value 进了 UserDefaults，改名等于把所有老用户的档位悄悄重置成中档。
+        XCTAssertEqual(DockSize.allCases.map(\.rawValue), ["small", "medium", "large", "extraLarge"])
+        XCTAssertEqual(DockSize.allCases.map(\.title), ["小", "中", "大", "特大"])
+    }
+
+    @MainActor
     func testNativeDockSliderCommandsCoverResidentFiniteAndNeverWake() {
         // 常驻档只关 autohide，不写延迟——此时延迟没有意义，写了反而覆盖用户原值。
         let resident = NativeDockPreferencesService.commands(for: AppSettingsStore.neverHideDelay)
