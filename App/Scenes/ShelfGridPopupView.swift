@@ -13,6 +13,10 @@ struct ShelfGridPopupView: View {
     var onPinFolder: ((URL) -> Void)?
     var isFolderPinned: ((URL) -> Bool)?
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     @State private var gridHeight: CGFloat = 0
 
     private typealias Style = FolderPopupStyle
@@ -27,9 +31,9 @@ struct ShelfGridPopupView: View {
         let availableGridHeight = min(max(140, maxContentHeight), Style.maxGridHeight)
 
         ZStack(alignment: .bottomLeading) {
-            DockVisualEffectView()
+            DockVisualEffectView(material: theme.panelMaterial)
                 .padding(-2)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()
 
             Group {
@@ -40,15 +44,15 @@ struct ShelfGridPopupView: View {
                     gridBody(entries: entries, contentWidth: contentWidth, columnCount: columnCount)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous)
+                .strokeBorder(theme.panelRimStyle, lineWidth: theme.panelRimLineWidth)
         }
         // 淡入淡出由协调器在 AppKit 层做（panel.alphaValue）,内容层不另加（同 FolderGridPopupView）。
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20)（AGENTS 护栏,同文件夹弹窗）。
-        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
+        .dockShadow(theme.popupShadow)
         .padding(PanelCoordinator.shadowPadding)
         .onChange(of: gridHeight) { _ in onContentResize() }
         .onChange(of: columnCount) { _ in onContentResize() }
@@ -59,7 +63,7 @@ struct ShelfGridPopupView: View {
             if entries.isEmpty {
                 Text("拖文件到中转格暂存")
                     .font(.system(size: Style.labelSize))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(theme.popupSecondaryText.color)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
             }

@@ -47,10 +47,14 @@ enum WindowTitleTooltipEvent: Equatable {
 struct WindowTitleTooltipView: View {
     let title: String
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     var body: some View {
         Text(title)
             .font(.system(size: 12, weight: .medium, design: .rounded))
-            .foregroundStyle(.white.opacity(0.94))
+            .foregroundStyle(theme.tooltipText.color)
             .lineLimit(2)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
@@ -60,16 +64,17 @@ struct WindowTitleTooltipView: View {
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(.ultraThinMaterial)
+                    // 材质本身跟随系统外观，这层是再压一道染色：深色加黑压暗，浅色反过来加白提亮。
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.black.opacity(0.28))
+                            .fill(theme.tooltipTint.color)
                     )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+                    .strokeBorder(theme.tooltipRim.color, lineWidth: 0.5)
             )
-            .shadow(color: .black.opacity(0.32), radius: 6, y: 2)
+            .dockShadow(theme.tooltipShadow)
             .padding(PanelGeometry.windowTitleTooltipShadowPadding)
     }
 }

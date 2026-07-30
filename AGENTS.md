@@ -191,6 +191,21 @@
 - Hover screen switching uses dwell, not instant edge-trigger.
 - Fullscreen hide hides capsule and closes drawer. `FullscreenWindowClassifier.isFullscreen` remains the single AX predicate, gated to real `AXWindow` roles.
 
+## Light / Dark Appearance
+
+Until 2026-07-30 the whole visual layer was hand-tuned for dark only — zero appearance branching anywhere, every foreground a literal `.white.opacity(…)` and every shadow a literal `.black.opacity(…)`. Light mode was broken in ways that read as "质感差" but were partly plain unreadability (white labels and white running dots on a light plate). Real user report: GitHub issue #3 item 3.
+
+- All appearance-dependent values live in **`Core/Support/DockThemeTokens.swift`** (pure, no SwiftUI — numbers only, so equality is exact) with the `Color`/`NSVisualEffectView.Material`/modifier bridge in **`App/Scenes/DockTheme.swift`**. Do not reintroduce inline `.white.opacity(…)` / `.black.opacity(…)` / `.shadow(color:…)` in any view; add a token instead.
+- **The `dark` column is frozen** — it is byte-for-byte the pre-2026-07-30 literals, and `DockThemeTests` asserts every one of the ~38 fields. Tune `light` only. Changing `dark` is an owner-level product decision; if a test goes red, that is the guardrail working, not a stale expectation to overwrite.
+- Views read `@Environment(\.colorScheme)` and resolve via `DockThemeTokens.resolve(_:)`. No EnvironmentKey, no `NSApp.effectiveAppearance` KVO — plain `colorScheme` propagates into the borderless `.nonactivatingPanel` hosting views and switches live (verified 2026-07-30: appearance flip restyles a running instance with no relaunch).
+- `DockVisualEffectView.updateNSView` **must actually apply the material**. SwiftUI only re-runs update on appearance change, never re-creates the NSView — the old empty `updateNSView` would silently freeze the material.
+- Turning a tint off uses **the same base at 0 opacity** (`DockTint.color(active:)` / `dockGlow`), never `Color.clear`: these sites animate, and interpolating from `.clear` toward a white rim shows a gray edge mid-transition.
+- `DockTheme.swift` must stay in **both** targets. `WindowTitleTooltip.swift` is compiled into the test target (for `WindowTitleTooltipTests`), so app-target-only membership makes the test build fail with a bogus `macos_dock_cc_v2Tests.DockShadow` vs `macos_dock_cc_v2.DockShadow` mismatch.
+- Panel rim is a top→bottom gradient (`panelRimTop` → `panelRimBottom`), which is what the deleted dead constants `Style.borderTopOpacity/borderBottomOpacity` were originally for. Dark sets both ends equal, so the gradient degenerates to the historical uniform hairline.
+- Two "looks like a color but isn't" traps, neither of which may be tokenized: the scroll edge-fade `.black`/`.clear` in `DockStripView` is a **mask alpha channel**, and `NSColor(white: 1.0, alpha: 0.0)` in `PanelCoordinator` / `DragController` is **fully transparent**, not a white background.
+- Known open issue, deliberately not fixed: the **dark** strip/capsule shadow is `radius 15 + y 8 = 23 > shadowPadding 20`, so it is hard-clipped 3pt at the panel's transparent edge, and the heavy shadow also bleeds *through* the translucent plate and muddies the bar's bottom edge (measured: bottom-of-plate luminance 141 dark-shadow vs 155 with the light token). Fixing it changes dark's look, which the frozen-dark rule forbids without an owner decision. `DockThemeTests.testDarkStripShadowStillExceedsBudgetKnownIssue` pins the current state. Light's shadows are all inside the budget.
+- `ContentView.swift` stays dark-only on purpose — it is the debug console, reachable only through the unwired `DebugConsoleView`.
+
 ## Settings And Compatibility
 
 - Do not reintroduce the multi-display strategy menu; behavior is fixed to dwell hover-switch.

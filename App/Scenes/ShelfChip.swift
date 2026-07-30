@@ -12,6 +12,10 @@ struct ShelfChip: View {
     let onClear: () -> Void
     let onAddFolder: () -> Void
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     @State private var isHovering = false
 
     var body: some View {
@@ -22,7 +26,7 @@ struct ShelfChip: View {
             if isHovering {
                 Text(itemCount > 0 ? "中转 · \(itemCount)" : "中转")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(theme.labelHover.color)
                     .lineLimit(1)
                     .transition(.opacity)
             }
@@ -42,27 +46,23 @@ struct ShelfChip: View {
     /// 投放反馈：在内部底板进行提亮与加亮描边，消除外层大框。
     private func shelfIcon(size: CGFloat) -> some View {
         let innerSize: CGFloat = size > 30 ? 32 : 22
-        let bgColor = isDropTargeted 
-            ? Color.white.opacity(0.28)
-            : Color.white.opacity(0.12)
-        let strokeOpacity = isDropTargeted ? 0.4 : 0.18
-        
+
         return ZStack {
             RoundedRectangle(cornerRadius: innerSize / 4, style: .continuous)
-                .fill(bgColor)
+                .fill(theme.shelfPlateFill.color(emphasized: isDropTargeted))
                 .overlay(
                     RoundedRectangle(cornerRadius: innerSize / 4, style: .continuous)
-                        .strokeBorder(.white.opacity(strokeOpacity), lineWidth: 0.5)
+                        .strokeBorder(theme.shelfPlateRim.color(emphasized: isDropTargeted), lineWidth: 0.5)
                 )
-                .shadow(color: .white.opacity(isDropTargeted ? 0.25 : 0), radius: isDropTargeted ? 2 : 0)
+                .dockGlow(theme.shelfDropGlow, radius: 2, active: isDropTargeted)
             Image(systemName: "tray.fill")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: innerSize * 0.46, height: innerSize * 0.46)
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(theme.shelfGlyph.color)
         }
         .frame(width: innerSize, height: innerSize)
-        .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+        .dockShadow(theme.iconShadow)
         .frame(width: size, height: size)
     }
 

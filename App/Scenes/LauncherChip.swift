@@ -41,6 +41,10 @@ struct LauncherChip: View {
 
     private static let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "LauncherChip")
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     @State private var isLaunching = false
     @State private var isHovering = false
 
@@ -69,13 +73,13 @@ struct LauncherChip: View {
                 .frame(width: iconSize, height: iconSize)
                 .clipShape(RoundedRectangle(cornerRadius: iconSize / 4, style: .continuous))
                 .opacity(iconOpacity)
-                .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+                .dockShadow(theme.iconShadow)
                 .offset(y: isLaunching ? -6 : 0)
                 .animation(bounceAnimation, value: isLaunching)
             if isHovering {
                 Text(displayName)
                     .font(.system(size: max(8, 10 * scale), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(theme.labelHover.color)
                     .lineLimit(1)
                     .frame(maxWidth: 64 * scale)
                     .transition(.opacity)
@@ -86,7 +90,7 @@ struct LauncherChip: View {
         .overlay(alignment: .bottom) {
             if visual.showsRunningDot {
                 Circle()
-                    .fill(.white.opacity(0.85))
+                    .fill(theme.runningDot.color)
                     .frame(width: 4, height: 4)
                     .padding(.bottom, 2)
             }

@@ -1,0 +1,203 @@
+import XCTest
+@testable import macos_dock_cc_v2
+
+/// **深色冻结测试。**
+///
+/// 浅色模式适配（2026-07-30）把散落在 8 个视图文件里的约 50 处写死颜色收拢进 `DockThemeTokens`。
+/// owner 定的硬边界是「深色观感一点不变」——本文件就是那条边界的机械保证：下面每一个期望值都是
+/// 改造**前**该处代码里的字面值，逐项抄录。任何人以后顺手调深色数值，这里会直接红。
+///
+/// 要改观感请改 `DockThemeTokens.light`。如果确实要动深色，那是一个需要 owner 拍板的产品决策，
+/// 改完请同步更新本文件——**不要**因为测试红了就把期望值改成新值了事。
+final class DockThemeTests: XCTestCase {
+
+    private let dark = DockThemeTokens.dark
+    private let light = DockThemeTokens.light
+
+    /// 面板留给阴影的透明边距。读 `PanelLayoutMetrics`（`PanelCoordinator.shadowPadding` 只是它的转发，
+    /// 而 PanelCoordinator 没编进测试 target）。
+    private let shadowPadding = PanelLayoutMetrics.tungstenEdge.shadowPadding
+
+    // MARK: - 深色逐项冻结
+
+    // 面板描边：改造前是均匀一圈 white 0.15（DockStripView / DrawerView / 两个弹窗 / 胶囊 共 5 处），
+    // 高亮态 white 0.45 + 线宽 1。上下同值 → 渐变退化成均匀色，与改造前逐像素一致。
+    func testDarkPanelRimMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.panelRimTop, .white(0.15))
+        XCTAssertEqual(dark.panelRimBottom, .white(0.15))
+        XCTAssertEqual(dark.panelRimTop, dark.panelRimBottom,
+                       "深色描边必须上下同值，否则就不再是改造前那圈均匀描边")
+        XCTAssertEqual(dark.panelRimHighlighted, .white(0.45))
+        XCTAssertEqual(dark.panelRimLineWidth, 0.5)
+        XCTAssertEqual(dark.panelRimHighlightedLineWidth, 1)
+    }
+
+    // 任务条 + 胶囊：black 0.35 / r15 / y8；抽屉 + 两个弹窗：black 0.35 / r12 / y5。
+    func testDarkShadowsMatchLegacyLiterals() {
+        XCTAssertEqual(dark.stripShadow, DockShadow(tint: .black(0.35), radius: 15, y: 8))
+        XCTAssertEqual(dark.popupShadow, DockShadow(tint: .black(0.35), radius: 12, y: 5))
+        XCTAssertEqual(dark.iconShadow, DockShadow(tint: .black(0.22), radius: 3, y: 1))
+        XCTAssertEqual(dark.tooltipShadow, DockShadow(tint: .black(0.32), radius: 6, y: 2))
+        XCTAssertEqual(dark.carrierShadow, DockShadow(tint: .black(0.35), radius: 8, y: 4))
+    }
+
+    func testDarkPanelMaterialIsPopover() {
+        XCTAssertEqual(dark.panelMaterial, .popover)
+    }
+
+    // 标题胶囊：底 white 0.08 / 悬停 0.14；描边渐变上 white 0.15（悬停 0.25）→ 下 white 0.02。
+    func testDarkChipPillMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.chipPillFill, DockTintPair(normal: .white(0.08), emphasized: .white(0.14)))
+        XCTAssertEqual(dark.chipPillRimTop, DockTintPair(normal: .white(0.15), emphasized: .white(0.25)))
+        XCTAssertEqual(dark.chipPillRimBottom, .white(0.02))
+    }
+
+    // 文字：标题 0.9 / 非前台 0.6，悬停名 0.85，副标题 0.65。
+    func testDarkLabelsMatchLegacyLiterals() {
+        XCTAssertEqual(dark.labelActive, .white(0.9))
+        XCTAssertEqual(dark.labelInactive, .white(0.6))
+        XCTAssertEqual(dark.labelHover, .white(0.85))
+        XCTAssertEqual(dark.labelSubtitle, .white(0.65))
+    }
+
+    func testDarkIndicatorsMatchLegacyLiterals() {
+        XCTAssertEqual(dark.runningDot, .white(0.85))
+        XCTAssertEqual(dark.zoneDivider, .white(0.18))
+    }
+
+    // 中转格：底板 0.12 → 命中 0.28，描边 0.18 → 0.28 命中 0.4，图标 0.9，命中光晕 0.25。
+    func testDarkShelfChipMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.shelfPlateFill, DockTintPair(normal: .white(0.12), emphasized: .white(0.28)))
+        XCTAssertEqual(dark.shelfPlateRim, DockTintPair(normal: .white(0.18), emphasized: .white(0.4)))
+        XCTAssertEqual(dark.shelfGlyph, .white(0.9))
+        XCTAssertEqual(dark.shelfDropGlow, .white(0.25))
+    }
+
+    func testDarkCapsuleMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.capsuleGlyph, .white(0.72))
+        XCTAssertEqual(dark.capsuleStashGlow, .white(0.18))
+    }
+
+    func testDarkFolderChipMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.folderDropRing, .white(0.9))
+        XCTAssertEqual(dark.folderThumbHairline, .white(0.35))
+    }
+
+    func testDarkPopupMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.popupCellLabel, .white(0.9))
+        XCTAssertEqual(dark.popupCellHover, .white(0.12))
+        XCTAssertEqual(dark.popupPrimaryText, .white(0.8))
+        XCTAssertEqual(dark.popupSecondaryText, .white(0.5))
+        XCTAssertEqual(dark.backChipFill, .white(0.16))
+        XCTAssertEqual(dark.backChipRim, .white(0.2))
+        XCTAssertEqual(dark.backChipGlyph, .white(0.85))
+    }
+
+    // tooltip 是唯一「深色加黑、浅色加白」的地方（它叠在 .ultraThinMaterial 上）。
+    func testDarkTooltipMatchesLegacyLiterals() {
+        XCTAssertEqual(dark.tooltipTint, .black(0.28))
+        XCTAssertEqual(dark.tooltipRim, .white(0.18))
+        XCTAssertEqual(dark.tooltipText, .white(0.94))
+    }
+
+    /// 上面的逐组断言覆盖了 `DockThemeTokens` 的**全部** 38 个字段（新增字段时请一并补进对应组）。
+    /// 这条只守一件事：两套不能退化成同一套，否则等于没做适配。
+    func testDarkAndLightAreDistinct() {
+        XCTAssertNotEqual(dark, light)
+    }
+
+    // MARK: - 浅色的结构性约束（数值可调，这些性质不可破）
+
+    /// 浅色阴影必须收在 shadowPadding（20pt）预算内。
+    /// 超了就会在面板透明边处被硬切成一道齐口直边——正是用户报的「阴影还会延伸溢出」。
+    func testLightShadowsFitInsideShadowPaddingBudget() {
+        XCTAssertLessThanOrEqual(light.stripShadow.verticalExtent, shadowPadding)
+        XCTAssertLessThanOrEqual(light.popupShadow.verticalExtent, shadowPadding)
+        XCTAssertLessThanOrEqual(light.carrierShadow.verticalExtent, shadowPadding)
+    }
+
+    /// 已知遗留：深色任务条阴影 15 + 8 = 23 > 20，被裁掉 3pt。
+    /// 修它要改深色观感，违反本轮「深色冻结」，已单独记待办。这条测试把现状钉住，
+    /// 免得以后有人以为深色也在预算内、或者悄悄改了深色数值。
+    func testDarkStripShadowStillExceedsBudgetKnownIssue() {
+        XCTAssertEqual(dark.stripShadow.verticalExtent, 23)
+        XCTAssertGreaterThan(dark.stripShadow.verticalExtent, shadowPadding)
+        XCTAssertLessThanOrEqual(dark.popupShadow.verticalExtent, shadowPadding,
+                                 "抽屉/弹窗的 12+5=17 一直在预算内，别把它也带出界")
+    }
+
+    /// 浅色的前景必须是**加黑**而不是加白：浅色玻璃上加白等于消失，只剩描边孤零零留着，
+    /// 每张卡就变成一个空心方格——这正是用户抱怨的「周围有很明显的方格」。
+    func testLightForegroundsAreDarkTinted() {
+        let mustBeBlack: [(String, DockTint)] = [
+            ("labelActive", light.labelActive),
+            ("labelInactive", light.labelInactive),
+            ("labelHover", light.labelHover),
+            ("labelSubtitle", light.labelSubtitle),
+            ("runningDot", light.runningDot),
+            ("zoneDivider", light.zoneDivider),
+            ("chipPillFill.normal", light.chipPillFill.normal),
+            ("chipPillFill.emphasized", light.chipPillFill.emphasized),
+            ("shelfPlateFill.normal", light.shelfPlateFill.normal),
+            ("shelfGlyph", light.shelfGlyph),
+            ("capsuleGlyph", light.capsuleGlyph),
+            ("folderDropRing", light.folderDropRing),
+            ("popupCellLabel", light.popupCellLabel),
+            ("popupCellHover", light.popupCellHover),
+            ("popupSecondaryText", light.popupSecondaryText),
+            ("backChipFill", light.backChipFill),
+            ("tooltipText", light.tooltipText),
+        ]
+        for (name, tint) in mustBeBlack {
+            XCTAssertEqual(tint.base, .black, "浅色的 \(name) 必须加黑，加白在浅玻璃上会消失")
+        }
+    }
+
+    /// 面板描边在浅色下是「上沿亮（白高光）+ 下沿暗（黑细线）」——苹果原生玻璃的打光方向。
+    /// 改造前那圈均匀白描边在浅色下就是用户看到的灰框。
+    func testLightPanelRimIsBrightTopDarkBottom() {
+        XCTAssertEqual(light.panelRimTop.base, .white)
+        XCTAssertEqual(light.panelRimBottom.base, .black)
+        XCTAssertGreaterThan(light.panelRimTop.opacity, light.panelRimBottom.opacity)
+    }
+
+    /// tooltip 在浅色下要反过来加白提亮（它是唯一有这个反转的地方）。
+    func testLightTooltipTintIsBright() {
+        XCTAssertEqual(light.tooltipTint.base, .white)
+        XCTAssertEqual(dark.tooltipTint.base, .black)
+    }
+
+    /// 所有不透明度必须在 0…1 之内（手调时容易顺手写超）。
+    func testAllOpacitiesAreInRange() {
+        for tokens in [dark, light] {
+            for tint in tokens.allTints {
+                XCTAssertTrue((0...1).contains(tint.opacity),
+                              "不透明度越界：\(tint)")
+            }
+        }
+    }
+}
+
+// MARK: - 测试辅助
+
+private extension DockThemeTokens {
+    /// 遍历用：本表里所有着色值（含阴影自带的着色）。
+    var allTints: [DockTint] {
+        [panelRimTop, panelRimBottom, panelRimHighlighted,
+         stripShadow.tint, popupShadow.tint,
+         chipPillFill.normal, chipPillFill.emphasized,
+         chipPillRimTop.normal, chipPillRimTop.emphasized, chipPillRimBottom,
+         labelActive, labelInactive, labelHover, labelSubtitle,
+         runningDot, zoneDivider,
+         iconShadow.tint,
+         shelfPlateFill.normal, shelfPlateFill.emphasized,
+         shelfPlateRim.normal, shelfPlateRim.emphasized,
+         shelfGlyph, shelfDropGlow,
+         capsuleGlyph, capsuleStashGlow,
+         folderDropRing, folderThumbHairline,
+         popupCellLabel, popupCellHover, popupPrimaryText, popupSecondaryText,
+         backChipFill, backChipRim, backChipGlyph,
+         tooltipTint, tooltipRim, tooltipText, tooltipShadow.tint,
+         carrierShadow.tint]
+    }
+}

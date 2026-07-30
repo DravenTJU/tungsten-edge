@@ -122,6 +122,10 @@ struct FolderGridPopupView: View {
     /// 已固定判定（已固定的目录不再显示「固定到固定区」）。
     var isFolderPinned: ((URL) -> Bool)?
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     @StateObject private var model: FolderPopupModel
     /// 下钻栈：空 = 根目录；push 子文件夹 URL。
     @State private var drillStack: [URL] = []
@@ -171,9 +175,9 @@ struct FolderGridPopupView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            DockVisualEffectView()
+            DockVisualEffectView(material: theme.panelMaterial)
                 .padding(-2)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()
 
             Group {
@@ -184,18 +188,18 @@ struct FolderGridPopupView: View {
                     gridBody
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous)
+                .strokeBorder(theme.panelRimStyle, lineWidth: theme.panelRimLineWidth)
         }
         // 原生同款：下钻后左上角浮返回箭头（无表头,不占布局）。
         .overlay(alignment: .topLeading) { backChip }
         // 面板整体的淡入淡出由协调器在 AppKit 层做（panel.alphaValue，含背景/阴影一起淡）,
         // 内容层不再另加缩放/透明度——两层淡入叠加=曲线相乘,且缩放对大内容会呈现"从角落展开"。
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20),否则在面板透明边处被硬切（owner 反馈的裁切感）。
-        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
+        .dockShadow(theme.popupShadow)
         .padding(PanelCoordinator.shadowPadding)
         .onAppear {
             model.display(url: rootURL)
@@ -220,10 +224,10 @@ struct FolderGridPopupView: View {
         if !drillStack.isEmpty {
             Image(systemName: "chevron.left")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(theme.backChipGlyph.color)
                 .frame(width: Style.backChipSize, height: Style.backChipSize)
-                .background(Circle().fill(.white.opacity(0.16)))
-                .overlay(Circle().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+                .background(Circle().fill(theme.backChipFill.color))
+                .overlay(Circle().strokeBorder(theme.backChipRim.color, lineWidth: 0.5))
                 .contentShape(Circle())
                 .onTapGesture { _ = drillStack.removeLast() }
                 .help("返回上一级")
@@ -239,13 +243,13 @@ struct FolderGridPopupView: View {
             if model.loadFailed {
                 Text("无法读取文件夹内容")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(theme.popupPrimaryText.color)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
             } else if model.entries.isEmpty && model.didFirstLoad {
                 Text("文件夹是空的")
                     .font(.system(size: Style.labelSize))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(theme.popupSecondaryText.color)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
             }
@@ -328,6 +332,10 @@ struct FolderGridCell: View {
     var contextMenu: (() -> NSMenu)? = nil
     let onTap: () -> Void
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     @State private var isHovering = false
     @State private var resolvedIcon: NSImage?
 
@@ -375,7 +383,7 @@ struct FolderGridCell: View {
                 }
             Text(label)
                 .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(theme.popupCellLabel.color)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .truncationMode(.middle)
@@ -386,7 +394,7 @@ struct FolderGridCell: View {
         .frame(width: 96, height: 104)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.white.opacity(isHovering ? 0.12 : 0))
+                .fill(theme.popupCellHover.color(active: isHovering))
         )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }

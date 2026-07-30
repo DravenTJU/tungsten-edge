@@ -52,6 +52,10 @@ struct DockStripView: View {
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。深色列是冻结的历史值，调观感只动浅色列。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     /// 文件夹 chip 点击 → 弹窗 toggle（path + chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
     var onFolderPopupToggle: (String, CGRect) -> Void = { _, _ in }
     /// 中转格点击 → 中转弹窗 toggle（chip 可视矩形·屏幕坐标）。PanelCoordinator 注入。
@@ -257,7 +261,7 @@ struct DockStripView: View {
 
     var body: some View {
         ZStack {
-            DockVisualEffectView()
+            DockVisualEffectView(material: theme.panelMaterial)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()
@@ -293,8 +297,8 @@ struct DockStripView: View {
         // 外部拖目录悬停文件夹区（pin 落点）复用同一条高亮。
         .overlay {
             RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
-                .strokeBorder(stripHighlighted ? .white.opacity(0.45) : .white.opacity(0.15),
-                              lineWidth: stripHighlighted ? 1 : 0.5)
+                .strokeBorder(theme.panelRimStyle(highlighted: stripHighlighted),
+                              lineWidth: theme.panelRimLineWidth(highlighted: stripHighlighted))
         }
         .animation(.easeOut(duration: 0.15), value: stripHighlighted)
         // 跨面板后，被拖的卡片改由 DragController 的全屏载体面板绘制（不再画在任务条 overlay 上 —
@@ -318,7 +322,7 @@ struct DockStripView: View {
         })
         // 重击(触控板)/中键(鼠标) → 内容预览：本地事件监视器 → 命中反查（handleGesturePreview）。
         .background(GestureMonitorInstaller(onGesture: { handleGesturePreview(atScreen: $0) }))
-        .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
+        .dockShadow(theme.stripShadow)
         .padding(PanelCoordinator.shadowPadding)
         // 抽屉图标拖到任务条上：进任务条区即转正成窗口卡、跟光标整块实时让位（镜像 DrawerView 的全局鼠标驱动）。
         // 消息区的重排/释放同样由全局鼠标驱动——重排会挪动被拖 chip,SwiftUI 会取消原手势,
@@ -830,7 +834,7 @@ struct DockStripView: View {
                      onWindowTitleTooltipEvent: onWindowTitleTooltipEvent)
         case .divider:
             Rectangle()
-                .fill(.white.opacity(0.18))
+                .fill(theme.zoneDivider.color)
                 .frame(width: 1, height: 20)
                 .padding(.horizontal, 2)
         case let .pinnedFolder(path):
@@ -1060,6 +1064,9 @@ struct ChipView: View {
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var appMembershipController: AppMembershipController
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
     let item: StripItem
     var scale: CGFloat = 1.0
     var iconOnly: Bool = false
@@ -1147,7 +1154,7 @@ struct ChipView: View {
             if showsHover {
                 Text(displayTitle)
                     .font(.system(size: max(8, 10 * scale), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(theme.labelHover.color)
                     .lineLimit(1)
                     .frame(maxWidth: 64 * scale)
                     .transition(.opacity)
@@ -1158,7 +1165,7 @@ struct ChipView: View {
         .overlay(alignment: .bottom) {
             if showRunningDot {
                 Circle()
-                    .fill(.white.opacity(0.85))
+                    .fill(theme.runningDot.color)
                     .frame(width: 4, height: 4)
                     .padding(.bottom, 2)
             }
@@ -1180,8 +1187,7 @@ struct ChipView: View {
 
     private var multiWindowChip: some View {
         let iconOpacity: Double = effectiveIsOnDesktop ? 1.0 : 0.45
-        let textOpacity: Double = effectiveIsOnDesktop ? 0.9 : 0.60
-        let bgOpacity: Double = showsHover ? 0.14 : 0.08
+        let titleColor: Color = effectiveIsOnDesktop ? theme.labelActive.color : theme.labelInactive.color
 
         let pillHeight: CGFloat = showsHover ? 28 * scale : 34 * scale
         let pillIconSize: CGFloat = showsHover ? 18 * scale : 22 * scale
@@ -1192,7 +1198,7 @@ struct ChipView: View {
                 .frame(width: 22 * scale, height: 22 * scale)
             Text(displayTitle)
                 .font(.system(size: max(10, 12 * scale), weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(textOpacity))
+                .foregroundStyle(titleColor)
                 .lineLimit(1)
                 .frame(maxWidth: 140, alignment: .leading)
         }
@@ -1200,17 +1206,10 @@ struct ChipView: View {
         .frame(height: pillHeight)
         .background(
             RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
-                .fill(Color.white.opacity(bgOpacity))
+                .fill(theme.chipPillFill.color(emphasized: showsHover))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [.white.opacity(showsHover ? 0.25 : 0.15), .white.opacity(0.02)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            ),
-                            lineWidth: 0.5
-                        )
+                        .strokeBorder(theme.chipPillRimStyle(emphasized: showsHover), lineWidth: 0.5)
                 )
         )
         .background(ScreenRectReader { rect in
@@ -1225,7 +1224,7 @@ struct ChipView: View {
             if showsHover {
                 Text(appName)
                     .font(.system(size: max(8, 9 * scale), weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(theme.labelSubtitle.color)
                     .lineLimit(1)
                     .frame(maxWidth: 160 * scale)
                     .transition(.opacity)
@@ -1264,7 +1263,7 @@ struct ChipView: View {
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size / 4, style: .continuous))
             .opacity(opacity)
-            .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+            .dockShadow(theme.iconShadow)
     }
 
     // MARK: - Context Menu
@@ -1367,6 +1366,9 @@ struct DrawerCapsuleButton: View {
     @EnvironmentObject var drawerOrderStore: DrawerOrderStore
     /// 拖卡进抽屉的投放反馈：手指压在投放区时胶囊放大 + 高亮描边。
     @EnvironmentObject var dragController: DragController
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
     let action: () -> Void
 
     @State private var isHovering = false
@@ -1396,7 +1398,7 @@ struct DrawerCapsuleButton: View {
         // 拖动时 hover 让位给拖入反馈：draggingPayload 非空则不弹（drag 优先）。
         let showsHover = isHovering && dragController.draggingPayload == nil
         return ZStack {
-            DockVisualEffectView()
+            DockVisualEffectView(material: theme.panelMaterial)
                 .padding(-2)
                 .clipShape(RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous))
                 .ignoresSafeArea()
@@ -1407,7 +1409,7 @@ struct DrawerCapsuleButton: View {
                 if folderIDs.isEmpty {
                     Image(systemName: "square.grid.2x2")
                         .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(theme.capsuleGlyph.color)
                 } else {
                     LazyVGrid(
                         columns: Array(repeating: GridItem(.fixed(Self.iconSize), spacing: Self.gridSpacing), count: 3),
@@ -1431,7 +1433,7 @@ struct DrawerCapsuleButton: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: Style.cornerRadius, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+                .strokeBorder(theme.panelRimStyle, lineWidth: theme.panelRimLineWidth)
         }
         // 反馈仅作用于内层预览内容（见上方 Group）；这里的 52pt 可见层只负责 hover 命中——
         // 鼠标移到胶囊任意处都触发，动的是里面的九宫格，外框保持静止。
@@ -1439,10 +1441,9 @@ struct DrawerCapsuleButton: View {
         .onHover { isHovering = $0 }
         // 拖卡悬到胶囊上：**微微发光 + 极轻微放大**（去掉原来生硬的白圈描边,owner 2026-06-21）。
         .scaleEffect(dragController.isOverStashZone ? 1.04 : 1.0)
-        .shadow(color: .white.opacity(dragController.isOverStashZone ? 0.18 : 0),
-                radius: dragController.isOverStashZone ? 5 : 0)
+        .dockGlow(theme.capsuleStashGlow, radius: 5, active: dragController.isOverStashZone)
         .animation(.easeInOut(duration: DrawerAnimation.duration), value: dragController.isOverStashZone)
-        .shadow(color: .black.opacity(0.35), radius: 15, x: 0, y: 8)
+        .dockShadow(theme.stripShadow)
         .padding(PanelCoordinator.shadowPadding)
         .contentShape(Rectangle())
         .onTapGesture { fireTapPulse(); action() }
@@ -1614,29 +1615,38 @@ struct StripFileDropDelegate: DropDelegate {
 // MARK: - Visual Constants (hand-tune these)
 
 private enum Style {
-    // Shape
-    static let cornerRadius: CGFloat   = 16   // panel corner radius
+    // Shape —— 圆角与其余 4 个面板共用一处定义（本 enum 是 private，别的文件读不到）。
+    static let cornerRadius: CGFloat   = DockShape.panelCornerRadius
 
     // Content layout
     static let chipContentInset: CGFloat = 20  // horizontal padding inside blur; > cornerRadius avoids corner-clip
     static let edgeFadeWidth: CGFloat    = 16  // scroll edge fade-out width (pt)
 
-    // Border
-    static let borderTopOpacity: Double    = 0.55  // top-edge highlight (simulates light from above)
-    static let borderBottomOpacity: Double = 0.02  // side/bottom edges (nearly invisible)
+    // 描边的「顶强底弱」高光已由 DockThemeTokens.panelRimTop / panelRimBottom 正式接管
+    //（原先这里的两个常量是零引用的死代码，实际画的是均匀一圈白 0.15）。
 }
 
 // MARK: - Visual Effect Background
 
+/// 全部悬浮面板（任务条 / 抽屉 / 胶囊 / 两个弹窗）唯一的毛玻璃底。
+/// `.behindWindow` 的模糊与提饱和度由 WindowServer 在窗口后面算，材质本身跟随系统外观。
 struct DockVisualEffectView: NSViewRepresentable {
+    /// 由调用方按当前外观传入（`DockThemeTokens.panelMaterial`）。
+    var material: DockPanelMaterial = .popover
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .popover
+        view.material = material.nsMaterial
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+
+    /// 必须真的应用材质：外观切换时 SwiftUI 只会重跑 update，不会重建 NSView。
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        let resolved = material.nsMaterial
+        if nsView.material != resolved { nsView.material = resolved }
+    }
 }
 
 // MARK: - Mouse wheel horizontal strip scrolling

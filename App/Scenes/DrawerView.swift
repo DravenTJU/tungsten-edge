@@ -26,6 +26,10 @@ struct DrawerView: View {
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     /// 抽屉图标在 `"drawer"` 坐标空间里的位置，喂给起拖抓取偏移 + 同区落点命中。
     @State private var drawerFrames: [String: CGRect] = [:]
 
@@ -90,9 +94,9 @@ struct DrawerView: View {
         // 底部对齐：抽屉面板向上长时,内容底边钉死在锚点(胶囊上方)、只向上揭开,
         // 不会像顶部对齐那样底边先垂到锚点下方(向下压胶囊)再升回来（owner 2026-06-21：避让该直接向上扩展）。
         ZStack(alignment: .bottomLeading) {
-            DockVisualEffectView()
+            DockVisualEffectView(material: theme.panelMaterial)
                 .padding(-2)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
                 .ignoresSafeArea()
 
             // 内容超过可用高度就内部滚动（封顶,不下压底边）；否则正常贴合内容。
@@ -104,11 +108,11 @@ struct DrawerView: View {
                     gridStack
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: DockShape.panelCornerRadius, style: .continuous)
+                .strokeBorder(theme.panelRimStyle, lineWidth: theme.panelRimLineWidth)
         }
         // 抽屉根视图的屏幕 frame（AppKit 换算,绕开 .global/y 翻转/shadowPadding 的坑,Codex 二审 P1-3）。
         // 与 `"drawer"` 命名空间挂在同一视图上 → 既能判"光标在不在抽屉里",又能把屏幕坐标映回 drawer 空间命中格子。
@@ -119,7 +123,8 @@ struct DrawerView: View {
         // 入场：从贴胶囊的右下角轻微放大入场（配合面板 alpha 淡入）。scaleEffect 是渲染变换,不改布局/命中。
         .scaleEffect(isPresented ? 1 : 0.96, anchor: .bottomTrailing)
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20),否则底部在透明边处被硬切（同弹窗）。
-        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 5)
+        // 数值见 DockThemeTokens.popupShadow（浅/深各一套）。
+        .dockShadow(theme.popupShadow)
         .padding(PanelCoordinator.shadowPadding)
         // 入场用弹窗同款快出缓停参数（PopoverAnimation）;网格重排等内容动画仍用 DrawerAnimation.duration。
         .onAppear { withAnimation(.easeOut(duration: PopoverAnimation.openDuration)) { isPresented = true } }

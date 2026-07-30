@@ -20,6 +20,10 @@ struct PinnedFolderChip: View {
     let onSetSortOrder: (FolderSortOrder) -> Void
     var isDropTarget = false
 
+    /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: DockThemeTokens { .resolve(colorScheme) }
+
     @State private var isHovering = false
 
     private var folderName: String {
@@ -31,15 +35,15 @@ struct PinnedFolderChip: View {
         VStack(spacing: 2) {
             Spacer(minLength: 0)
             coverImage(size: coverSize)
-                .shadow(color: .black.opacity(0.22), radius: 3, y: 1)
+                .dockShadow(theme.iconShadow)
                 .overlay {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(.white.opacity(isDropTarget ? 0.9 : 0), lineWidth: 1.5)
+                        .strokeBorder(theme.folderDropRing.color(active: isDropTarget), lineWidth: 1.5)
                 }
                 .scaleEffect(isDropTarget ? 1.08 : 1)
             Text(folderName)
                 .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(theme.labelHover.color)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 48)
@@ -58,13 +62,13 @@ struct PinnedFolderChip: View {
         .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 
-    /// 封面：真缩略图方形裁切 + 细白边；文件图标 / 空文件夹图标 fit 渲染不裁不描边。
+    /// 封面：真缩略图方形裁切 + 细描边（深色下是白、浅色下是黑）；文件图标 / 空文件夹图标 fit 渲染不裁不描边。
     /// 缩略图**满铺无留白**,视觉比 app 图标(.fit 自带约 20% 留白)大,故按 5/6 缩到其可见方块尺寸；
     /// 图标自带留白、本就与 app 图标同口径,维持 size 不缩。
     @ViewBuilder
     private func coverImage(size: CGFloat) -> some View {
         if let cover, cover.isThumbnail {
-            // 真缩略图：方形裁切 + 细白边（缩到 app 图标可见方块尺寸;圆角 thumb/4）。
+            // 真缩略图：方形裁切 + 细描边（缩到 app 图标可见方块尺寸;圆角 thumb/4）。
             let thumb = size * 5 / 6
             Image(nsImage: cover.image)
                 .resizable()
@@ -74,7 +78,7 @@ struct PinnedFolderChip: View {
                 .clipShape(RoundedRectangle(cornerRadius: thumb / 4, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: thumb / 4, style: .continuous)
-                        .strokeBorder(.white.opacity(0.35), lineWidth: 0.5)
+                        .strokeBorder(theme.folderThumbHairline.color, lineWidth: 0.5)
                 )
                 .frame(width: size, height: size)
         } else {
