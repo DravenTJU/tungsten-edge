@@ -199,6 +199,18 @@ extension View {
         if amount == 1.0 { self } else { self.saturation(amount) }
     }
 
+    /// 图标淡化。**两条分支是承重的**：没有颜色滤镜时只挂 `.opacity`，与 2026-07-30 改造前
+    /// 逐像素一致（深色 + 开关关掉的浅色都走这条）。恒等的 `.grayscale(0)` / `.brightness(0)`
+    /// 仍可能触发离屏渲染，多挂一层就可能让深色的逐像素冻结出现差异——同厚度层与提饱和的理由。
+    @ViewBuilder
+    func dockIconDim(_ dim: DockIconDim) -> some View {
+        if dim.usesColorFilters {
+            self.grayscale(dim.grayscale).brightness(dim.brightness).opacity(dim.opacity)
+        } else {
+            self.opacity(dim.opacity)
+        }
+    }
+
     /// 应用一个 `DockShadow`（x 恒为 0）。
     func dockShadow(_ shadow: DockShadow) -> some View {
         self.shadow(color: shadow.tint.color, radius: shadow.radius, x: 0, y: shadow.y)

@@ -64,7 +64,7 @@ struct LauncherChip: View {
         let visual = LauncherChipVisualPlan.visual(isRunning: isRunning,
                                                    isHidden: isHidden,
                                                    dimsWhenHidden: dimsWhenHidden)
-        let iconOpacity: Double = visual.opacity
+        let iconDim: DockIconDim = theme.iconDim(visual.dim)
         return VStack(spacing: 2) {
             Spacer(minLength: 0)
             Image(nsImage: AppIconResolver.icon(for: bundleID))
@@ -72,7 +72,7 @@ struct LauncherChip: View {
                 .aspectRatio(contentMode: .fit)
                 .frame(width: iconSize, height: iconSize)
                 .clipShape(RoundedRectangle(cornerRadius: iconSize / 4, style: .continuous))
-                .opacity(iconOpacity)
+                .dockIconDim(iconDim)
                 .dockShadow(theme.iconShadow)
                 .offset(y: isLaunching ? -6 : 0)
                 .animation(bounceAnimation, value: isLaunching)

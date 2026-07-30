@@ -1159,11 +1159,11 @@ struct ChipView: View {
     // MARK: - Icon-only chip
 
     private var bareIconChip: some View {
-        let iconOpacity: Double = effectiveIsOnDesktop ? 1.0 : 0.45
+        let iconDim: DockIconDim = theme.iconDim(effectiveIsOnDesktop ? .bright : .hidden)
         let iconSize: CGFloat = showsHover ? 24 * scale : 36 * scale
         return VStack(spacing: 2) {
             Spacer(minLength: 0)
-            appIcon(size: iconSize, opacity: iconOpacity)
+            appIcon(size: iconSize, dim: iconDim)
             if showsHover {
                 Text(displayTitle)
                     .font(.system(size: max(8, 10 * scale), weight: .medium, design: .rounded))
@@ -1199,7 +1199,7 @@ struct ChipView: View {
     // MARK: - Labeled chip
 
     private var multiWindowChip: some View {
-        let iconOpacity: Double = effectiveIsOnDesktop ? 1.0 : 0.45
+        let iconDim: DockIconDim = theme.iconDim(effectiveIsOnDesktop ? .bright : .hidden)
         let titleColor: Color = effectiveIsOnDesktop ? theme.labelActive.color : theme.labelInactive.color
 
         let pillHeight: CGFloat = showsHover ? 28 * scale : 34 * scale
@@ -1207,7 +1207,7 @@ struct ChipView: View {
         let pill = HStack(spacing: 6 * scale) {
             // Fixed layout frame (22pt) so HStack width never changes on hover;
             // only the visual icon content shrinks.
-            appIcon(size: pillIconSize, opacity: iconOpacity)
+            appIcon(size: pillIconSize, dim: iconDim)
                 .frame(width: 22 * scale, height: 22 * scale)
             Text(displayTitle)
                 .font(.system(size: max(10, 12 * scale), weight: .medium, design: .rounded))
@@ -1269,13 +1269,13 @@ struct ChipView: View {
 
     // MARK: - Shared Icon
 
-    private func appIcon(size: CGFloat, opacity: Double) -> some View {
+    private func appIcon(size: CGFloat, dim: DockIconDim) -> some View {
         Image(nsImage: AppIconResolver.icon(for: item.bundleIdentifier ?? item.appID))
             .resizable()
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size / 4, style: .continuous))
-            .opacity(opacity)
+            .dockIconDim(dim)
             .dockShadow(theme.iconShadow)
     }
 

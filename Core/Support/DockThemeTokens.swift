@@ -91,6 +91,44 @@ enum DockPanelMaterial: Equatable {
     ]
 }
 
+/// 图标的「淡化处理」。三个通道：褪透明 / 去饱和 / 压暗。
+///
+/// 为什么不能只有 opacity：`.opacity()` 是把图标往**底板颜色**上褪。深色底板是黑的，褪过去
+/// 就是变暗，读起来是「暗下去了」，成立；浅色底板是浅灰的，褪过去等于往浅灰里化——本身深底的
+/// 图标褪到 0.45 之后整块变成灰方块、品牌色发白，这就是 owner 2026-07-30 说的「灰蒙蒙」。
+/// 浅色因此改成主要靠**去饱和 + 略压暗**表达「不在桌面上」，透明度只少量参与，图标保持「实」。
+struct DockIconDim: Equatable {
+    let opacity: Double
+    /// 0 = 原色，1 = 全灰。
+    let grayscale: Double
+    /// 负值压暗，0 = 不动。浅色底板上单靠去饱和会偏亮，压一点才留得住对比。
+    let brightness: Double
+
+    /// 要不要挂颜色滤镜。全零 → 只挂 `.opacity`，与 2026-07-30 改造前逐像素一致
+    ///（恒等的 `.grayscale(0)` / `.brightness(0)` 仍可能触发离屏渲染，会破坏深色的逐像素冻结）。
+    var usesColorFilters: Bool { grayscale != 0 || brightness != 0 }
+}
+
+extension DockIconDim {
+    /// 图标全亮（在桌面上）。
+    static let bright = DockIconDim(opacity: 1, grayscale: 0, brightness: 0)
+    /// 改造前全仓库唯一的淡化做法：纯 opacity，与外观无关，`DockStripView` 与
+    /// `LauncherChipVisualPlan` 各自硬写。**深色列 = 这两个值（冻结）**——深色底板上
+    /// 「往底色褪」本来就读作变暗，成立，所以深色不需要浅色那套颜色滤镜。
+    static let legacyHidden = DockIconDim(opacity: 0.45, grayscale: 0, brightness: 0)
+    static let legacyNotRunning = DockIconDim(opacity: 0.35, grayscale: 0, brightness: 0)
+}
+
+/// 图标此刻处在哪一档淡化。**只表达「在不在桌面上」**——「是否运行」由图标下方的白点单独表达，
+/// 两者正交（运行但隐藏 = 有点 + hidden 档；已退出 = 无点 + notRunning 档）。
+enum DockIconDimState: Equatable {
+    case bright
+    /// 运行中，但窗口被隐藏 / 最小化。
+    case hidden
+    /// 进程已退出（kept 占位图标、抽屉下区）。
+    case notRunning
+}
+
 /// 与外观无关的形状常量。原先 `cornerRadius: 16` 在 `DockStripView` 的 private `Style` 里，
 /// 导致 `DrawerView` / `FolderGridPopupView` / `ShelfGridPopupView` 各自硬写一遍 16。
 enum DockShape {
@@ -177,6 +215,11 @@ struct DockThemeTokens: Equatable {
     /// 所有 app 图标 / 文件夹封面 / 中转格底板共用的投影。
     let iconShadow: DockShadow
 
+    /// 运行但被隐藏 / 最小化时的图标淡化。
+    let iconDimHidden: DockIconDim
+    /// 进程已退出时的图标淡化。
+    let iconDimNotRunning: DockIconDim
+
     // MARK: 中转格
 
     let shelfPlateFill: DockTintPair
@@ -222,6 +265,15 @@ struct DockThemeTokens: Equatable {
     // MARK: 拖动浮动副本
 
     let carrierShadow: DockShadow
+
+    /// 本表里某一档的图标淡化值。`.bright` 与外观无关，恒为不淡化。
+    func iconDim(_ state: DockIconDimState) -> DockIconDim {
+        switch state {
+        case .bright: return .bright
+        case .hidden: return iconDimHidden
+        case .notRunning: return iconDimNotRunning
+        }
+    }
 
     /// 这一套值到底画不画厚度层。**深色必须是 `false`**——不是"画一层全透明的"，而是
     /// 整层根本不进视图树。`.blur(radius: 0)` 在 SwiftUI 里仍可能触发离屏渲染，
@@ -273,6 +325,9 @@ extension DockThemeTokens {
         zoneDivider: .white(0.18),
 
         iconShadow: DockShadow(tint: .black(0.22), radius: 3, y: 1),
+        // 深色继续用纯 opacity 淡化：往黑底板上褪 = 变暗，本来就成立（冻结）。
+        iconDimHidden: .legacyHidden,
+        iconDimNotRunning: .legacyNotRunning,
 
         shelfPlateFill: DockTintPair(normal: .white(0.12), emphasized: .white(0.28)),
         shelfPlateRim: DockTintPair(normal: .white(0.18), emphasized: .white(0.4)),
@@ -346,6 +401,13 @@ extension DockThemeTokens {
         zoneDivider: .black(0.12),
 
         iconShadow: DockShadow(tint: .black(0.12), radius: 2, y: 1),
+        // 图标淡化：把「变淡」从褪透明改成去饱和 + 略压暗，图标保持「实」，不糊成一片灰。
+        // 两档的区分也从「0.45 vs 0.35 的透明度差」换成「留色 vs 全灰」——
+        // 隐藏 = 留一点品牌色（在，只是没露面），退出 = 全灰（不在了），一眼能分。
+        // **owner 2026-07-30 实机验收通过，这就是默认观感**（曾短暂挂在 `DOCK_ICON_DIM=1`
+        // 后面，验收后开关即删——不再是候选，和下面那三个仍未验收的效果不是一回事）。
+        iconDimHidden: DockIconDim(opacity: 0.80, grayscale: 0.45, brightness: -0.02),
+        iconDimNotRunning: DockIconDim(opacity: 0.60, grayscale: 1.00, brightness: -0.05),
 
         shelfPlateFill: DockTintPair(normal: .black(0.05), emphasized: .black(0.12)),
         shelfPlateRim: DockTintPair(normal: .black(0.1), emphasized: .black(0.28)),

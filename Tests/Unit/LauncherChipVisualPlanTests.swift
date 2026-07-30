@@ -7,7 +7,7 @@ final class LauncherChipVisualPlanTests: XCTestCase {
     func testNotRunningIsGrayNoDot() {
         for dims in [true, false] {
             let v = LauncherChipVisualPlan.visual(isRunning: false, isHidden: false, dimsWhenHidden: dims)
-            XCTAssertEqual(v.opacity, 0.35, accuracy: 0.0001)
+            XCTAssertEqual(v.dim, .notRunning)
             XCTAssertFalse(v.showsRunningDot)
         }
     }
@@ -16,7 +16,7 @@ final class LauncherChipVisualPlanTests: XCTestCase {
     func testRunningVisibleIsBrightWithDot() {
         for dims in [true, false] {
             let v = LauncherChipVisualPlan.visual(isRunning: true, isHidden: false, dimsWhenHidden: dims)
-            XCTAssertEqual(v.opacity, 1.0, accuracy: 0.0001)
+            XCTAssertEqual(v.dim, .bright)
             XCTAssertTrue(v.showsRunningDot)
         }
     }
@@ -24,14 +24,14 @@ final class LauncherChipVisualPlanTests: XCTestCase {
     // 消息区运行隐藏（dimsWhenHidden=false）：保持全亮、有点（随时可点）。
     func testMessagingRunningHiddenStaysBright() {
         let v = LauncherChipVisualPlan.visual(isRunning: true, isHidden: true, dimsWhenHidden: false)
-        XCTAssertEqual(v.opacity, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(v.dim, .bright)
         XCTAssertTrue(v.showsRunningDot)
     }
 
-    // 默认区（抽屉 / 普通 kept）运行隐藏（dimsWhenHidden=true）：降级 0.45、有点。
+    // 默认区（抽屉 / 普通 kept）运行隐藏（dimsWhenHidden=true）：降级到 hidden 档、有点。
     func testDefaultRunningHiddenDims() {
         let v = LauncherChipVisualPlan.visual(isRunning: true, isHidden: true, dimsWhenHidden: true)
-        XCTAssertEqual(v.opacity, 0.45, accuracy: 0.0001)
+        XCTAssertEqual(v.dim, .hidden)
         XCTAssertTrue(v.showsRunningDot)
     }
 }
