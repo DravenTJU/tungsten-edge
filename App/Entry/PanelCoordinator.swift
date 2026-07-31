@@ -96,6 +96,8 @@ final class PanelCoordinator: NSObject {
     /// 文件夹 chip / 中转格右键「添加文件夹…」入口（AppDelegate 注入，NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
     private var dockPanel: NSPanel?
+    /// 主任务条的 SwiftUI 承载器。窗口 frame 归 PanelCoordinator，内容尺寸只从这里读取。
+    private var dockContentHost: ManualPanelHost?
     private var drawerPanel: NSPanel?
     private var capsulePanel: NSPanel?
     /// 抽屉真正承载 SwiftUI 的 hosting view（抽屉 contentView 是普通 NSView 容器,故 fittingSize 要读这个）。
@@ -241,6 +243,7 @@ final class PanelCoordinator: NSObject {
         setupDragController()
         setupDockPanel()
         setupCapsulePanel()
+        presentInitialPanels()
         subscribeSnapshotWidth()
         subscribeDrawerStoreWidth()
         subscribeMessagingStoreWidth()
@@ -300,7 +303,8 @@ final class PanelCoordinator: NSObject {
         dismissWindowTitleTooltip()
         cancelHoverSwitch()
 
-        // 换掉 contentView 触发 SwiftUI 拆树；两个 host 是独立强引用，得单独置空。
+        // 换掉 contentView 触发 SwiftUI 拆树；单独强持有的 host 要先置空。
+        dockContentHost = nil
         drawerContentHost = nil
         folderPopupContentHost = nil
         for panel in [dockPanel, capsulePanel, drawerPanel, folderPopupPanel, windowTitleTooltipPanel] {
@@ -1008,9 +1012,9 @@ final class PanelCoordinator: NSObject {
         let hosting = NSHostingView(rootView: WindowTitleTooltipView(title: request.title))
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView = hosting
+        let contentHost = ManualPanelHost(contentView: hosting, in: panel)
         panel.layoutIfNeeded()
-        let size = hosting.fittingSize
+        let size = contentHost.fittingSize
         guard size.width > 0, size.height > 0 else { return }
 
         let anchorPoint = CGPoint(x: request.anchorVisibleRect.midX, y: request.anchorVisibleRect.midY)
@@ -1199,8 +1203,7 @@ final class PanelCoordinator: NSObject {
         // Prevent NSHostingView from adding its own opaque background over the blur
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
-        panel.contentView = hosting
-        panel.orderFrontRegardless()
+        dockContentHost = ManualPanelHost(contentView: hosting, in: panel)
         dockPanel = panel
     }
 
@@ -1243,9 +1246,19 @@ final class PanelCoordinator: NSObject {
         )
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
-        panel.contentView = hosting
-        panel.orderFrontRegardless()
+        _ = ManualPanelHost(contentView: hosting, in: panel)
         capsulePanel = panel
+    }
+
+    /// 两个常驻面板先在隐藏态完成 SwiftUI 布局和目标 frame 提交，再一起显示。
+    /// 这样首个可见 frame 已经是业务几何，不给 HostingView 的自然尺寸留下窗口级中间态。
+    private func presentInitialPanels() {
+        guard let dock = dockPanel, let capsule = capsulePanel else { return }
+        dock.layoutIfNeeded()
+        capsule.layoutIfNeeded()
+        relayout(animated: false)
+        dock.orderFrontRegardless()
+        capsule.orderFrontRegardless()
     }
 
     // MARK: - Content Width via fittingSize
@@ -1354,6 +1367,7 @@ final class PanelCoordinator: NSObject {
             }
         dockSizeSubscription = settingsStore.$dockSize
             .removeDuplicates()
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.beginDockSizeChange() }
     }
@@ -1444,7 +1458,7 @@ final class PanelCoordinator: NSObject {
 
     /// 量当前内容宽度后布局（内容变化的统一入口）。
     private func relayout(animated: Bool) {
-        guard let panel = dockPanel, let hosting = panel.contentView else { return }
+        guard let panel = dockPanel, let hosting = dockContentHost else { return }
         let measured = hosting.fittingSize.width - 2 * Self.shadowPadding
         lastDesiredWidth = measured
         // 跨面板转正进行中 → 任务条宽度钳在拖动前的值（窗口卡溢出/留空而非改变面板宽度，owner 2026-06-22）；

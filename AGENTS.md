@@ -187,7 +187,8 @@
 - SwiftUI shadow margin is `shadowPadding = 20pt`; floating panel shadows must fit within it. It is the one metric that **never scales with `DockSize`** — the shadow tokens are frozen (dark already overruns the budget by 3pt), so scaling the margin would move an already-signed-off look.
 - Coordinate math on `dockFrame` / `capsuleFrame` subtracts `shadowPadding` to reach visual content, and `fittingSize.width` subtracts `2 * shadowPadding`.
 - Relayout is target-frame-driven. Do not position one panel from another panel's live `.frame` during animation.
-- Drawer window content must be a plain `NSView` container with the `NSHostingView` pinned inside.
+- `PanelCoordinator` is the sole frame owner for every panel it creates. Never install an `NSHostingView` as one of those panels' direct `contentView`: use `ManualPanelHost` or the existing equivalent plain-`NSView` container, retain the hosted content separately when `fittingSize` is needed, and clear retained hosts during suspension. A direct hosting content view calls `updateAnimatedWindowSize`; competing with `PanelCoordinator.setFrame` caused the 2026-06-22 drawer dip and the 2026-07-31 launch-time Update Constraints recursion / SIGABRT.
+- Dock startup is one first-frame transaction: create dock and capsule hidden, synchronously lay out and measure the retained dock host, compute and apply both target frames, then order them front together. Later content-driven `fittingSize` reads still wait for SwiftUI's next main-loop turn; the `$dockSize` subscription must drop its initial value because setup has already consumed the persisted tier.
 - Placement panels use `NonConstrainingPanel`, not plain `NSPanel`.
 - Bottom-anchored panels use `screen.frame` for bottom Y and horizontal clamp; reserve `visibleFrame` for drawer top/menu-bar height cap.
 - Hover screen switching uses dwell, not instant edge-trigger.
