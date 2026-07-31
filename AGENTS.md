@@ -79,6 +79,7 @@
 - Keep kill switch `DOCK_SKYLIGHT_FOCUS=0`.
 - Optimistic state predicts **status only** for show/hide style actions and clears on snapshot confirmation or timeout. Do not re-add predicted `isAppFrontmost`.
 - The chip tap pulse is view-local acknowledgment only. It must not feed planner state or any frontmost decision.
+- `IntentFeedbackState.update` must write **only when the phase actually changes**. `reconcile` re-runs its verdict on already-settled entries every round, so an unconditional write re-stamps `updatedAt` to now forever — the entry never reaches its 1.5s retention and the dictionary never empties. The old always-on 0.5s timer hid this completely; with the timer running on demand (`FeedbackTickPolicy`, unit-tested) it means the timer can never stop and the whole optimization silently does nothing. But freeze **same-phase re-stamping only — never skip all terminal entries**: `AccessibilitySource.minimize` reads `kAXMinimizedAttribute` back immediately after pressing the button, and minimize is animated, so a successful action is routinely recorded as failure and must be upgraded by a later snapshot. The `failure → success` path is load-bearing (`FeedbackTickPolicyTests` locks both halves). Related fact, so nobody re-derives it: `feedbackEntriesByWindowID`'s only consumer is the unwired `ContentView` debug console — the strip never reads it, which is why its unconditional 2Hz publish was pure waste (idle CPU 2.60% → 1.40% once it stopped invalidating the whole taskbar twice a second).
 
 ## Window Lift Avoidance (最大化避让)
 

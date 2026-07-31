@@ -199,6 +199,7 @@
 		A00000000000000000009E16 /* ProcessLiveness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E03 /* ProcessLiveness.swift */; };
 		A00000000000000000009E17 /* ProcessLiveness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E03 /* ProcessLiveness.swift */; };
 		A00000000000000000009E18 /* ProcessLivenessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E04 /* ProcessLivenessTests.swift */; };
+		A00000000000000000000B91 /* FeedbackTickPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000B90 /* FeedbackTickPolicyTests.swift */; };
 		A00000000000000000009E19 /* ScanAdmissionDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E05 /* ScanAdmissionDecision.swift */; };
 		A00000000000000000009E1C /* BuildProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E07 /* BuildProvenance.swift */; };
 		A00000000000000000009E1D /* BuildProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009E07 /* BuildProvenance.swift */; };
@@ -234,6 +235,7 @@
 		A00000000000000000009E02 /* AXWindowReaderResultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXWindowReaderResultTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E03 /* ProcessLiveness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLiveness.swift; sourceTree = "<group>"; };
 		A00000000000000000009E04 /* ProcessLivenessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessLivenessTests.swift; sourceTree = "<group>"; };
+		A00000000000000000000B90 /* FeedbackTickPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackTickPolicyTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E05 /* ScanAdmissionDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAdmissionDecision.swift; sourceTree = "<group>"; };
 		A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAdmissionDecisionTests.swift; sourceTree = "<group>"; };
 		A00000000000000000009E07 /* BuildProvenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildProvenance.swift; sourceTree = "<group>"; };
@@ -768,6 +770,7 @@
 				A00000000000000000009E01 /* WindowInventoryAnomalyLogTests.swift */,
 				A00000000000000000009E02 /* AXWindowReaderResultTests.swift */,
 				A00000000000000000009E04 /* ProcessLivenessTests.swift */,
+				A00000000000000000000B90 /* FeedbackTickPolicyTests.swift */,
 				A00000000000000000009E06 /* ScanAdmissionDecisionTests.swift */,
 				A00000000000000000009E08 /* BuildProvenanceTests.swift */,
 				A00000000000000000009A20 /* WindowLiftAvoidanceTests.swift */,
@@ -1114,6 +1117,7 @@
 					A00000000000000000009E15 /* AXWindowMatchPolicy.swift in Sources */,
 					A00000000000000000009E17 /* ProcessLiveness.swift in Sources */,
 					A00000000000000000009E18 /* ProcessLivenessTests.swift in Sources */,
+					A00000000000000000000B91 /* FeedbackTickPolicyTests.swift in Sources */,
 					A00000000000000000009E1A /* ScanAdmissionDecision.swift in Sources */,
 					A00000000000000000009E1B /* ScanAdmissionDecisionTests.swift in Sources */,
 					A00000000000000000009E1D /* BuildProvenance.swift in Sources */,

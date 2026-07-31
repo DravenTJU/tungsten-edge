@@ -44,11 +44,14 @@ final class AppRuntime: ObservableObject {
                 self?.handleSnapshotUpdate(newSnapshot)
             }
 
-        feedbackTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.tickFeedback() }
-        }
-        feedbackTimer?.tolerance = 0.05
+        // 计时器不在这里起：启动瞬间反馈态和乐观态都是空的，没有任何要对账的东西。
+        // 它的存亡统一由 updateFeedbackTimer() 决定（见该方法注释）。
+        updateFeedbackTimer()
     }
+
+    /// runtime 是否在跑。计时器的重启门就看它——不新增平行的 bool 标志，
+    /// 免得两个状态各说各话（`stop()` 会把 subscription 置 nil）。
+    private var isRunning: Bool { snapshotSubscription != nil }
 
     func stop() {
         tracker.stop()
@@ -111,7 +114,8 @@ final class AppRuntime: ObservableObject {
 
         applyOptimisticState(for: request)
         intentPipeline.registerPending(intent: intent, request: request)
-        feedbackEntriesByWindowID = intentPipeline.feedbackState.entriesByWindowID
+        publishFeedbackEntries()
+        updateFeedbackTimer()
 
         let executor = actionExecutor
         let capturedSnapshot = snapshot
@@ -120,7 +124,10 @@ final class AppRuntime: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.intentPipeline.registerExecutionResult(intent: intent, request: request, success: success)
-                self.feedbackEntriesByWindowID = self.intentPipeline.feedbackState.entriesByWindowID
+                self.publishFeedbackEntries()
+                // 这个回调可能在 stop() 之后才回到主线程；updateFeedbackTimer 里的
+                // isRunning 门保证它不会把已经停掉的计时器复活。
+                self.updateFeedbackTimer()
             }
         }
     }
@@ -160,8 +167,9 @@ final class AppRuntime: ObservableObject {
         reconcileLaunchingStates(with: newSnapshot)
         hasRequiredPermissions = permissionService.hasRequiredPermissions()
         intentPipeline.reconcile(with: newSnapshot)
-        feedbackEntriesByWindowID = intentPipeline.feedbackState.entriesByWindowID
+        publishFeedbackEntries()
         reconcileOptimisticStates()
+        updateFeedbackTimer()
         if startedAt != nil {
             let ms = Int(Date().timeIntervalSince(startedAt!) * 1000)
             observationStatusText = hasRequiredPermissions ? "实时 \(ms)ms" : "仅窗口列表"
@@ -171,8 +179,48 @@ final class AppRuntime: ObservableObject {
 
     private func tickFeedback() {
         intentPipeline.reconcile(with: snapshot)
-        feedbackEntriesByWindowID = intentPipeline.feedbackState.entriesByWindowID
+        publishFeedbackEntries()
         reconcileOptimisticStates()
+        updateFeedbackTimer()
+    }
+
+    /// 把 pipeline 的反馈态投影到 `@Published`——**先比较再写**。
+    ///
+    /// `@Published` 不做相等性判断，`willSet` 一律通知。原先这里是无条件赋值，于是
+    /// 空闲期每 0.5s 就通知一次 `AppRuntime` 变了，所有把它当 `@EnvironmentObject` 的
+    /// 视图（整条任务条 + 抽屉）跟着重算一遍，哪怕字典自始至终是空的。
+    /// 同文件的 `reconcileOptimisticStates` 和 `BadgeStore.readOnce` 早就是「先比较再写」，
+    /// 只有这条漏了。
+    private func publishFeedbackEntries() {
+        let next = intentPipeline.feedbackState.entriesByWindowID
+        if next != feedbackEntriesByWindowID {
+            feedbackEntriesByWindowID = next
+        }
+    }
+
+    /// 反馈计时器按需运行：只有反馈态或乐观态非空时才需要周期性对账（pending 超时转
+    /// failure、结果展示到期清除、乐观态超时静默回弹）。两者都空 = 没有任何会随时间
+    /// 变化的东西，一次空转都不该有。
+    ///
+    /// 时间语义完全不变：仍是 0.5s 周期 + 0.05s tolerance，4s pending / 1.5s 结果展示
+    /// 的 retention 也没动——变的只是「没事做的时候不转」。
+    private func updateFeedbackTimer() {
+        let shouldTick = FeedbackTickPolicy.shouldTick(
+            isRunning: isRunning,
+            hasFeedbackEntries: !intentPipeline.feedbackState.entriesByWindowID.isEmpty,
+            hasOptimisticStates: !optimisticStatesByWindowID.isEmpty
+        )
+        guard shouldTick else {
+            feedbackTimer?.invalidate()
+            feedbackTimer = nil
+            return
+        }
+        guard feedbackTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tickFeedback() }
+        }
+        timer.tolerance = 0.05
+        feedbackTimer = timer
     }
 
     // MARK: - Optimistic Overlay
