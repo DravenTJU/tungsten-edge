@@ -367,6 +367,15 @@ final class DragController: ObservableObject {
         let host = carrierFactory(self)
         host.wantsLayer = true
         host.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
+        // 这里**故意**让 NSHostingView 直接当 contentView，是 AGENTS「面板不得用 hosting 当
+        // contentView」那条护栏的**已评估例外**——别看到这行就顺手改成 ManualPanelHost：
+        //   1. 载体不是 PanelCoordinator 创建的面板，那条护栏管的是"协调器独占 frame 所有权"，
+        //      而载体的 frame 归本类，只在创建时写死成 screen.frame，之后再不从内容尺寸推导；
+        //   2. 存活期只有一次拖动，换档事务（beginDockSizeChange）会先取消拖动再改几何，
+        //      两者碰不上；
+        //   3. 至今没观察到尺寸打架（拖动一直正常）。
+        // 但它确实是这个模式的第 4 个暴露点。**万一以后出现"起拖瞬间载体尺寸/位置异常"，
+        // 第一个怀疑对象就是这里**——届时套 ManualPanelHost 即可，改法与 dock/胶囊/tooltip 相同。
         panel.contentView = host
         return panel
     }

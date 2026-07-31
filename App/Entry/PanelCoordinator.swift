@@ -100,6 +100,10 @@ final class PanelCoordinator: NSObject {
     private var dockContentHost: ManualPanelHost?
     private var drawerPanel: NSPanel?
     private var capsulePanel: NSPanel?
+    /// 胶囊的 SwiftUI 承载器。胶囊宽高固定（`capsuleWidth`），当前没人读它的 `fittingSize`——
+    /// 但仍然**强持有**而不是 `_ =` 丢弃：丢弃后只靠视图层级间接留住容器，哪天给
+    /// `ManualPanelHost` 加了 `deinit` 清理，胶囊会静默失效。
+    private var capsuleContentHost: ManualPanelHost?
     /// 抽屉真正承载 SwiftUI 的 hosting view（抽屉 contentView 是普通 NSView 容器,故 fittingSize 要读这个）。
     private var drawerContentHost: NSView?
     /// 跨面板拖动（拖卡进抽屉 路线 C）的唯一权威：载体面板 + 鼠标监视器 + 落点收尾都在它里面。
@@ -305,6 +309,7 @@ final class PanelCoordinator: NSObject {
 
         // 换掉 contentView 触发 SwiftUI 拆树；单独强持有的 host 要先置空。
         dockContentHost = nil
+        capsuleContentHost = nil
         drawerContentHost = nil
         folderPopupContentHost = nil
         for panel in [dockPanel, capsulePanel, drawerPanel, folderPopupPanel, windowTitleTooltipPanel] {
@@ -1246,7 +1251,7 @@ final class PanelCoordinator: NSObject {
         )
         hosting.wantsLayer = true
         hosting.layer?.backgroundColor = NSColor(white: 1.0, alpha: 0.0).cgColor
-        _ = ManualPanelHost(contentView: hosting, in: panel)
+        capsuleContentHost = ManualPanelHost(contentView: hosting, in: panel)
         capsulePanel = panel
     }
 
