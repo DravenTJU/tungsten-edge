@@ -18,3 +18,7 @@ project-analysis/
 default.profraw
 output/
 tmp/
+
+# Claude Code 的本地配置与自动装入的技能（不是本项目的东西，别进公开仓库）
+# 注意：.codex/ 要跟踪——收尾 skill 在里面
+.claude/

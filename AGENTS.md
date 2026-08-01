@@ -5,14 +5,14 @@
 > **What this app is**: Tungsten Edge 钨极 is a window-oriented bottom taskbar for macOS, designed to replace the system Dock. Multi-window apps normally split into separate window chips, with deliberate app-level entries for Finder, messaging apps, kept apps (user-chosen「在程序坞中保留」), and compatibility fallbacks. It also includes a drawer for stashed apps and a pinned-folder zone. Minimum deployment target: macOS 12.
 >
 > Progress and backlog live in the owner's Obsidian vault:
-> `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/`, entry note (homepage) `00 当前进度.md` — the checkpoint map with clickable todo nodes; todo cards live in `03 待办与想法/待办/`.
+> `/Users/caye/Documents/Obsidian Vault/Projects/macos-dock-cc-v2/`, in the single-file board `进度看板.html` (open it with a browser — content lives in its `#board-data` JSON block). The old `00 当前进度.md` and the 28 markdown todo cards were archived 2026-08-01; do not write to them. The owner's only hand-written file is `03 待办与想法/灵感速记.md`.
 > **Product decisions and their rationale are NOT in the vault** — they moved to `Docs/27-product-decisions.md` on 2026-08-01, and workflow pitfalls to `Docs/28-process-pitfalls.md`. The owner does not read those; agents own and update them directly.
 >
 > This file is only for engineering guardrails that should not be rediscovered or reverted. Active repo-local references live in `Docs/`; historical notes live in `Docs/Archive/`.
 
 ## Source Of Truth
 
-- Progress / backlog: Obsidian entry note (`00 当前进度.md`) and the todo cards under it. Read only when the owner asks.
+- Progress / backlog: the Obsidian-vault board `进度看板.html` (single file, `#board-data` JSON block). Read only when the owner asks; edit only the JSON, and snapshot to `Archive/看板快照/` first — the vault is not under git.
 - Product decisions — the *why* behind a rule and when it may be revisited: `Docs/27-product-decisions.md`. This file states the constraint; that one states the reasoning and the reversal history. Do not duplicate a conclusion into both — and do not write product rationale back into the vault.
 - Pitfalls in *how we work* (branching, packaging, acceptance discipline, Debug-vs-Release, performance-baseline warm-up): `Docs/28-process-pitfalls.md`. Read it before a release, a performance comparison, or an acceptance pass — several entries there exist because a measurement or a verdict was already wrong once.
 - Engineering hard constraints: this file.
