@@ -50,7 +50,9 @@ struct DragCarrierView: View {
                         .dockShadow(theme.carrierShadow)
                 }
             case .drawerIcon:
-                DrawerDragIconView(bundleID: p.bundleID)
+                // 抽屉图标本轮有意不跟任务条档位缩放（2026-07-30 owner 定的范围外项），
+                // 恒 0.7 与抽屉里的 LauncherChip 同尺寸——显式写出来，不靠默认值。
+                DrawerDragIconView(bundleID: p.bundleID, scale: 0.7)
                     .dockShadow(theme.carrierShadow)
             case .keptAppIcon:
                 // 保留应用图标住在任务条里，载体跟任务条档位走（不是抽屉的 0.7）。
@@ -84,7 +86,9 @@ struct DragCarrierView: View {
 /// 尺寸与抽屉里 `LauncherChip`（scale 0.7）一致，免得起拖瞬间变大小。
 struct DrawerDragIconView: View {
     let bundleID: String
-    var scale: CGFloat = 0.7
+    /// 档位系数（抽屉恒定 0.7，任务条内传 `DockSize.scale`）。**故意不给默认值**——
+    /// 漏传必须是编译错误，见 AGENTS《Taskbar Size Tiers》。
+    let scale: CGFloat
 
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme

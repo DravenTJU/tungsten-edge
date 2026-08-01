@@ -9,7 +9,8 @@ struct ShelfChip: View {
     let itemCount: Int
     let isDropTargeted: Bool
     /// 任务条尺寸档位的缩放系数。中档 = 1.0，此时所有尺寸与历史字面值逐像素相同。
-    var scale: CGFloat = 1.0
+    /// **故意不给默认值**——漏传必须是编译错误，见 AGENTS《Taskbar Size Tiers》。
+    let scale: CGFloat
     let onTap: () -> Void
     let onClear: () -> Void
     let onAddFolder: () -> Void

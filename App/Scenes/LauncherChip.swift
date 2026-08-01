@@ -16,7 +16,9 @@ struct LauncherChip: View {
     /// Runtime-owned launch session state. The chip only renders this state; it does
     /// not infer readiness from process state or own a second launch timeout.
     let isLaunching: Bool
-    var scale: CGFloat = 0.7
+    /// 档位系数（条内传 `DockSize.scale`，抽屉恒定 0.7）。**故意不给默认值**——漏传必须是编译错误，
+    /// 见 AGENTS《Taskbar Size Tiers》。
+    let scale: CGFloat
     /// 只控制「运行但隐藏」要不要降级变暗（抽屉 / 普通 kept 传 true → 0.45；消息区传 false → 保持全亮）。
     /// **未运行恒定灰显（0.35）与本标志无关**——消息区退出态因此也会变灰，与所有退出应用统一
     /// （owner 2026-07-19，反转了旧的「消息图标常亮、随时可点」决策）。决策见 `LauncherChipVisualPlan`。

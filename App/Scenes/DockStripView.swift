@@ -914,7 +914,7 @@ struct DockStripView: View {
                 if let main {
                     // 运行中有主窗 → app chip 即主窗卡：标准 toggle + 完整窗口菜单。iconOnly 保持消息区
                     // 定宽图标行，运行点标记它是 app 入口。
-                    ChipView(item: main, iconOnly: true, showRunningDot: true)
+                    ChipView(item: main, scale: dockScale, iconOnly: true, showRunningDot: true)
                 } else {
                     // 无主窗两态：运行中（关窗/常驻）→ 亮图标、点击 reopen 主窗；未运行 → 灰图标、点击启动。
                     // 统一模型下消息应用也有「在程序坞中保留」勾选（与「取消标记」并存），由纯投影决定。
@@ -1116,7 +1116,9 @@ struct ChipView: View {
     @Environment(\.colorScheme) private var colorScheme
     private var theme: DockThemeTokens { .resolve(colorScheme) }
     let item: StripItem
-    var scale: CGFloat = 1.0
+    /// 档位系数（`DockSize.scale`）。**故意不给默认值**：消息区曾因为它有默认值 1.0 而静默漏传，
+    /// 在非中档下渲染成中档尺寸（见 AGENTS《Taskbar Size Tiers》）。漏传必须是编译错误。
+    let scale: CGFloat
     var iconOnly: Bool = false
     var showRunningDot: Bool = false
     var drawerTap: (() -> Void)? = nil

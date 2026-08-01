@@ -20,7 +20,8 @@ struct PinnedFolderChip: View {
     let onSetSortOrder: (FolderSortOrder) -> Void
     var isDropTarget = false
     /// 任务条尺寸档位的缩放系数。中档 = 1.0，此时所有尺寸与历史字面值逐像素相同。
-    var scale: CGFloat = 1.0
+    /// **故意不给默认值**——漏传必须是编译错误，见 AGENTS《Taskbar Size Tiers》。
+    let scale: CGFloat
 
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
