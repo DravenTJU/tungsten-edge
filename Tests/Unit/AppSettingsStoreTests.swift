@@ -140,30 +140,6 @@ final class AppSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeDockCommandPathNeverWritesAutohideDelay() throws {
-        var ranCommands: [(String, [String])] = []
-        let service = NativeDockPreferencesService(
-            sandbox: SandboxEnvironment(isSandboxed: false),
-            runner: { executable, arguments in ranCommands.append((executable, arguments)) },
-            autohideReader: { NativeDockAutohideState(enabled: false, delay: 0.75) }
-        )
-
-        try service.setAutohideEnabled(true)
-        try service.setAutohideEnabled(false)
-
-        XCTAssertEqual(ranCommands.map(\.0), [
-            "/usr/bin/defaults", "/usr/bin/killall",
-            "/usr/bin/defaults", "/usr/bin/killall",
-        ])
-        XCTAssertEqual(ranCommands[0].1, ["write", "com.apple.dock", "autohide", "-bool", "true"])
-        XCTAssertEqual(ranCommands[2].1, ["write", "com.apple.dock", "autohide", "-bool", "false"])
-        XCTAssertFalse(
-            ranCommands.contains { $0.1.contains("autohide-delay") },
-            "菜单显隐命令必须严格等价 ⌥⌘D：碰了 autohide-delay 就等于顺手改掉用户的唤醒延迟"
-        )
-    }
-
-    @MainActor
     func testNativeDockPreferenceServiceDoesNotRunWhenSandboxed() {
         var didRun = false
         let service = NativeDockPreferencesService(sandbox: SandboxEnvironment(isSandboxed: true)) { _, _ in
@@ -171,7 +147,6 @@ final class AppSettingsStoreTests: XCTestCase {
         }
 
         XCTAssertFalse(service.isAvailable)
-        XCTAssertThrowsError(try service.setAutohideEnabled(true))
         XCTAssertThrowsError(try service.apply(delay: 0.5))
         XCTAssertFalse(didRun)
     }
@@ -530,79 +505,85 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(view.accessibilityValue() as? String, "0.5s")
     }
 
-    func testNativeToggleTitlePrefersLiveAutohideStateOverStore() {
-        // live 可读：以 live 为准，存值被无视。
+    @MainActor
+    func testNativeDockApplyRowIsAButtonWiredToApply() {
+        let row = NativeDockApplyRowView()
+        var fired = 0
+        row.onApply = { fired += 1 }
+
+        // 必须是真按钮，不是普通菜单文字行：菜单行和邻居视觉权重相同，用户刚拖完滑块
+        // 视线还在滑块上，错过它就变成「以为设好了其实没生效」。
+        guard let button = row.subviews.compactMap({ $0 as? MenuActionButton }).first else {
+            return XCTFail("确认行里必须有一个真按钮")
+        }
+
+        // 菜单里的自定义 view 不在 key window 里，不重写 acceptsFirstMouse 第一次点击会被吞，
+        // 用户会以为按钮坏了。这个重写看着像冗余，删掉就复现。
+        XCTAssertTrue(button.acceptsFirstMouse(for: nil))
+
+        // 子视图（文字 / 图标）不许截走鼠标，否则按钮中间一块点不动。
+        let center = NSPoint(x: button.frame.midX, y: button.frame.midY)
+        XCTAssertIdentical(button.hitTest(center), button)
+
+        button.performClickForTesting()
+        XCTAssertEqual(fired, 1, "按钮必须接到 onApply，否则确认整个是死的")
+    }
+
+    @MainActor
+    func testNativeDockApplyRowCarriesTargetTierForVoiceOver() {
+        let row = NativeDockApplyRowView()
+        row.updateTarget(
+            description: AutoHideToggleMenuModel.nativeApplyTitle(draft: AppSettingsStore.neverWakeDelay)
+        )
+        // 按钮标题恒为「应用」，档位只走 accessibility：VoiceOver 用户看不到滑块位置。
+        XCTAssertEqual(row.accessibilityLabel(), "应用「不唤醒」（Dock 会重启一下）")
+    }
+
+    func testNativeApplyRowAppearsOnlyWhenDraftDiffersFromAppliedTier() {
+        // 同一档位（含浮点表示误差）不该浮出确认行：没有要应用的东西。
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldShowNativeApply(draft: 1.0, applied: 1.0))
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldShowNativeApply(
+            draft: AppSettingsStore.neverHideDelay,
+            applied: AppSettingsStore.neverHideDelay
+        ))
+        // 比的是整数档位而非浮点：滑块只能停在档位上，档间的值归到同一档就是「没变」。
+        XCTAssertFalse(AutoHideToggleMenuModel.shouldShowNativeApply(draft: 1.0 + 1e-12, applied: 1.0))
+
+        XCTAssertTrue(AutoHideToggleMenuModel.shouldShowNativeApply(
+            draft: AppSettingsStore.neverWakeDelay,
+            applied: AppSettingsStore.neverHideDelay
+        ))
+        XCTAssertTrue(AutoHideToggleMenuModel.shouldShowNativeApply(draft: 0.5, applied: 1.0))
+    }
+
+    func testNativeApplyTitleNamesTheTargetTier() {
         XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeTitle(liveAutohide: true, storeDelay: AppSettingsStore.neverHideDelay),
-            "显示系统 Dock"
+            AutoHideToggleMenuModel.nativeApplyTitle(draft: AppSettingsStore.neverWakeDelay),
+            "应用「不唤醒」（Dock 会重启一下）"
         )
         XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeTitle(liveAutohide: false, storeDelay: 999),
-            "隐藏系统 Dock"
-        )
-        // live 读不到：回退存值推导。
-        XCTAssertEqual(AutoHideToggleMenuModel.nativeTitle(liveAutohide: nil, storeDelay: 0.5), "显示系统 Dock")
-        XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeTitle(liveAutohide: nil, storeDelay: AppSettingsStore.neverHideDelay),
-            "隐藏系统 Dock"
+            AutoHideToggleMenuModel.nativeApplyTitle(draft: AppSettingsStore.neverHideDelay),
+            "应用「常驻」（Dock 会重启一下）"
         )
         XCTAssertEqual(
-            AutoHideToggleMenuModel.nativeTitle(liveAutohide: nil, storeDelay: AppSettingsStore.neverWakeDelay),
-            "显示系统 Dock",
-            "不唤醒也是自动隐藏的一档，命令方向仍是「显示」"
+            AutoHideToggleMenuModel.nativeApplyTitle(draft: 1.0),
+            "应用「1.0s」（Dock 会重启一下）"
         )
     }
 
-    func testNativeToggleTargetDirectionComesFromEffectiveAutohideState() {
-        XCTAssertFalse(AutoHideToggleMenuModel.nativeToggleTargetEnabled(
-            liveAutohide: true,
-            storeDelay: AppSettingsStore.neverHideDelay
-        ))
-        XCTAssertTrue(AutoHideToggleMenuModel.nativeToggleTargetEnabled(liveAutohide: false, storeDelay: 1.0))
-        // live 读不到 → 按存值方向翻。
-        XCTAssertFalse(AutoHideToggleMenuModel.nativeToggleTargetEnabled(liveAutohide: nil, storeDelay: 999))
-        XCTAssertTrue(AutoHideToggleMenuModel.nativeToggleTargetEnabled(
-            liveAutohide: nil,
-            storeDelay: AppSettingsStore.neverHideDelay
-        ))
-    }
-
-    func testNativeDockMenuActionSkipsOnlyTheExactSystemShortcutKeyDown() {
-        // 菜单开着按 ⌥⌘D：macOS 已经处理过一次，菜单 action 必须跳过，否则等于连按两下。
-        XCTAssertTrue(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: .keyDown,
-            keyCode: UInt16(GlobalHotKeyShortcut.nativeDockAutoHide.keyCode),
-            modifierFlags: [.option, .command],
-            isSystemShortcutAvailable: true
-        ))
-        // 鼠标点击照常执行。
-        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: .leftMouseUp,
-            keyCode: nil,
-            modifierFlags: [],
-            isSystemShortcutAvailable: true
-        ))
-        // 修饰键不完全一致 → 不是那条系统快捷键。
-        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: .keyDown,
-            keyCode: UInt16(GlobalHotKeyShortcut.nativeDockAutoHide.keyCode),
-            modifierFlags: [.option, .shift, .command],
-            isSystemShortcutAvailable: true
-        ))
-        // 别的键。
-        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: .keyDown,
-            keyCode: 0,
-            modifierFlags: [.option, .command],
-            isSystemShortcutAvailable: true
-        ))
-        // 系统快捷键不可用时不跳过，否则命令会完全点不动。
-        XCTAssertFalse(AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: .keyDown,
-            keyCode: UInt16(GlobalHotKeyShortcut.nativeDockAutoHide.keyCode),
-            modifierFlags: [.option, .command],
-            isSystemShortcutAvailable: false
-        ))
+    func testDelayDisplayNameIsSharedBySliderAndApplyRow() {
+        // 滑块本体与确认行必须同一口径，否则确认行说的档位和滑块显示的不是一回事。
+        XCTAssertEqual(AutoHideToggleMenuModel.delayDisplayName(sliderIndex: 0), "常驻")
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.delayDisplayName(sliderIndex: AppSettingsStore.sliderIndexMax),
+            "不唤醒"
+        )
+        XCTAssertEqual(
+            AutoHideToggleMenuModel.delayDisplayName(
+                sliderIndex: AppSettingsStore.sliderIndexFromDelay(1.0)
+            ),
+            "1.0s"
+        )
     }
 
     func testResolvedStoreDelayCoversWriteAndReadQuadrants() {
@@ -662,8 +643,8 @@ final class AppSettingsStoreTests: XCTestCase {
         let first = tracker.consume()
         XCTAssertEqual(first?.previous, 0.5)
         XCTAssertEqual(first?.target, 1.5)
-        // 松手、debounce timer、菜单关闭三个触发源都会调 consume，只有第一个拿得到值，
-        // 否则每多一次就多一遍 defaults 写入 + killall Dock。
+        // 确认行提交与「打开菜单时作废草稿」都走 consume，只有第一个拿得到值：
+        // 否则确认过的值会被随后的作废逻辑又拨回旧值，或者多写一遍 defaults + killall Dock。
         XCTAssertNil(tracker.consume())
         XCTAssertNil(tracker.consume())
     }
@@ -698,19 +679,13 @@ final class AppSettingsStoreTests: XCTestCase {
         let hidden = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: false, shortcut: shortcut)
         XCTAssertEqual(hidden.key, "")
         XCTAssertEqual(hidden.mask, [])
+    }
 
-        // 系统 Dock 行传 true：⌥⌘D 归 macOS，没有注册环节，提示恒显示。
-        let native = AutoHideToggleMenuModel.keyEquivalentPresentation(
-            isHotKeyRegistered: true,
-            shortcut: .nativeDockAutoHide
-        )
-        XCTAssertEqual(native.key, "d")
-        XCTAssertEqual(native.mask, [.option, .command])
-        XCTAssertNotEqual(
-            GlobalHotKeyShortcut.nativeDockAutoHide.id,
-            GlobalHotKeyShortcut.edgeAutoHideMode.id,
-            "两条快捷键共用 signature，id 必须不同"
-        )
+    func testNativeDockSectionTitleMentionsSystemShortcutAsPlainText() {
+        // ⌥⌘D 归 macOS，我们不定义也不注册它。删掉显隐命令后它是「把 Dock 临时叫回来」的
+        // 唯一一键入口，所以标题必须提到它——但只能是纯文字，设成 keyEquivalent 会被菜单捕获。
+        XCTAssertTrue(AutoHideToggleMenuModel.nativeDockSectionTitle.contains("⌥⌘D"))
+        XCTAssertTrue(AutoHideToggleMenuModel.nativeDockSectionTitle.contains("系统 Dock"))
     }
 
     func testReconciledStoreDelayAlignsStoreWithSystemTruth() {

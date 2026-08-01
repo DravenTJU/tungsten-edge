@@ -121,9 +121,13 @@ final class AppSettingsStore: ObservableObject {
         defaults.set(snapped, forKey: Keys.nativeDockAutoHideDelay)
     }
 
-    // 系统 Dock 组刻意不提供盲翻的 toggle 方法：它的翻转方向必须由系统实际 autohide 状态决定
-    // （AutoHideToggleMenuModel.nativeToggleTargetEnabled）——系统状态可被外部改（⌥⌘D / 系统设置），
-    // 盲翻本地存值会在两者脱节时翻错方向。
+    // 系统 Dock 组刻意不提供盲翻的 toggle 方法：系统状态可被外部改（⌥⌘D / 系统设置），
+    // 盲翻本地存值会在两者脱节时翻错方向。菜单里的显隐命令已于 2026-08-01 删除，
+    // 整组改由滑块 + 确认行表达，翻转这件事交还给系统自己的 ⌥⌘D。
+    //
+    // 因此 `lastEnabledNativeDockAutoHideDelay` 目前**没有读取方**（原先只有那条命令用它来
+    // 恢复「上次的档」）：滑块自己带着位置，不需要记忆。字段与持久化保留——它是用户数据，
+    // 删键属于有损迁移，且命令一旦回归就还要用。不是漏读。
 
     func setEdgeAutoHideDelay(_ value: Double) {
         guard value.isFinite else { return }

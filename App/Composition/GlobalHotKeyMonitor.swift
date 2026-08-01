@@ -24,16 +24,9 @@ struct GlobalHotKeyShortcut {
         id: 1
     )
 
-    /// ⌥⌘D：系统 Dock 自带的自动隐藏快捷键。**我们不注册它**（macOS 自己持有，注册会抢），
-    /// 只用于菜单展示和「菜单开着时按下这一条」的去重比对——两者都需要一份精确的按键定义。
-    static let nativeDockAutoHide = GlobalHotKeyShortcut(
-        keyCode: UInt32(kVK_ANSI_D),
-        carbonModifiers: UInt32(optionKey | cmdKey),
-        keyEquivalent: "d",
-        keyEquivalentModifierMask: [.option, .command],
-        signature: 0x5467_4567, // 'TgEg'
-        id: 2
-    )
+    // ⌥⌘D（系统 Dock 自带的自动隐藏快捷键）**故意没有定义在这里**：macOS 自己持有它，
+    // 注册就是抢。原先留过一份精确定义供菜单展示与按键去重，2026-08-01 删掉系统 Dock 的
+    // 显隐命令后两个消费方都没了；菜单里现在只在分组标题上以纯文字提一句 ⌥⌘D。
 }
 
 /// 热键事件，backend 已解包成纯值，便于单测构造。

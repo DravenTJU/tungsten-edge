@@ -19,35 +19,39 @@ enum AutoHideToggleMenuModel {
             : "隐藏 Tungsten Edge 钨极"
     }
 
-    /// 系统 Dock 是否处于自动隐藏。优先读系统真值（用户随时可用 ⌥⌘D / 系统设置改），
-    /// 读不到才回退本地镜像推导。
-    static func nativeIsAutoHideEnabled(liveAutohide: Bool?, storeDelay: Double) -> Bool {
-        liveAutohide ?? isAutoHideEnabled(delay: storeDelay)
+    /// 系统 Dock 这一组的分组标题（不可点）。两条滑块长得一模一样，没有标题分不清谁管谁。
+    ///
+    /// ⌥⌘D 以**纯文字**写进标题，不设 `keyEquivalent`：这一行本就不可点，设了会被菜单捕获，
+    /// 也会让禁用行看起来能点。这个键归 macOS 持有、恒生效，我们只是告诉用户它在——
+    /// 删掉显隐命令之后，它就是「把 Dock 临时叫回来」的一键入口。
+    static let nativeDockSectionTitle = "系统 Dock（⌥⌘D 显隐）"
+
+    /// 滑块档位的显示名。滑块本体与确认行必须共用这一份口径，
+    /// 否则确认行说的档位和滑块上显示的不是一回事。
+    static func delayDisplayName(sliderIndex index: Int) -> String {
+        switch index {
+        case 0:
+            return "常驻"
+        case AppSettingsStore.sliderIndexMax:
+            return "不唤醒"
+        default:
+            return String(format: "%.1fs", AppSettingsStore.delayFromSliderIndex(index))
+        }
     }
 
-    static func nativeTitle(liveAutohide: Bool?, storeDelay: Double) -> String {
-        nativeIsAutoHideEnabled(liveAutohide: liveAutohide, storeDelay: storeDelay)
-            ? "显示系统 Dock"
-            : "隐藏系统 Dock"
+    /// 系统 Dock 的每次写入都以 `killall Dock` 收尾，屏幕必然闪一下——这一下消除不了
+    /// （改 `autohide-delay` 在 macOS 上只有这条生效路径），只能让它发生在用户主动确认**之后**，
+    /// 预期之中的闪不觉得怪。所以滑块不再自动提交，草稿与已生效值不同时才浮出这一行。
+    ///
+    /// 比**整数档位**而不是浮点值：滑块本来就只能停在档位上，比浮点会被表示误差咬到。
+    static func shouldShowNativeApply(draft: Double, applied: Double) -> Bool {
+        AppSettingsStore.sliderIndexFromDelay(draft) != AppSettingsStore.sliderIndexFromDelay(applied)
     }
 
-    /// 命令翻转方向必须由**实际状态**（live 优先）决定，不能盲翻本地镜像——镜像可能已被外部改动甩在身后。
-    static func nativeToggleTargetEnabled(liveAutohide: Bool?, storeDelay: Double) -> Bool {
-        !nativeIsAutoHideEnabled(liveAutohide: liveAutohide, storeDelay: storeDelay)
-    }
-
-    /// 系统 ⌥⌘D 在菜单追踪期间仍由 macOS 处理；菜单 action 只跳过这一条精确 keyDown，
-    /// 否则系统和菜单项各执行一次，等于连按两下。
-    static func shouldSkipNativeDockMenuAction(eventType: NSEvent.EventType?,
-                                               keyCode: UInt16?,
-                                               modifierFlags: NSEvent.ModifierFlags,
-                                               isSystemShortcutAvailable: Bool) -> Bool {
-        guard isSystemShortcutAvailable,
-              eventType == .keyDown else { return false }
-        let shortcut = GlobalHotKeyShortcut.nativeDockAutoHide
-        guard let keyCode, UInt32(keyCode) == shortcut.keyCode else { return false }
-        let normalized = modifierFlags.intersection([.command, .option, .control, .shift])
-        return normalized == shortcut.keyEquivalentModifierMask
+    /// 标题带上目标档位是有意的：它同时在提醒「你拖到的这一档现在还没生效」。
+    static func nativeApplyTitle(draft: Double) -> String {
+        let name = delayDisplayName(sliderIndex: AppSettingsStore.sliderIndexFromDelay(draft))
+        return "应用「\(name)」（Dock 会重启一下）"
     }
 
     /// autohide-delay 键不存在时系统 Dock 的实际默认延迟。
@@ -101,9 +105,11 @@ enum AutoHideToggleMenuModel {
 
 }
 
-/// 系统 Dock 滑块的提交去重。三个触发源会互相撞车——鼠标松手、键盘/辅助功能调整的 debounce、
-/// 菜单关闭——各跑一次 `apply` 就是两次 `killall Dock`。pending 必须被**原子消费**：
-/// 谁先 `consume()` 谁负责提交，其余全部拿到 nil。
+/// 系统 Dock 滑块的草稿账本。记的是**改动前**的值：写入是 defaults + killall 的多步非事务序列，
+/// 失败时要靠 previous 回滚本地镜像（见 `AutoHideToggleMenuModel.resolvedStoreDelay` 四象限）。
+///
+/// 提交源现在只有确认行一个（滑块本身不再自动写系统），但 `consume()` 的**原子**语义保留：
+/// 它同时承担「值没变就不写」「没有起点就不写」两道闸，重复调用一律拿到 nil。
 struct PreferenceSliderCommitTracker {
     private var baseline: Double?
     private var pending: Double?
@@ -157,7 +163,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let showShelfItem = NSMenuItem(title: "显示中转站", action: #selector(toggleShowShelf), keyEquivalent: "")
     private let dockSizeItem = NSMenuItem(title: "任务条大小", action: nil, keyEquivalent: "")
     private var dockSizeItems: [DockSize: NSMenuItem] = [:]
-    private let nativeDockToggleItem = NSMenuItem(title: "", action: #selector(toggleNativeDockAutoHideFromMenu), keyEquivalent: "")
+    /// 分组标题，恒不可点（title 在 configureMenu 里落）。
+    private let nativeDockSectionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    /// 滑块草稿的唯一提交入口，默认隐藏。承载的是**真按钮**而不是普通菜单文字行：
+    /// 做成菜单行时它和邻居（「打开系统 Dock 设置…」）视觉权重一样，混在菜单里不显眼，
+    /// 而用户刚拖完滑块视线还在滑块上，错过它就从「会闪但生效了」变成
+    /// 「以为设好了其实没生效」——比原来的闪更糟（owner 2026-08-02 验收时指出）。
+    private let nativeDockApplyItem = NSMenuItem()
+    private let nativeDockApplyRow = NativeDockApplyRowView()
     private let openNativeDockSettingsItem = NSMenuItem(title: "打开系统 Dock 设置…", action: #selector(openNativeDockSettings), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
@@ -228,24 +241,29 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(openLoginItemsSettingsItem)
         menu.addItem(.separator())
 
-        nativeDockToggleItem.target = self
-        // ⌥⌘D 由 macOS 自己持有、恒生效，提示恒显示（不同于钨极行的注册门控）。
-        let nativeHint = AutoHideToggleMenuModel.keyEquivalentPresentation(
-            isHotKeyRegistered: true,
-            shortcut: .nativeDockAutoHide
-        )
-        nativeDockToggleItem.keyEquivalent = nativeHint.key
-        nativeDockToggleItem.keyEquivalentModifierMask = nativeHint.mask
-        menu.addItem(nativeDockToggleItem)
+        nativeDockSectionItem.title = AutoHideToggleMenuModel.nativeDockSectionTitle
+        nativeDockSectionItem.isEnabled = false
+        menu.addItem(nativeDockSectionItem)
 
-        // 系统 Dock 滑块刻意不接 onDelayChange：草稿只留在视图里。setNativeDockAutoHideDelay
-        // 一调用就把 active + remembered 一起落盘，而系统那边还没写，拖到一半的值不该变成持久状态。
+        // 系统 Dock 滑块**不接** store：`setNativeDockAutoHideDelay` 一调用就把 active + remembered
+        // 一起落盘，而系统那边要等用户点确认行才写，拖到一半的值不该变成持久状态。
+        // onDraftChange 只用来刷新确认行，不碰任何持久状态。
+        nativeDockSliderView.onDraftChange = { [weak self] draft in
+            self?.refreshNativeDockApplyItem(draft: draft)
+        }
         nativeDockSliderView.onDelayCommit = { [weak self] previous, target in
             self?.commitNativeDockDelay(previous: previous, target: target)
         }
         let nativeDockSliderItem = NSMenuItem()
         nativeDockSliderItem.view = nativeDockSliderView
         menu.addItem(nativeDockSliderItem)
+
+        nativeDockApplyRow.onApply = { [weak self] in
+            self?.applyNativeDockDelay()
+        }
+        nativeDockApplyItem.view = nativeDockApplyRow
+        nativeDockApplyItem.isHidden = true
+        menu.addItem(nativeDockApplyItem)
 
         openNativeDockSettingsItem.target = self
         menu.addItem(openNativeDockSettingsItem)
@@ -328,17 +346,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         reconcileNativeDockStoreWithSystem()
         refreshCheckmarks()
         refreshUpdateCheckItem()
+        // 没点确认就关菜单 = 作废：什么都不写，下次打开一切从系统真值重新起步。
+        // （否则「随手拨一下看看」也会招来一次 killall Dock——关个菜单屏幕突然闪一下，
+        // 正是这次要消除的怪异感。）
+        //
+        // **作废放在「打开时」而不是 `menuDidClose`**，是为了不依赖确认控件的形态。
+        // 现在的确认是自定义 view 里的 `NSButton`，action 直接发送，放哪儿都安全；
+        // 但只要有人把它改回普通 `NSMenuItem`，`menuDidClose` 就会变成陷阱——AppKit 的顺序是
+        // 先关菜单、`menuDidClose` 回调、**然后**才发送菜单项 action，草稿会赶在确认之前
+        // 被清空，`commitDraft()` 拿到 nil，整个确认功能静默失效（本轮踩过并修掉）。
+        nativeDockSliderView.discardDraft()
         nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
+        nativeDockApplyItem.isHidden = true
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
-        // 钨极行刷注册门控；系统 Dock 行每次都重新读取系统真值。
         refreshEdgeAutoHideToggleItem(delay: store.edgeAutoHideDelay)
-        refreshNativeDockToggleItem(storeDelay: store.nativeDockAutoHideDelay)
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        // 键盘 / VoiceOver 改滑块走不到 mouseUp，靠 debounce 提交；菜单先关掉时在这里兜底。
-        // 已被松手或 timer 消费过的 pending 在这里拿到 nil，不会重复写系统。
-        nativeDockSliderView.flushPendingCommit()
     }
 
     /// 只改本地存值让 UI 对齐系统真值，绝不反向应用（菜单打开不许 killall Dock）。
@@ -364,41 +385,28 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         edgeAutoHideToggleItem.keyEquivalentModifierMask = presentation.mask
     }
 
-    private func refreshNativeDockToggleItem(storeDelay: Double) {
-        let live = nativeDockPreferencesService.currentAutohideState()?.enabled
-        nativeDockToggleItem.title = AutoHideToggleMenuModel.nativeTitle(
-            liveAutohide: live,
-            storeDelay: storeDelay
+    /// 草稿与已生效值不同才浮出确认行。已生效值取本地镜像——`menuWillOpen` 刚把它对齐过系统真值。
+    private func refreshNativeDockApplyItem(draft: Double) {
+        let shouldShow = AutoHideToggleMenuModel.shouldShowNativeApply(
+            draft: draft,
+            applied: store.nativeDockAutoHideDelay
         )
-        nativeDockToggleItem.state = .off
+        nativeDockApplyItem.isHidden = !shouldShow
+        if shouldShow {
+            // 按钮标题恒为「应用」，目标档位只进 accessibility——滑块上已经用数值和端点圆点
+            // 表达过一次，按钮里再重复反而挤；但 VoiceOver 只听得到这一句，必须带上档位。
+            nativeDockApplyRow.updateTarget(description: AutoHideToggleMenuModel.nativeApplyTitle(draft: draft))
+            // 上一轮可能停在 hover 态，而这一轮浮出时鼠标还在滑块上，不在按钮上。
+            nativeDockApplyRow.resetInteractionState()
+        }
     }
 
     @objc private func toggleEdgeAutoHideModeFromMenu() {
         store.toggleEdgeAutoHideMode()
     }
 
-    @objc private func toggleNativeDockAutoHideFromMenu() {
-        let event = NSApp.currentEvent
-        let isKeyEvent = event?.type == .keyDown
-        if AutoHideToggleMenuModel.shouldSkipNativeDockMenuAction(
-            eventType: event?.type,
-            keyCode: isKeyEvent ? event?.keyCode : nil,
-            modifierFlags: event?.modifierFlags ?? [],
-            isSystemShortcutAvailable: true // ⌥⌘D 由 macOS 持有，恒生效
-        ) { return }
-
-        let targetEnabled = AutoHideToggleMenuModel.nativeToggleTargetEnabled(
-            liveAutohide: nativeDockPreferencesService.currentAutohideState()?.enabled,
-            storeDelay: store.nativeDockAutoHideDelay
-        )
-        // 命令严格等价 ⌥⌘D：只切 autohide。target 只是本地镜像的预期值，
-        // 真正落什么以写完之后重读到的系统真值为准。
-        scheduleNativeDockWrite(
-            previous: store.nativeDockAutoHideDelay,
-            target: targetEnabled ? store.lastEnabledNativeDockAutoHideDelay : AppSettingsStore.neverHideDelay
-        ) { [nativeDockPreferencesService] in
-            try nativeDockPreferencesService.setAutohideEnabled(targetEnabled)
-        }
+    private func applyNativeDockDelay() {
+        nativeDockSliderView.commitDraft()
     }
 
     @objc private func openNativeDockSettings() {
@@ -527,7 +535,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    /// 系统 Dock 的两条写入路径都走这里。先收菜单——写入以 `killall Dock` 收尾，
+    /// 系统 Dock 的唯一写入路径。先收菜单——写入以 `killall Dock` 收尾，
     /// 菜单不该在系统 Dock 重启时还开着；下一轮再执行。
     private func scheduleNativeDockWrite(previous: Double,
                                          target: Double,
@@ -562,8 +570,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             previous: previous
         )
         store.setNativeDockAutoHideDelay(resolved)
+        // 写完之后草稿即已生效值，确认行没有存在意义了（菜单此时已收起，这里只是把状态摆正，
+        // 免得下次打开菜单前有人读到过期的可见性）。
         nativeDockSliderView.sync(delay: resolved)
-        refreshNativeDockToggleItem(storeDelay: resolved)
+        nativeDockApplyItem.isHidden = true
 
         // 只有写失败才提示。写成功但读不回来时弹窗会让用户以为没生效，其实系统已经改了。
         if let writeError {
@@ -602,16 +612,16 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 final class PreferenceSliderMenuItemView: NSView {
     /// 每一格变化。即时生效型滑块（钨极，本地值）在这里直接写 store。
     var onDelayChange: ((Double) -> Void)?
-    /// 落定回调。**设了它就启用提交机制**（系统 Dock：每次应用都要 `killall Dock`，
-    /// 逐格触发会把系统 Dock 反复重启）。三个触发源经 `PreferenceSliderCommitTracker` 去重。
+    /// 草稿落定（鼠标松手，或键盘每调一格）。确认型滑块用它刷新确认行，
+    /// **绝不能拿来写任何持久状态**——草稿的全部意义就是「还没生效」。
+    var onDraftChange: ((Double) -> Void)?
+    /// 确认提交。**设了它就启用草稿机制**：系统 Dock 每次写入都以 `killall Dock` 收尾、
+    /// 屏幕必然闪一下，那一下只能发生在用户主动确认之后。
     var onDelayCommit: ((_ previous: Double, _ target: Double) -> Void)?
 
     private let accessibilityTitle: String
     private var delay = 0.0
     private var commitTracker = PreferenceSliderCommitTracker()
-    private var keyboardCommitTimer: Timer?
-    /// 键盘 / VoiceOver 每按一下方向键就是一格，攒一小会儿再提交。
-    private static let keyboardCommitDelay: TimeInterval = 0.2
     private var displayString = "0.0s"
     private let leftEndpointDot = EndpointDotView()
     private let rightEndpointDot = EndpointDotView()
@@ -687,7 +697,10 @@ final class PreferenceSliderMenuItemView: NSView {
             self.commitTracker.begin(currentDelay: self.delay)
         }
         slider.onTrackingEnded = { [weak self] in
-            self?.commitPendingDelay()
+            // 拖动全程不碰确认行：每经过一格就增删一次菜单项会让整个菜单反复重排。
+            // 松手才刷新这一次。
+            guard let self else { return }
+            self.onDraftChange?(self.delay)
         }
         addSubview(slider)
 
@@ -728,31 +741,25 @@ final class PreferenceSliderMenuItemView: NSView {
         // （鼠标路径里 begin 已由 onTrackingStarted 调过，重复调用不覆盖起点）。
         commitTracker.begin(currentDelay: previousDelay)
         commitTracker.stage(delay)
+        // 键盘 / VoiceOver 没有「松手」这个时刻，只能当场刷新确认行。它们因此和鼠标
+        // 走同一条确认路径，不再需要 debounce 自动提交，也就不会再被静默丢弃。
         if !slider.isMouseTracking {
-            scheduleKeyboardCommit()
+            onDraftChange?(delay)
         }
     }
 
-    private func scheduleKeyboardCommit() {
-        keyboardCommitTimer?.invalidate()
-        let timer = Timer(timeInterval: Self.keyboardCommitDelay, repeats: false) { _ in
-            MainActor.assumeIsolated { [weak self] in self?.commitPendingDelay() }
-        }
-        // 菜单追踪期 run loop 在 .eventTracking 模式，.default 的 timer 不会触发。
-        RunLoop.main.add(timer, forMode: .common)
-        keyboardCommitTimer = timer
-    }
-
-    /// 菜单先于 debounce 关掉时的兜底提交。已被别的触发源消费过就是空操作。
-    func flushPendingCommit() {
-        commitPendingDelay()
-    }
-
-    private func commitPendingDelay() {
-        keyboardCommitTimer?.invalidate()
-        keyboardCommitTimer = nil
+    /// 用户按下确认行。**唯一**的提交入口——滑块自己在任何情况下都不写系统。
+    func commitDraft() {
         guard let commit = commitTracker.consume() else { return }
         onDelayCommit?(commit.previous, commit.target)
+    }
+
+    /// 未确认的草稿作废，滑块拨回草稿开始前的已生效值。
+    /// 调用点是**菜单打开时**（`menuWillOpen`），不是关闭时——理由见那里。
+    /// 已被 `commitDraft` 消费过就拿到 nil，不会把刚确认的新值又拨回去。
+    func discardDraft() {
+        guard let discarded = commitTracker.consume() else { return }
+        sync(delay: discarded.previous)
     }
 
     private func updateDisplay() {
@@ -772,15 +779,241 @@ final class PreferenceSliderMenuItemView: NSView {
         slider.displayString = displayString
     }
 
+    /// 与确认行共用一份档位口径，免得确认行说的和滑块上显示的不是一回事。
     private func displayString(for index: Int) -> String {
-        switch index {
-        case 0:
-            return "常驻"
-        case AppSettingsStore.sliderIndexMax:
-            return "不唤醒"
-        default:
-            return String(format: "%.1fs", AppSettingsStore.delayFromSliderIndex(index))
+        AutoHideToggleMenuModel.delayDisplayName(sliderIndex: index)
+    }
+}
+
+/// 系统 Dock 滑块的确认按钮行。做成**按钮**而不是普通菜单文字行是有意的：
+/// 菜单行和它的邻居视觉权重相同，用户刚拖完滑块、视线还在滑块上，很容易整行错过；
+/// 一旦错过就直接关菜单，结果是「以为设好了其实没生效」——比原本那一下闪更糟。
+/// 按钮的形态本身就在说「这是要点的东西」。
+///
+/// 左侧那句小灰字不是装饰：`killall Dock` 的闪消除不了，提前说明白它才不显得怪。
+@MainActor
+final class NativeDockApplyRowView: NSView {
+    var onApply: (() -> Void)?
+
+    private let hintLabel = NSTextField(labelWithString: "Dock 会重启一下")
+    private let applyButton = MenuActionButton(title: "应用")
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 42))
+        autoresizingMask = [.width]
+        configureSubviews()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// 按钮标题恒为「应用」，目标档位只走 accessibility：滑块上已经显示过档位，
+    /// 但 VoiceOver 用户听不到滑块，这句是他们唯一的信息来源。
+    func updateTarget(description: String) {
+        applyButton.setAccessibilityLabel(description)
+        setAccessibilityLabel(description)
+    }
+
+    /// 每次浮出都从静息态开始：上一轮可能停在 hover 态，而菜单重开时鼠标未必还在按钮上。
+    func resetInteractionState() {
+        applyButton.resetInteractionState()
+    }
+
+    private func configureSubviews() {
+        wantsLayer = true
+
+        hintLabel.font = .systemFont(ofSize: 11)
+        hintLabel.textColor = .secondaryLabelColor
+        hintLabel.setAccessibilityElement(false)
+        addSubview(hintLabel)
+
+        applyButton.onClick = { [weak self] in
+            self?.onApply?()
         }
+        addSubview(applyButton)
+
+        setAccessibilityRole(.group)
+    }
+
+    override func layout() {
+        super.layout()
+        let contentX = StatusMenuLayout.textInsetX
+        let rightEdge = bounds.width - StatusMenuLayout.trailingInsetX
+
+        let buttonSize = applyButton.intrinsicContentSize
+        applyButton.frame = NSRect(
+            x: rightEdge - buttonSize.width,
+            y: (bounds.height - buttonSize.height) / 2,
+            width: buttonSize.width,
+            height: buttonSize.height
+        )
+
+        let hintWidth = max(0, applyButton.frame.minX - 8 - contentX)
+        hintLabel.frame = NSRect(x: contentX, y: (bounds.height - 14) / 2, width: hintWidth, height: 14)
+    }
+
+}
+
+/// 菜单里的强调按钮，**自绘**。
+///
+/// 用 `NSButton` 试过：一旦设了 `bezelColor` 把底色改成强调色，AppKit 自己那套按下变暗
+/// 基本被盖住；而菜单打开时 run loop 处在事件追踪模式，标准按钮的 hover / 按下态在这里
+/// 都不可靠——按上去像块死图（owner 2026-08-02 报「按钮怎么没有反馈交互」）。
+/// 自绘之后三态完全可控：静息 / 悬停（提亮）/ 按下（压暗）。
+final class MenuActionButton: NSView {
+    var onClick: (() -> Void)?
+
+    private let title: String
+    private let iconView = NSImageView()
+    private let titleLabel: NSTextField
+    private var isHovering = false { didSet { if isHovering != oldValue { needsDisplay = true } } }
+    private var isPressed = false { didSet { if isPressed != oldValue { needsDisplay = true } } }
+
+    private static let cornerRadius: CGFloat = 6
+    private static let horizontalPadding: CGFloat = 12
+    private static let iconTitleGap: CGFloat = 5
+    private static let height: CGFloat = 25
+
+    /// 通透而不是实心（owner 2026-08-02 定）：菜单本身是半透明材质，压一块强调色实心
+    /// 在上面显得又厚又重。改成淡强调色底 + 强调色字，颜色还在、分量降下来。
+    private static let restingAlpha: CGFloat = 0.16
+    private static let hoverAlpha: CGFloat = 0.30
+    private static let pressedAlpha: CGFloat = 0.42
+
+    init(title: String) {
+        self.title = title
+        titleLabel = NSTextField(labelWithString: title)
+        super.init(frame: NSRect(x: 0, y: 0, width: 92, height: Self.height))
+        wantsLayer = true
+
+        // 字重用常规（owner 2026-08-02 定）；文字取强调色本身而不是白色——
+        // 白字要靠实心底才立得住，通透底上只有强调色字才够清楚。
+        titleLabel.font = .systemFont(ofSize: 13)
+        titleLabel.textColor = .controlAccentColor
+        titleLabel.setAccessibilityElement(false)
+        addSubview(titleLabel)
+
+        iconView.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+        iconView.contentTintColor = .controlAccentColor
+        iconView.setAccessibilityElement(false)
+        addSubview(iconView)
+
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(title)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var intrinsicContentSize: NSSize {
+        let titleWidth = titleLabel.intrinsicContentSize.width
+        let iconWidth = iconView.image?.size.width ?? 0
+        return NSSize(
+            width: Self.horizontalPadding * 2 + iconWidth + Self.iconTitleGap + titleWidth,
+            height: Self.height
+        )
+    }
+
+    /// 菜单里的自定义 view 不属于 key window，不重写这个第一次点击会被整个吞掉——
+    /// 用户会以为按钮坏了。`MenuTrackingSlider` 同理。
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// 子视图（文字、图标）不能把鼠标事件截走，否则按钮中间一块点不动。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    func resetInteractionState() {
+        isHovering = false
+        isPressed = false
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        // `.activeAlways`：菜单面板不是 key window，`.activeInKeyWindow` 在这里永远不触发。
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovering = true }
+    override func mouseExited(with event: NSEvent) { isHovering = false }
+
+    /// 菜单事件追踪期间 `mouseUp` 不会自然回到这里，必须自己跑一轮 tracking——
+    /// 这和 `MenuTrackingSlider` 靠 `super.mouseDown` 阻塞到松手是同一个道理。
+    /// 期间跟踪指针在不在按钮内：拖出去再松手 = 取消，和系统按钮的行为一致。
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        var releasedInside = true
+
+        window?.trackEvents(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            timeout: NSEvent.foreverDuration,
+            mode: .eventTracking
+        ) { trackedEvent, stop in
+            guard let trackedEvent else {
+                stop.pointee = true
+                return
+            }
+            let local = self.convert(trackedEvent.locationInWindow, from: nil)
+            releasedInside = self.bounds.contains(local)
+            self.isPressed = releasedInside
+            if trackedEvent.type == .leftMouseUp {
+                stop.pointee = true
+            }
+        }
+
+        isPressed = false
+        isHovering = releasedInside
+        if releasedInside {
+            onClick?()
+        }
+    }
+
+    /// 单测入口：真实路径是上面那轮 tracking loop，测试环境跑不了事件循环。
+    func performClickForTesting() {
+        onClick?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        // 三态只改透明度，不改色相：底始终是同一个强调色，按下去只是"更实"一点。
+        let alpha: CGFloat
+        if isPressed {
+            alpha = Self.pressedAlpha
+        } else if isHovering {
+            alpha = Self.hoverAlpha
+        } else {
+            alpha = Self.restingAlpha
+        }
+        let shape = NSBezierPath(roundedRect: bounds, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius)
+        NSColor.controlAccentColor.withAlphaComponent(alpha).setFill()
+        shape.fill()
+    }
+
+    override func layout() {
+        super.layout()
+        let iconSize = iconView.image?.size ?? .zero
+        let titleSize = titleLabel.intrinsicContentSize
+        let contentWidth = iconSize.width + Self.iconTitleGap + titleSize.width
+        let startX = (bounds.width - contentWidth) / 2
+
+        iconView.frame = NSRect(
+            x: startX,
+            y: (bounds.height - iconSize.height) / 2,
+            width: iconSize.width,
+            height: iconSize.height
+        )
+        titleLabel.frame = NSRect(
+            x: iconView.frame.maxX + Self.iconTitleGap,
+            y: (bounds.height - titleSize.height) / 2,
+            width: titleSize.width,
+            height: titleSize.height
+        )
     }
 }
 

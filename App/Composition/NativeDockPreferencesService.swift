@@ -11,14 +11,13 @@ struct NativeDockAutohideState: Equatable {
     var delay: Double?
 }
 
-/// 写系统 Dock 有两条**不可混用**的路径（owner 2026-07-30 定）：
-/// - `setAutohideEnabled` 是菜单显隐命令，严格等价系统 ⌥⌘D，只切 `autohide`，绝不碰 `autohide-delay`；
-/// - `apply(delay:)` 是滑块，既写 `autohide` 也写 `autohide-delay`。
-/// 混用会让「隐藏系统 Dock」顺手改掉用户的唤醒延迟，就不再等价 ⌥⌘D 了。
+/// 写系统 Dock 只剩 `apply(delay:)` 一条路径（owner 2026-08-01 定）：菜单里的显隐命令已删掉，
+/// 整组由滑块 + 确认行表达——滑块能表达全部状态（常驻 / 秒数 / 不唤醒），命令是冗余的，
+/// 而它只切 `autohide` 不碰 `autohide-delay`，字面承诺的「隐藏」大于实际效果，反而误导。
+/// 一键显隐交还给系统自己的 ⌥⌘D（macOS 持有，恒生效，且沿用这里写下的延迟档）。
 @MainActor
 protocol NativeDockPreferencesServicing {
     var isAvailable: Bool { get }
-    func setAutohideEnabled(_ enabled: Bool) throws
     func apply(delay: Double) throws
     /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
     /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
@@ -132,14 +131,6 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
             delay = nil
         }
         return NativeDockAutohideState(enabled: enabled, delay: delay)
-    }
-
-    /// 菜单显隐命令：严格等价 ⌥⌘D。**只写 `autohide`**，用户自己设的唤醒延迟原样保留。
-    func setAutohideEnabled(_ enabled: Bool) throws {
-        guard isAvailable else { throw NativeDockPreferencesError.sandboxed }
-        for command in Self.autohideCommands(enabled: enabled) {
-            try runner(command.executable, command.arguments)
-        }
     }
 
     /// 滑块：整档写入。常驻档只关 `autohide`，不写延迟——延迟此时无意义，写了反而覆盖用户原值。
