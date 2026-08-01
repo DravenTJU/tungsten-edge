@@ -135,6 +135,12 @@ This is an early public build (v0.3). Known limitations and what's next:
 
 ## Community
 
+**WeChat Group**
+
+<img src="assets/wechat-group.png" alt="Tungsten Edge WeChat group QR code" width="280" />
+
+The QR code is updated weekly. If it has expired, please leave a message in [Issues](https://github.com/moonbai-studio/tungsten-edge/issues) and I'll renew it promptly.
+
 Tungsten Edge recognizes and thanks the [LINUX DO](https://linux.do/) community for providing a place for discussion and feedback.
 
 ## License
