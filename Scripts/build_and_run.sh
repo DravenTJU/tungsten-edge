@@ -82,6 +82,15 @@ case "$MODE" in
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"com.caye.macosdockcc.v2\""
     ;;
+  --launch-trace|launch-trace)
+    pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+    build_app
+    sign_app
+    wait_for_exit
+    DOCK_LAUNCH_TRACE=1 "$APP_EXECUTABLE" > /tmp/launch-trace.log 2>&1 &
+    wait_for_app
+    echo "launch trace: /tmp/launch-trace.log"
+    ;;
   --verify|verify)
     pkill -x "$APP_NAME" >/dev/null 2>&1 || true
     build_app
@@ -108,7 +117,7 @@ case "$MODE" in
     run_cli transitionReplay "${2:-focused-active-replay}"
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--lab|--lab-minimize|--lab-close|--lab-replay [scenario-name]|--lab-placement [scenario-name]|--lab-transition [scenario-name]]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--launch-trace|--verify|--lab|--lab-minimize|--lab-close|--lab-replay [scenario-name]|--lab-placement [scenario-name]|--lab-transition [scenario-name]]" >&2
     exit 2
     ;;
 esac

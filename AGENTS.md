@@ -179,6 +179,12 @@
 - Popup open/close animation uses `PopoverAnimation`; taskbar/drawer layout animation stays on `DrawerAnimation`.
 - Edge auto-hide is inhibited while the popup is open via `EdgeAutoHideInhibitor.folderPopupOpen`.
 
+## Launch Feedback
+
+- `AppRuntime.beginLaunch` is the sole owner of a launch request and its `NSWorkspace.openApplication` completion. UI observes only the compare-before-publish `launchingBundleIDs` projection. Every callback, policy recheck, and the 20s fallback is guarded by the session token; a stale callback must not mutate a newer launch. Real-window readiness means a new live seat relative to the session's bundle baseline, not merely any retained same-bundle seat, and must continue to support apps whose host PID differs from the window PID.
+- Launch release decisions stay in the pure, unit-tested `LaunchGateDecision`. Process death for the launched process and every same-bundle peer uses `ProcessLiveness.isAlive`; never use `NSRunningApplication.isTerminated` or LaunchServices lookup as liveness. `.accessory` is releasable only after both the 1.5s settling floor and `isFinishedLaunching`; `.prohibited` additionally needs an explicit no-window bundle declaration. Unknown/regular processes wait for a new real window, explicit open failure/process death, or the 20s fallback.
+- `LauncherChip.isLaunching` is runtime-owned input, while `bounceUp` and its finite 0.25s timer are view-local. The timer runs in `.common`, is invalidated on disappearance, and restarts from the external state on appearance. No root/ancestor hover animation may cover the bouncing image, and every tap path (including injected `onTap`) is a no-op while the launch session is active. Keep opt-in diagnostics `DOCK_LAUNCH_TRACE=1`.
+
 ## Menus, Panels, And Screens
 
 - Strip and drawer chip menus are hand-built AppKit `NSMenu`, not SwiftUI `.contextMenu`.

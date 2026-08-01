@@ -15,10 +15,39 @@ final class AppRuntime: ObservableObject {
     @Published private(set) var observationStatusText: String = "正在启动"
     /// 「窗口出现门控」（2026-06-18）：用户从抽屉点击启动的 app，在它拿到真窗口
     /// 之前先记在这里。抽屉据此把它**留在启动区继续弹跳**，不在「进程一出现」就提前
-    /// 停跳 / 提前跳进运行区（GUI app 进程就绪 ≠ UI 就绪）。仅对 .regular（有窗口）
-    /// app 生效：.accessory 菜单栏 app（Tailscale 类）本就无窗口，进程一出现即清除，
-    /// 不被卡住——守住「在跑 = 进程在不在跑」的命门。窗口出现或 8s 超时即清除。
+    /// 停跳 / 提前跳进运行区（GUI app 进程就绪 ≠ UI 就绪）。.regular 应用等真窗口；
+    /// .accessory 菜单栏 app（Tailscale 类）在进程完成启动且 policy 稳定后放行，
+    /// 不被卡住。真窗口出现、确认无窗口能力、启动失败或 20s 超时才清除。
     @Published private(set) var launchingBundleIDs: Set<String> = []
+
+    private struct LaunchProcessIdentity: Equatable {
+        let pid: pid_t
+        let startTimeSec: Int64
+        let startTimeUsec: Int64
+    }
+
+    private struct LaunchWindowIdentity: Hashable {
+        let chipID: String
+        let pid: pid_t
+        let startTimeSec: Int64
+        let startTimeUsec: Int64
+    }
+
+    private struct LaunchSession {
+        let bundleID: String
+        let token: UInt64
+        let startedAt: TimeInterval
+        let baselineRealWindows: Set<LaunchWindowIdentity>
+        let bundleDeclaresNoWindow: Bool
+        var app: NSRunningApplication?
+        var processIdentity: LaunchProcessIdentity?
+        var openFailed = false
+        var policyRecheckTask: Task<Void, Never>?
+        var timeoutTask: Task<Void, Never>?
+        var lastTraceClassification: String?
+    }
+
+    private var launchSessions = LaunchSessionTokenRegistry<LaunchSession>()
 
     private let tracker = AppTracker()
     private let intentPipeline = IntentPipeline(actionPlanning: LifecycleActionPlanner())
@@ -31,6 +60,9 @@ final class AppRuntime: ObservableObject {
 
     private let debugSnapshotLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "debug-snapshot")
     private let chipProbeLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "ChipProbe")
+    private let launchLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "Launch")
+    private static let launchTraceEnabled = ProcessInfo.processInfo.environment["DOCK_LAUNCH_TRACE"] == "1"
+    private static let launchPolicyRecheckDeadlines: [TimeInterval] = [1.5, 3.0, 5.0]
 
     func start() {
         guard snapshotSubscription == nil else { return }
@@ -59,11 +91,16 @@ final class AppRuntime: ObservableObject {
         snapshotSubscription = nil
         feedbackTimer?.invalidate()
         feedbackTimer = nil
+        stopLaunchSessions()
     }
 
     deinit {
         feedbackTimer?.invalidate()
         snapshotSubscription?.cancel()
+        for entry in launchSessions.currentEntries {
+            entry.value.policyRecheckTask?.cancel()
+            entry.value.timeoutTask?.cancel()
+        }
     }
 
     func exportDebugSnapshot() {
@@ -132,34 +169,307 @@ final class AppRuntime: ObservableObject {
         }
     }
 
-    /// 登记一次用户发起的启动。窗口出现或 8s 超时（与 LauncherChip 弹跳兜底对齐）即清除。
-    func beginLaunch(_ bundleID: String) {
-        guard !bundleID.isEmpty else { return }
-        launchingBundleIDs.insert(bundleID)
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
-            self?.launchingBundleIDs.remove(bundleID)
+    /// 登记并发起一次用户启动。返回 false 表示已有同 bundle 会话，或无法解析 app URL。
+    @discardableResult
+    func beginLaunch(_ bundleID: String) -> Bool {
+        guard !bundleID.isEmpty,
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+            launchLogger.warning("launch rejected: app URL missing bundleID=\(bundleID, privacy: .public)")
+            traceLaunch("REJECT bid=\(bundleID) reason=no-app-url")
+            return false
+        }
+
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let baseline = realWindowIdentities(in: snapshot, bundleID: bundleID)
+        let declaresNoWindow = Self.bundleDeclaresNoWindow(at: appURL)
+        guard let token = launchSessions.begin(bundleID: bundleID, makeValue: { token in
+            LaunchSession(
+                bundleID: bundleID,
+                token: token,
+                startedAt: startedAt,
+                baselineRealWindows: baseline,
+                bundleDeclaresNoWindow: declaresNoWindow
+            )
+        }) else {
+            traceLaunch("REJECT bid=\(bundleID) reason=session-active")
+            return false
+        }
+
+        publishLaunching()
+        traceLaunch("START bid=\(bundleID) token=\(token) t=\(Self.timeText(startedAt)) baseline=\(baseline.count)")
+
+        let recheckTask = Task { @MainActor [weak self] in
+            for deadline in Self.launchPolicyRecheckDeadlines {
+                let wait = max(
+                    0,
+                    startedAt + deadline - ProcessInfo.processInfo.systemUptime
+                )
+                if wait > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                }
+                guard !Task.isCancelled else { return }
+                self?.evaluateLaunch(bundleID: bundleID, token: token)
+            }
+        }
+        let timeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 20 * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.evaluateLaunch(bundleID: bundleID, token: token)
+        }
+        let tasksAttached = launchSessions.update(bundleID: bundleID, token: token) { session in
+            session.policyRecheckTask = recheckTask
+            session.timeoutTask = timeoutTask
+        }
+        guard tasksAttached else {
+            recheckTask.cancel()
+            timeoutTask.cancel()
+            return false
+        }
+
+        NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { [weak self] app, error in
+            Task { @MainActor [weak self] in
+                self?.handleLaunchCompletion(
+                    bundleID: bundleID,
+                    token: token,
+                    app: app,
+                    error: error
+                )
+            }
+        }
+        return true
+    }
+
+    private func handleLaunchCompletion(
+        bundleID: String,
+        token: UInt64,
+        app: NSRunningApplication?,
+        error: Error?
+    ) {
+        let identity = app.flatMap { Self.processIdentity(pid: $0.processIdentifier) }
+        guard launchSessions.update(bundleID: bundleID, token: token, { session in
+            session.app = app
+            session.processIdentity = identity
+            session.openFailed = error != nil
+        }) else {
+            traceLaunch("SUPERSEDED bid=\(bundleID) token=\(token)")
+            return
+        }
+
+        let policy = app.map { Self.activationPolicyText($0.activationPolicy) } ?? "unknown"
+        if let error {
+            launchLogger.error(
+                "openApplication failed bundleID=\(bundleID, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+        traceLaunch(
+            "OPENED bid=\(bundleID) token=\(token) pid=\(app.map { String($0.processIdentifier) } ?? "nil") "
+                + "ok=\(error == nil ? 1 : 0) policy=\(policy)"
+        )
+        evaluateLaunch(bundleID: bundleID, token: token)
+    }
+
+    private func reconcileLaunchingStates(with newSnapshot: DockSnapshot) {
+        guard !launchSessions.bundleIDs.isEmpty else { return }
+        for entry in launchSessions.currentEntries {
+            evaluateLaunch(bundleID: entry.bundleID, token: entry.token, snapshot: newSnapshot)
         }
     }
 
-    /// 清除已"放行"的启动会话：①已拿到真窗口（非 app-* 占位）→ 进程 UI 就绪；
-    /// ②进程已起但属 .accessory（菜单栏 app，本就没窗口）→ 立即放行，不卡门控。
-    private func reconcileLaunchingStates(with newSnapshot: DockSnapshot) {
-        guard !launchingBundleIDs.isEmpty else { return }
-        let realWindowIDs = Set(
-            StripItem.items(from: newSnapshot)
-                .filter { !$0.isAppLevelFallback }
-                .compactMap(\.bundleIdentifier)
-        )
-        let next = launchingBundleIDs.filter { id in
-            if realWindowIDs.contains(id) { return false }
-            if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == id }),
-               app.activationPolicy != .regular {
-                return false
-            }
-            return true
+    private func evaluateLaunch(
+        bundleID: String,
+        token: UInt64,
+        snapshot suppliedSnapshot: DockSnapshot? = nil
+    ) {
+        guard let entry = launchSessions.entry(for: bundleID), entry.token == token else {
+            traceLaunch("SUPERSEDED bid=\(bundleID) token=\(token)")
+            return
         }
-        if next != launchingBundleIDs { launchingBundleIDs = next }
+        let session = entry.value
+        let elapsed = max(0, ProcessInfo.processInfo.systemUptime - session.startedAt)
+        let currentWindows = realWindowIdentities(
+            in: suppliedSnapshot ?? snapshot,
+            bundleID: bundleID
+        )
+        let hasNewRealWindow = LaunchWindowBaselineDecision.hasNewWindow(
+            baseline: session.baselineRealWindows,
+            current: currentWindows
+        )
+
+        let targetPID = session.app?.processIdentifier
+        let processObservation: LaunchGateDecision.ProcessObservation? = session.app.map { app in
+            let currentIdentity = Self.processIdentity(pid: app.processIdentifier)
+            return LaunchGateDecision.ProcessObservation(
+                isAlive: ProcessLiveness.isAlive(pid: app.processIdentifier),
+                generationMatches: session.processIdentity != nil && currentIdentity == session.processIdentity,
+                activationPolicy: Self.launchActivationPolicy(app.activationPolicy),
+                isFinishedLaunching: app.isFinishedLaunching,
+                bundleDeclaresNoWindow: session.bundleDeclaresNoWindow
+            )
+        }
+        let hasOtherRegularProcess = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID)
+            .contains { app in
+                app.processIdentifier != targetPID
+                    && app.activationPolicy == .regular
+                    && ProcessLiveness.isAlive(pid: app.processIdentifier)
+            }
+        let observation = LaunchGateDecision.Observation(
+            openFailed: session.openFailed,
+            hasNewRealWindow: hasNewRealWindow,
+            launchedProcess: processObservation,
+            hasOtherRegularProcess: hasOtherRegularProcess,
+            elapsed: elapsed
+        )
+        let verdict = LaunchGateDecision.evaluate(observation)
+        traceLaunchEvaluation(
+            bundleID: bundleID,
+            token: token,
+            observation: observation,
+            verdict: verdict
+        )
+
+        if case .release(let reason) = verdict {
+            releaseLaunch(bundleID: bundleID, token: token, reason: reason, elapsed: elapsed)
+        }
+    }
+
+    private func releaseLaunch(
+        bundleID: String,
+        token: UInt64,
+        reason: LaunchGateDecision.ReleaseReason,
+        elapsed: TimeInterval
+    ) {
+        guard let session = launchSessions.remove(bundleID: bundleID, token: token) else {
+            traceLaunch("SUPERSEDED bid=\(bundleID) token=\(token)")
+            return
+        }
+        session.policyRecheckTask?.cancel()
+        session.timeoutTask?.cancel()
+        publishLaunching()
+        traceLaunch(
+            "RELEASE bid=\(bundleID) token=\(token) el=\(Self.timeText(elapsed)) "
+                + "reason=\(String(describing: reason))"
+        )
+    }
+
+    private func stopLaunchSessions() {
+        let sessions = launchSessions.removeAll()
+        for session in sessions {
+            session.policyRecheckTask?.cancel()
+            session.timeoutTask?.cancel()
+        }
+        publishLaunching()
+    }
+
+    private func publishLaunching() {
+        let next = launchSessions.bundleIDs
+        if next != launchingBundleIDs {
+            launchingBundleIDs = next
+        }
+    }
+
+    private func realWindowIdentities(
+        in snapshot: DockSnapshot,
+        bundleID: String
+    ) -> Set<LaunchWindowIdentity> {
+        Set(StripItem.items(from: snapshot).compactMap { item in
+            guard item.bundleIdentifier == bundleID,
+                  !item.isAppLevelFallback,
+                  ProcessLiveness.isAlive(pid: item.pid),
+                  let startTime = ProcessLiveness.startTime(pid: item.pid) else {
+                return nil
+            }
+            return LaunchWindowIdentity(
+                chipID: item.id,
+                pid: item.pid,
+                startTimeSec: Int64(startTime.tv_sec),
+                startTimeUsec: Int64(startTime.tv_usec)
+            )
+        })
+    }
+
+    private static func processIdentity(pid: pid_t) -> LaunchProcessIdentity? {
+        guard ProcessLiveness.isAlive(pid: pid),
+              let startTime = ProcessLiveness.startTime(pid: pid) else {
+            return nil
+        }
+        return LaunchProcessIdentity(
+            pid: pid,
+            startTimeSec: Int64(startTime.tv_sec),
+            startTimeUsec: Int64(startTime.tv_usec)
+        )
+    }
+
+    private static func launchActivationPolicy(
+        _ policy: NSApplication.ActivationPolicy
+    ) -> LaunchGateDecision.ActivationPolicy {
+        switch policy {
+        case .regular: return .regular
+        case .accessory: return .accessory
+        case .prohibited: return .prohibited
+        @unknown default: return .unknown
+        }
+    }
+
+    private static func activationPolicyText(_ policy: NSApplication.ActivationPolicy) -> String {
+        switch policy {
+        case .regular: return "regular"
+        case .accessory: return "accessory"
+        case .prohibited: return "prohibited"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private static func bundleDeclaresNoWindow(at appURL: URL) -> Bool {
+        guard let info = Bundle(url: appURL)?.infoDictionary else { return false }
+        func boolValue(_ key: String) -> Bool {
+            if let value = info[key] as? Bool { return value }
+            if let value = info[key] as? NSNumber { return value.boolValue }
+            if let value = info[key] as? String {
+                return ["1", "true", "yes"].contains(value.lowercased())
+            }
+            return false
+        }
+        return boolValue("LSUIElement") || boolValue("LSBackgroundOnly")
+    }
+
+    private func traceLaunchEvaluation(
+        bundleID: String,
+        token: UInt64,
+        observation: LaunchGateDecision.Observation,
+        verdict: LaunchGateDecision.Verdict
+    ) {
+        guard Self.launchTraceEnabled else { return }
+        let process = observation.launchedProcess
+        let classification = [
+            "fail=\(observation.openFailed ? 1 : 0)",
+            "win=\(observation.hasNewRealWindow ? 1 : 0)",
+            "alive=\(process.map { $0.isAlive ? 1 : 0 } ?? -1)",
+            "gen=\(process.map { $0.generationMatches ? 1 : 0 } ?? -1)",
+            "policy=\(process.map { String(describing: $0.activationPolicy) } ?? "unknown")",
+            "fin=\(process.map { $0.isFinishedLaunching ? 1 : 0 } ?? -1)",
+            "decl=\(process.map { $0.bundleDeclaresNoWindow ? 1 : 0 } ?? -1)",
+            "other=\(observation.hasOtherRegularProcess ? 1 : 0)",
+            "verdict=\(String(describing: verdict))"
+        ].joined(separator: " ")
+        guard launchSessions.entry(for: bundleID)?.value.lastTraceClassification != classification else {
+            return
+        }
+        _ = launchSessions.update(bundleID: bundleID, token: token) { session in
+            session.lastTraceClassification = classification
+        }
+        traceLaunch(
+            "EVAL bid=\(bundleID) token=\(token) el=\(Self.timeText(observation.elapsed)) \(classification)"
+        )
+    }
+
+    private func traceLaunch(_ message: String) {
+        guard Self.launchTraceEnabled else { return }
+        print("[launch] \(message)")
+    }
+
+    private static func timeText(_ value: TimeInterval) -> String {
+        String(format: "%.3f", value)
     }
 
     private func handleSnapshotUpdate(_ newSnapshot: DockSnapshot) {

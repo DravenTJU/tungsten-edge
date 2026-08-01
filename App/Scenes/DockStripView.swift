@@ -922,6 +922,7 @@ struct DockStripView: View {
                     LauncherChip(bundleID: bid,
                                  isRunning: running,
                                  isHidden: running && isHiddenInSnapshot(bundleID: bid),
+                                 isLaunching: runtime.launchingBundleIDs.contains(bid),
                                  scale: dockScale,
                                  dimsWhenHidden: false,
                                  membershipItems: LauncherMembershipItem.items(
@@ -932,8 +933,7 @@ struct DockStripView: View {
                                     controller: appMembershipController
                                  ),
                                  onTap: running ? { Self.reopenMainWindow(bundleID: bid) } : nil,
-                                 onLaunch: { runtime.beginLaunch(bid) },
-                                 launchReady: !runtime.launchingBundleIDs.contains(bid))
+                                 onLaunch: { runtime.beginLaunch(bid) })
                 }
                 if let badge = badgeStore.badgesByBundleID[bid] {
                     ChipBadgeView(text: badge)
@@ -950,11 +950,11 @@ struct DockStripView: View {
                 bundleID: bid,
                 isRunning: isRunning,
                 isHidden: runningApplicationStore.isHidden(bid),
+                isLaunching: runtime.launchingBundleIDs.contains(bid),
                 scale: dockScale,
                 membershipItems: keptAppMembershipItems(bundleID: bid),
                 onTap: reopen,
-                onLaunch: { runtime.beginLaunch(bid) },
-                launchReady: !runtime.launchingBundleIDs.contains(bid)
+                onLaunch: { runtime.beginLaunch(bid) }
             )
         }
     }
@@ -1093,7 +1093,10 @@ struct DockStripView: View {
     /// even when other windows are visible (verified with WeChat, 2026-06-12).
     private static func reopenMainWindow(bundleID: String) {
         let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .filter { !$0.isTerminated && $0.activationPolicy == .regular }
+            .filter {
+                $0.activationPolicy == .regular
+                    && ProcessLiveness.isAlive(pid: $0.processIdentifier)
+            }
         for app in runningApps { _ = app.unhide() }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: .init(), completionHandler: nil)

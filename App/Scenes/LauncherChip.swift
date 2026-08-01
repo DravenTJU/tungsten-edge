@@ -1,5 +1,4 @@
 import AppKit
-import os
 import SwiftUI
 
 /// A chip that represents an app by bundle identifier rather than a concrete window.
@@ -14,6 +13,9 @@ struct LauncherChip: View {
     let bundleID: String
     let isRunning: Bool   // supplied by the displayed zone's runtime/process projection
     let isHidden: Bool    // supplied by the displayed zone's runtime/process projection
+    /// Runtime-owned launch session state. The chip only renders this state; it does
+    /// not infer readiness from process state or own a second launch timeout.
+    let isLaunching: Bool
     var scale: CGFloat = 0.7
     /// 只控制「运行但隐藏」要不要降级变暗（抽屉 / 普通 kept 传 true → 0.45；消息区传 false → 保持全亮）。
     /// **未运行恒定灰显（0.35）与本标志无关**——消息区退出态因此也会变灰，与所有退出应用统一
@@ -25,39 +27,24 @@ struct LauncherChip: View {
     /// When set, replaces the default tap behavior (drawer show/hide toggle). Used by
     /// app-level strip entries that must reopen a missing main window.
     var onTap: (() -> Void)? = nil
-    /// Fired when this chip actually kicks off a launch (tap on a not-running app).
-    /// The drawer wires it to `runtime.beginLaunch` for the 窗口出现门控 (keeps the
-    /// app bouncing in the launch zone until its window shows, not just its process).
-    var onLaunch: () -> Void = {}
-    /// Optional external launch gate. `nil` preserves the legacy behavior: a running
-    /// process or a successful open completion stops the bounce. When non-nil, the
-    /// caller owns readiness and the bounce stops only after this becomes `true`
-    /// (or launch fails / the 8-second backstop fires).
-    var launchReady: Bool? = nil
+    /// Starts the runtime-owned launch session and returns whether launch dispatch
+    /// succeeded. A false result keeps the drawer open and never starts local bounce.
+    var onLaunch: () -> Bool = { false }
     /// Fired when the tap dispatches an "open" action: unhide+activate (running but not active) or launch (not running).
     /// Hide taps (app is active → minimize) do NOT fire this — the drawer stays open for those.
     /// Only set by DrawerView; strip messaging chips leave it nil.
     var onPrimaryAction: (() -> Void)? = nil
 
-    private static let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "LauncherChip")
-
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
     private var theme: DockThemeTokens { .resolve(colorScheme) }
 
-    @State private var isLaunching = false
     @State private var isHovering = false
+    @State private var bounceUp = false
+    @State private var bounceTimer: Timer?
 
-    /// 弹跳动画：偏移量由 isLaunching 声明式推导，动画类型也跟着 isLaunching 切换。
-    /// 关键——绝不能用「withAnimation(.repeatForever) 起跳 + withAnimation 把值设回 0」
-    /// 这种命令式写法：另一个动画停不掉已在运行的 .repeatForever，会留下永远跳动的
-    /// 僵尸动画（2026-06-18 实测：弹跳不止的真凶）。声明式 .animation(value:) 在
-    /// isLaunching 变 false 时自动换成有限动画，循环动画从根上消失。
-    private var bounceAnimation: Animation {
-        isLaunching
-            ? .easeInOut(duration: 0.25).repeatForever(autoreverses: true)
-            : .easeOut(duration: 0.15)
-    }
+    private static let launchTraceEnabled =
+        ProcessInfo.processInfo.environment["DOCK_LAUNCH_TRACE"] == "1"
 
     var body: some View {
         let iconSize: CGFloat = isHovering ? 24 * scale : 36 * scale
@@ -65,25 +52,34 @@ struct LauncherChip: View {
                                                    isHidden: isHidden,
                                                    dimsWhenHidden: dimsWhenHidden)
         let iconDim: DockIconDim = theme.iconDim(visual.dim)
-        return VStack(spacing: 2) {
+        return VStack(spacing: 0) {
             Spacer(minLength: 0)
-            Image(nsImage: AppIconResolver.icon(for: bundleID))
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: iconSize, height: iconSize)
-                .clipShape(RoundedRectangle(cornerRadius: iconSize / 4, style: .continuous))
-                .dockIconDim(iconDim)
-                .dockShadow(theme.iconShadow)
-                .offset(y: isLaunching ? -6 : 0)
-                .animation(bounceAnimation, value: isLaunching)
-            if isHovering {
+            // Keep hover layout stable and animate only the icon size and label alpha;
+            // neither transaction wraps the outer bounce offset.
+            ZStack(alignment: .top) {
+                Image(nsImage: AppIconResolver.icon(for: bundleID))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: iconSize, height: iconSize)
+                    .clipShape(RoundedRectangle(cornerRadius: iconSize / 4, style: .continuous))
+                    .dockIconDim(iconDim)
+                    .dockShadow(theme.iconShadow)
+                    .animation(.easeInOut(duration: 0.18), value: iconSize)
+                    .offset(y: bounceUp ? -6 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: bounceUp)
+
                 Text(displayName)
                     .font(.system(size: max(8, 10 * scale), weight: .medium, design: .rounded))
                     .foregroundStyle(theme.labelHover.color)
                     .lineLimit(1)
                     .frame(maxWidth: 64 * scale)
-                    .transition(.opacity)
+                    .offset(y: 26 * scale)
+                    .opacity(isHovering ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.18), value: isHovering)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(!isHovering)
             }
+            .frame(width: 44 * scale, height: 36 * scale, alignment: .top)
             Spacer(minLength: 0)
         }
         .frame(width: 44 * scale, height: 52 * scale)
@@ -97,19 +93,23 @@ struct LauncherChip: View {
         }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture {
-            if let onTap { onTap() } else { handleTap() }
-        }
+        .onTapGesture { handlePrimaryTap() }
         .nativeContextMenu { buildLauncherMenu() }
         .help(displayName)
-        .onDisappear { stopBounce() }
-        .onChange(of: isRunning) { newValue in
-            if launchReady == nil, newValue { stopBounce() }
+        .onAppear {
+            trace("appear isLaunching=\(isLaunching)")
+            if isLaunching { startBounce() }
         }
-        .onChange(of: launchReady) { newValue in
-            if newValue == true { stopBounce() }
+        .onDisappear {
+            trace("disappear cleanup")
+            cleanupBounce()
         }
-        .animation(.easeInOut(duration: 0.18), value: isHovering)
+        .onChange(of: isLaunching) { newValue in
+            trace("isLaunching=\(newValue)")
+            if newValue { startBounce() } else { stopBounce() }
+        }
+        .onChange(of: bounceUp) { trace("bounceUp=\($0)") }
+        .onChange(of: isHovering) { trace("isHovering=\($0)") }
     }
 
     private func buildLauncherMenu() -> NSMenu {
@@ -124,8 +124,8 @@ struct LauncherChip: View {
         for kind in kinds {
             switch kind {
             case .open:
-                // 右键「打开」：复用启动路径（弹跳 / 窗口出现门控 / 8s 兜底 / 防重复启动都在 launch()），
-                // 但不触发 onPrimaryAction——否则抽屉图标右键打开会顺手关掉抽屉。
+                // 右键「打开」：复用 runtime 启动路径，但不触发 onPrimaryAction——
+                // 否则抽屉图标右键打开会顺手关掉抽屉。
                 menu.addItem(ClosureMenuItem("打开") { launch(firePrimaryAction: false) })
             case .recentDocuments:
                 AppMenuBuilder.appendRecentDocuments(to: menu, bundleID: bundleID)
@@ -171,6 +171,17 @@ struct LauncherChip: View {
         return menu
     }
 
+    /// The single left-click gate covers both injected app-level behavior and the
+    /// default drawer behavior. Runtime still performs the authoritative duplicate
+    /// check for clicks that arrive before SwiftUI publishes the new launch state.
+    private func handlePrimaryTap() {
+        guard !isLaunching else {
+            trace("tap ignored while launching")
+            return
+        }
+        if let onTap { onTap() } else { handleTap() }
+    }
+
     private func handleTap() {
         if isRunning {
             let runningApps = Self.regularRunningApplications(bundleID: bundleID)
@@ -185,7 +196,7 @@ struct LauncherChip: View {
                 onPrimaryAction?()
             }
         } else {
-            launch()   // onPrimaryAction fired inside launch() after URL guard；防重复启动也在 launch()
+            launch()
         }
     }
 
@@ -195,49 +206,62 @@ struct LauncherChip: View {
 
     private static func regularRunningApplications(bundleID: String) -> [NSRunningApplication] {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter {
-            !$0.isTerminated && $0.activationPolicy == .regular
+            $0.activationPolicy == .regular
+                && ProcessLiveness.isAlive(pid: $0.processIdentifier)
         }
     }
 
-    /// 停跳：只翻 isLaunching。偏移量与动画类型都声明式绑定它，置 false 即换成
-    /// 有限动画收敛到 0，循环动画随之消失（见 bounceAnimation 注释）。
+    /// Every leg is a finite animation. The common-mode timer only schedules the next
+    /// leg, so hover/layout transactions cannot turn the bounce into a repeatForever
+    /// animation that survives launch completion.
+    private func startBounce() {
+        guard bounceTimer == nil else { return }
+        bounceUp = true
+
+        let timer = Timer(timeInterval: 0.25, repeats: true) { _ in
+            bounceUp.toggle()
+        }
+        timer.tolerance = 0.02
+        bounceTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        trace("bounce timer started")
+    }
+
     private func stopBounce() {
-        isLaunching = false
+        bounceTimer?.invalidate()
+        bounceTimer = nil
+        bounceUp = false
+        trace("bounce timer stopped")
+    }
+
+    /// View teardown is local cleanup only. It must not cancel the runtime session;
+    /// a newly-created drawer chip resumes from the external `isLaunching` value.
+    private func cleanupBounce() {
+        bounceTimer?.invalidate()
+        bounceTimer = nil
+        bounceUp = false
     }
 
     /// - Parameter firePrimaryAction: 左键点击传 true（保持原行为：抽屉图标启动后关抽屉）；
-    ///   右键「打开」传 false，只弹跳启动、不关抽屉。防重复启动的 `!isLaunching` 门控集中在此，
-    ///   左键 `handleTap` 与右键「打开」共用同一路径，不另写启动逻辑。
+    ///   右键「打开」传 false，只启动、不关抽屉。runtime owns URL resolution,
+    ///   launch dispatch, readiness, timeout, and duplicate-session rejection.
     private func launch(firePrimaryAction: Bool = true) {
-        guard !isLaunching else { return }
-        Self.logger.info("launch() 入口，bundleID=\(bundleID, privacy: .public)")
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            Self.logger.warning("launch()：找不到 app URL，bundleID=\(bundleID, privacy: .public)")
+        guard !isLaunching else {
+            trace("launch ignored while launching")
             return
         }
-
-        isLaunching = true
-        let usesExternalLaunchGate = launchReady != nil
-        onLaunch()
+        guard onLaunch() else {
+            trace("runtime rejected launch")
+            return
+        }
+        trace("runtime accepted launch")
         if firePrimaryAction { onPrimaryAction?() }
+    }
 
-        // 8s timeout backstop（对 menubar-only app 无窗口回调的情况兜底）
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
-            stopBounce()
-        }
-
-        NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { _, error in
-            if let error {
-                Self.logger.error("launch()：openApplication 失败，bundleID=\(bundleID, privacy: .public)，error=\(error.localizedDescription, privacy: .public)")
-                Task { @MainActor in stopBounce() }
-            } else if !usesExternalLaunchGate {
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
-                    stopBounce()
-                }
-            }
-        }
+    private func trace(_ message: String) {
+        guard Self.launchTraceEnabled else { return }
+        let timestamp = String(format: "%.3f", ProcessInfo.processInfo.systemUptime)
+        print("[launch] BOUNCE bid=\(bundleID) t=\(timestamp) \(message)")
     }
 }
 

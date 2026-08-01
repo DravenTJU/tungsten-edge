@@ -196,18 +196,17 @@ struct DrawerView: View {
     }
 
     /// `running` 按**区**传（运行区 true / 启动区 false），保证外观、点击与菜单都服从当前显示区。
-    /// 启动后的进程在真窗口出现前仍留在启动区；弹跳停止由 `launchReady` 的窗口门控负责，
-    /// 不再由进程刚出现这一瞬间提前放行。
+    /// 启动后的进程在真窗口出现前仍留在启动区；runtime 的启动会话直接驱动弹跳。
     @ViewBuilder
     private func drawerChip(_ id: String, index: Int, zone: [String], running: Bool) -> some View {
         let delay = Double(min(index, 6)) * 0.018
         LauncherChip(bundleID: id,
                      isRunning: running,
                      isHidden: running ? isHiddenInSnapshot(id) : false,
+                     isLaunching: runtime.launchingBundleIDs.contains(id),
                      scale: 0.7,
                      membershipItems: membershipItems(for: id),
                      onLaunch: { runtime.beginLaunch(id) },
-                     launchReady: !runtime.launchingBundleIDs.contains(id),
                      onPrimaryAction: onPrimaryAction)
             .offset(y: isPresented ? 0 : 20)
             .opacity(isPresented ? 1 : 0)
