@@ -1394,13 +1394,12 @@ struct ChipView: View {
     // MARK: - Helpers
 
     private var displayTitle: String {
-        item.title == "macos-dock-cc-v2" ? "任务条" : item.title
+        WindowDisplayTitle.resolve(rawTitle: item.title, fallbackName: appName)
     }
 
     private var appName: String {
-        guard let bid = item.bundleIdentifier else { return displayTitle }
-        let name = AppDisplayNameResolver.displayName(for: bid)
-        return name == "macos-dock-cc-v2" ? "任务条" : name
+        let name = item.bundleIdentifier.map(AppDisplayNameResolver.displayName(for:)) ?? item.appID
+        return WindowDisplayTitle.resolve(rawTitle: nil, fallbackName: name)
     }
 }
 

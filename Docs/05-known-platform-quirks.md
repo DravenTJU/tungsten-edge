@@ -19,6 +19,7 @@
 - Finder 具体窗口名可通过 `CG` / `AX` / AppleScript 取得；如果 UI 只显示 `访达`，优先怀疑当前观察链路丢了窗口级信息。
 - Finder 激活不能轻易退回到 app-level activate，否则可能带出错误窗口或多个窗口。
 - 某些 app 创建窗口时标题先为空，稍后才填入真实标题。
+- `com.apple.systempreferences` 是反例：真实主窗口完全就绪后仍可能表现为 `AXWindow` / `AXStandardWindow` + 空标题；空标题不只是一种启动瞬态。
 - `CG` 的 `disappeared` 事件会带着旧 `cgWindowID` 回流；验收逻辑不能把这类事件当成“当前仍可见窗口”。
 - 当前采样里，飞书可能出现 `CG` 可见但标题为空、同时 `AXWindows` 为空的时刻。
 - `AX` 可能暴露系统内部窗口、小组件、扩展窗口或辅助进程窗口；这些对象看起来像窗口，但不一定是用户想在任务条里操作的窗口。
@@ -32,6 +33,12 @@
 - 长时间空闲 / 睡眠 / 过夜后，6 秒身份记忆会自然过期。不能依赖短记忆认回窗口；必须把当前任务条 `DockSnapshot` 当作长期座位图来对账。
 - 同一个真实窗口在恢复或跨屏状态变化后，frame 可能发生较大偏移；如果同进程同应用下标题唯一，可以用唯一标题认回旧座位。多个同名候选时不能猜。
 - 浏览器、Illustrator、Photoshop、Finder、WeChat、Terminal、Codex 等应用会暴露不同粒度的标题或位置变化；这些应作为通用身份规则的验收样本，不应变成应用白名单。
+
+## LaunchServices 与同 bundle ID 多包应用（2026-08-01 实测）
+
+- `com.lemon.lvpro` 同时注册外层 `/Applications/VideoFusion-macOS.app` 与两个嵌套 `.app`；嵌套主体和 TrayHelper 均声明 `LSUIElement=1`，TrayHelper 可单独以 `.accessory`、无窗口运行。
+- `NSWorkspace.OpenConfiguration.allowsRunningApplicationSubstitution` 默认开启，允许不同 URL 的已运行实例替代所选应用；`createsNewApplicationInstance=true` 则忽略该设置并强开新实例，不能拿它当通用修复。
+- 修复前直接对外层主体调用默认 `openApplication`，completion 实际返回嵌套 `VideoFusion-macOSTrayHelper.app` 且无错误；同一目标关闭 running substitution 后返回外层主体本身。该类问题必须按 canonical bundle path 取证，pid 只是一轮会话的临时值。
 
 ## 状态栏菜单与 macOS 集成限制（2026-06-30）
 

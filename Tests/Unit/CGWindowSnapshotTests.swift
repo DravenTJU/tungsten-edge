@@ -27,6 +27,17 @@ final class CGWindowSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.allWindowIDs, [11, 12, 21, 31])
     }
 
+    func testParseCapturesAlphaByLayerZeroWindowID() {
+        let snapshot = AppTrackerCGWindowSnapshot.parse([
+            windowInfo(id: 11, layer: 0, isOnScreen: true, pid: 100, alpha: 1),
+            windowInfo(id: 12, layer: 0, isOnScreen: false, pid: 100, alpha: 0),
+            windowInfo(id: 13, layer: 0, isOnScreen: false, pid: 100, alpha: nil),
+            windowInfo(id: 14, layer: 1, isOnScreen: true, pid: 100, alpha: 0.5),
+        ])
+
+        XCTAssertEqual(snapshot.alphaByWindowID, [11: 1, 12: 0])
+    }
+
     func testParseTreatsMissingOnScreenFlagAsNotOnScreen() {
         let snapshot = AppTrackerCGWindowSnapshot.parse([
             windowInfo(id: 21, layer: 0, isOnScreen: nil, pid: 100),
@@ -43,12 +54,23 @@ final class CGWindowSnapshotTests: XCTestCase {
             [kCGWindowLayer as String: "0", kCGWindowNumber as String: 32],
         ]
 
-        let empty = AppTrackerCGWindowSnapshot(allWindowIDs: [], onScreenWindowIDs: [], windowIDsByPID: [:])
+        let empty = AppTrackerCGWindowSnapshot(
+            allWindowIDs: [],
+            onScreenWindowIDs: [],
+            windowIDsByPID: [:],
+            alphaByWindowID: [:]
+        )
         XCTAssertEqual(AppTrackerCGWindowSnapshot.parse(malformed), empty)
         XCTAssertEqual(AppTrackerCGWindowSnapshot.parse([]), empty)
     }
 
-    private func windowInfo(id: Int, layer: Int, isOnScreen: Bool?, pid: Int?) -> [String: Any] {
+    private func windowInfo(
+        id: Int,
+        layer: Int,
+        isOnScreen: Bool?,
+        pid: Int?,
+        alpha: Double? = nil
+    ) -> [String: Any] {
         var info: [String: Any] = [
             kCGWindowNumber as String: id,
             kCGWindowLayer as String: layer,
@@ -58,6 +80,9 @@ final class CGWindowSnapshotTests: XCTestCase {
         }
         if let pid {
             info[kCGWindowOwnerPID as String] = pid
+        }
+        if let alpha {
+            info[kCGWindowAlpha as String] = alpha
         }
         return info
     }

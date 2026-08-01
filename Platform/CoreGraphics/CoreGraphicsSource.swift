@@ -104,6 +104,7 @@ struct CoreGraphicsSource {
                     bundleIdentifier: bundleIdentifier,
                     appName: appName,
                     title: title,
+                    subrole: nil,
                     bounds: bounds,
                     alpha: alpha,
                     activationPolicy: app?.activationPolicy ?? .prohibited,

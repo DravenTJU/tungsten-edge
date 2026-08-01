@@ -15,6 +15,7 @@ struct DockWindowEligibilityPolicy {
         let bundleIdentifier: String?
         let appName: String
         let title: String?
+        let subrole: String?
         let bounds: CGRect?
         let alpha: Double?
         let activationPolicy: NSApplication.ActivationPolicy
@@ -48,7 +49,14 @@ struct DockWindowEligibilityPolicy {
             }
             return .keep
         case .regular:
-            return hasTitle(candidate.title) ? .keep : .filter
+            if hasTitle(candidate.title) {
+                return .keep
+            }
+            guard candidate.subrole == (kAXStandardWindowSubrole as String),
+                  hasMinimumFrame(candidate.bounds) else {
+                return .filter
+            }
+            return .keep
         @unknown default:
             return hasTitle(candidate.title) ? .keep : .filter
         }
@@ -114,6 +122,55 @@ struct DockWindowEligibilityPolicy {
         "com.apple.dock.extra.xpc",
         "ControlCenterHelper.xpc"
     ]
+}
+
+/// Production adapter for the inventory-first AppTracker path. Keeping the AX shape check and the
+/// shared deny policy in one pure decision prevents incomplete metadata wiring from opening a seat.
+struct AppTrackerWindowEligibility {
+    struct Application {
+        let bundleIdentifier: String?
+        let appName: String
+        let activationPolicy: NSApplication.ActivationPolicy
+        let executablePath: String?
+    }
+
+    private let policy = DockWindowEligibilityPolicy()
+
+    func isEligible(
+        title: String?,
+        role: String?,
+        subrole: String?,
+        bounds: CGRect?,
+        alpha: Double?,
+        application: Application
+    ) -> Bool {
+        let candidate = DockWindowEligibilityPolicy.Candidate(
+            bundleIdentifier: application.bundleIdentifier,
+            appName: application.appName,
+            title: title,
+            subrole: subrole,
+            bounds: bounds,
+            alpha: alpha,
+            activationPolicy: application.activationPolicy,
+            executablePath: application.executablePath
+        )
+        guard policy.evaluate(candidate) == .keep else { return false }
+
+        if FeishuBundleRules.isFeishu(bundleIdentifier: application.bundleIdentifier) {
+            return AXTaskbarWindowRules.isMainWindow(role: role, subrole: subrole, bounds: bounds)
+        }
+
+        if FinderWindowRules.isFinder(bundleIdentifier: application.bundleIdentifier) {
+            return FinderWindowRules.isTrackable(
+                title: title,
+                role: role,
+                subrole: subrole,
+                bounds: bounds
+            )
+        }
+
+        return AXTaskbarWindowRules.isMainWindow(role: role, subrole: subrole, bounds: bounds)
+    }
 }
 
 enum FeishuBundleRules {

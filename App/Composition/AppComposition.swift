@@ -173,7 +173,7 @@ final class AppRuntime: ObservableObject {
     @discardableResult
     func beginLaunch(_ bundleID: String) -> Bool {
         guard !bundleID.isEmpty,
-              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+              let launchTarget = Self.resolveLaunchTarget(bundleID: bundleID) else {
             launchLogger.warning("launch rejected: app URL missing bundleID=\(bundleID, privacy: .public)")
             traceLaunch("REJECT bid=\(bundleID) reason=no-app-url")
             return false
@@ -181,7 +181,7 @@ final class AppRuntime: ObservableObject {
 
         let startedAt = ProcessInfo.processInfo.systemUptime
         let baseline = realWindowIdentities(in: snapshot, bundleID: bundleID)
-        let declaresNoWindow = Self.bundleDeclaresNoWindow(at: appURL)
+        let declaresNoWindow = launchTarget.declaresNoWindow
         guard let token = launchSessions.begin(bundleID: bundleID, makeValue: { token in
             LaunchSession(
                 bundleID: bundleID,
@@ -195,8 +195,18 @@ final class AppRuntime: ObservableObject {
             return false
         }
 
+        let appURL = launchTarget.url
+        let targetPath = AppLaunchTargetDecision.canonicalPath(appURL)
+        let configuration = AppLaunchOpenConfiguration.make()
+        let createsNewApplicationInstance = configuration.createsNewApplicationInstance
+        let allowsRunningApplicationSubstitution = configuration.allowsRunningApplicationSubstitution
         publishLaunching()
-        traceLaunch("START bid=\(bundleID) token=\(token) t=\(Self.timeText(startedAt)) baseline=\(baseline.count)")
+        traceLaunch(
+            "START bid=\(bundleID) token=\(token) t=\(Self.timeText(startedAt)) baseline=\(baseline.count) "
+                + "target=\(Self.traceValue(targetPath)) "
+                + "createsNewApplicationInstance=\(createsNewApplicationInstance ? 1 : 0) "
+                + "allowsRunningApplicationSubstitution=\(allowsRunningApplicationSubstitution ? 1 : 0)"
+        )
 
         let recheckTask = Task { @MainActor [weak self] in
             for deadline in Self.launchPolicyRecheckDeadlines {
@@ -226,11 +236,14 @@ final class AppRuntime: ObservableObject {
             return false
         }
 
-        NSWorkspace.shared.openApplication(at: appURL, configuration: .init()) { [weak self] app, error in
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { [weak self] app, error in
             Task { @MainActor [weak self] in
                 self?.handleLaunchCompletion(
                     bundleID: bundleID,
                     token: token,
+                    targetPath: targetPath,
+                    createsNewApplicationInstance: createsNewApplicationInstance,
+                    allowsRunningApplicationSubstitution: allowsRunningApplicationSubstitution,
                     app: app,
                     error: error
                 )
@@ -242,6 +255,9 @@ final class AppRuntime: ObservableObject {
     private func handleLaunchCompletion(
         bundleID: String,
         token: UInt64,
+        targetPath: String,
+        createsNewApplicationInstance: Bool,
+        allowsRunningApplicationSubstitution: Bool,
         app: NSRunningApplication?,
         error: Error?
     ) {
@@ -251,7 +267,18 @@ final class AppRuntime: ObservableObject {
             session.processIdentity = identity
             session.openFailed = error != nil
         }) else {
-            traceLaunch("SUPERSEDED bid=\(bundleID) token=\(token)")
+            traceLaunch(
+                Self.launchCompletionTrace(
+                    prefix: "SUPERSEDED",
+                    bundleID: bundleID,
+                    token: token,
+                    targetPath: targetPath,
+                    createsNewApplicationInstance: createsNewApplicationInstance,
+                    allowsRunningApplicationSubstitution: allowsRunningApplicationSubstitution,
+                    app: app,
+                    error: error
+                )
+            )
             return
         }
 
@@ -262,8 +289,17 @@ final class AppRuntime: ObservableObject {
             )
         }
         traceLaunch(
-            "OPENED bid=\(bundleID) token=\(token) pid=\(app.map { String($0.processIdentifier) } ?? "nil") "
-                + "ok=\(error == nil ? 1 : 0) policy=\(policy)"
+            Self.launchCompletionTrace(
+                prefix: "OPENED",
+                bundleID: bundleID,
+                token: token,
+                targetPath: targetPath,
+                createsNewApplicationInstance: createsNewApplicationInstance,
+                allowsRunningApplicationSubstitution: allowsRunningApplicationSubstitution,
+                app: app,
+                error: error,
+                policy: policy
+            )
         )
         evaluateLaunch(bundleID: bundleID, token: token)
     }
@@ -431,6 +467,53 @@ final class AppRuntime: ObservableObject {
             return false
         }
         return boolValue("LSUIElement") || boolValue("LSBackgroundOnly")
+    }
+
+    private static func resolveLaunchTarget(bundleID: String) -> AppLaunchTargetDecision.Candidate? {
+        let workspace = NSWorkspace.shared
+        let preferred = workspace.urlForApplication(withBundleIdentifier: bundleID).map {
+            AppLaunchTargetDecision.Candidate(
+                url: $0,
+                declaresNoWindow: bundleDeclaresNoWindow(at: $0)
+            )
+        }
+        let candidates = workspace.urlsForApplications(withBundleIdentifier: bundleID).map {
+            AppLaunchTargetDecision.Candidate(
+                url: $0,
+                declaresNoWindow: bundleDeclaresNoWindow(at: $0)
+            )
+        }
+        return AppLaunchTargetDecision.select(
+            launchServicesCandidates: candidates,
+            preferred: preferred
+        )
+    }
+
+    private static func launchCompletionTrace(
+        prefix: String,
+        bundleID: String,
+        token: UInt64,
+        targetPath: String,
+        createsNewApplicationInstance: Bool,
+        allowsRunningApplicationSubstitution: Bool,
+        app: NSRunningApplication?,
+        error: Error?,
+        policy suppliedPolicy: String? = nil
+    ) -> String {
+        let policy = suppliedPolicy ?? app.map { activationPolicyText($0.activationPolicy) } ?? "unknown"
+        let returnedPath = app?.bundleURL.map { canonicalPath in
+            AppLaunchTargetDecision.canonicalPath(canonicalPath)
+        }
+        return "\(prefix) bid=\(bundleID) token=\(token) target=\(traceValue(targetPath)) "
+            + "createsNewApplicationInstance=\(createsNewApplicationInstance ? 1 : 0) "
+            + "allowsRunningApplicationSubstitution=\(allowsRunningApplicationSubstitution ? 1 : 0) "
+            + "pid=\(app.map { String($0.processIdentifier) } ?? "nil") policy=\(policy) "
+            + "returned=\(returnedPath.map(traceValue) ?? "nil") "
+            + "error=\(error.map { traceValue($0.localizedDescription) } ?? "nil")"
+    }
+
+    private static func traceValue(_ value: String) -> String {
+        String(reflecting: value)
     }
 
     private func traceLaunchEvaluation(

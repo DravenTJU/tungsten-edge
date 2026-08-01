@@ -53,6 +53,10 @@
 		A0000000000000000000FF01 /* LaunchGateDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF00 /* LaunchGateDecision.swift */; };
 		A0000000000000000000FF02 /* LaunchGateDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF00 /* LaunchGateDecision.swift */; };
 		A0000000000000000000FF11 /* LaunchGateDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF10 /* LaunchGateDecisionTests.swift */; };
+		A0000000000000000000FF21 /* AppLaunchTargetDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF20 /* AppLaunchTargetDecision.swift */; };
+		A0000000000000000000FF22 /* AppLaunchTargetDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF20 /* AppLaunchTargetDecision.swift */; };
+		A0000000000000000000FF31 /* AppLaunchTargetDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF30 /* AppLaunchTargetDecisionTests.swift */; };
+		A0000000000000000000FF41 /* WindowDisplayTitleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FF40 /* WindowDisplayTitleTests.swift */; };
 		A0000000000000000000FB01 /* DockThemeTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FB00 /* DockThemeTokens.swift */; };
 		A0000000000000000000FB02 /* DockThemeTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FB00 /* DockThemeTokens.swift */; };
 		A0000000000000000000FC01 /* DockTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000FC00 /* DockTheme.swift */; };
@@ -344,10 +348,13 @@
 		A00000000000000000009400 /* LauncherMenuPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherMenuPlan.swift; sourceTree = "<group>"; };
 		A0000000000000000000FA00 /* LauncherChipVisualPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherChipVisualPlan.swift; sourceTree = "<group>"; };
 		A0000000000000000000FF00 /* LaunchGateDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchGateDecision.swift; sourceTree = "<group>"; };
+		A0000000000000000000FF20 /* AppLaunchTargetDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTargetDecision.swift; sourceTree = "<group>"; };
 		A00000000000000000009580 /* AppMembershipMenuPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppMembershipMenuPlan.swift; sourceTree = "<group>"; };
 		A00000000000000000009410 /* LauncherMenuPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherMenuPlanTests.swift; sourceTree = "<group>"; };
 		A0000000000000000000FA10 /* LauncherChipVisualPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherChipVisualPlanTests.swift; sourceTree = "<group>"; };
 		A0000000000000000000FF10 /* LaunchGateDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchGateDecisionTests.swift; sourceTree = "<group>"; };
+		A0000000000000000000FF30 /* AppLaunchTargetDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTargetDecisionTests.swift; sourceTree = "<group>"; };
+		A0000000000000000000FF40 /* WindowDisplayTitleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDisplayTitleTests.swift; sourceTree = "<group>"; };
 		A0000000000000000000FB00 /* DockThemeTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockThemeTokens.swift; sourceTree = "<group>"; };
 		A0000000000000000000FC00 /* DockTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockTheme.swift; sourceTree = "<group>"; };
 		A0000000000000000000FE00 /* DockGlassBackdrop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockGlassBackdrop.swift; sourceTree = "<group>"; };
@@ -537,6 +544,7 @@
 				A00000000000000000009400 /* LauncherMenuPlan.swift */,
 				A0000000000000000000FA00 /* LauncherChipVisualPlan.swift */,
 				A0000000000000000000FF00 /* LaunchGateDecision.swift */,
+				A0000000000000000000FF20 /* AppLaunchTargetDecision.swift */,
 				A0000000000000000000FB00 /* DockThemeTokens.swift */,
 				A00000000000000000009580 /* AppMembershipMenuPlan.swift */,
 				A00000000000000000009700 /* DragConversionPlan.swift */,
@@ -765,6 +773,8 @@
 				A00000000000000000009410 /* LauncherMenuPlanTests.swift */,
 				A0000000000000000000FA10 /* LauncherChipVisualPlanTests.swift */,
 				A0000000000000000000FF10 /* LaunchGateDecisionTests.swift */,
+				A0000000000000000000FF30 /* AppLaunchTargetDecisionTests.swift */,
+				A0000000000000000000FF40 /* WindowDisplayTitleTests.swift */,
 				A0000000000000000000FD00 /* DockThemeTests.swift */,
 				A00000000000000000009590 /* AppMembershipMenuPlanTests.swift */,
 				A00000000000000000009350 /* ShelfLogicTests.swift */,
@@ -959,6 +969,7 @@
 					A00000000000000000009401 /* LauncherMenuPlan.swift in Sources */,
 					A0000000000000000000FA01 /* LauncherChipVisualPlan.swift in Sources */,
 					A0000000000000000000FF01 /* LaunchGateDecision.swift in Sources */,
+					A0000000000000000000FF21 /* AppLaunchTargetDecision.swift in Sources */,
 					A0000000000000000000FB01 /* DockThemeTokens.swift in Sources */,
 					A0000000000000000000FC01 /* DockTheme.swift in Sources */,
 					A0000000000000000000FE01 /* DockGlassBackdrop.swift in Sources */,
@@ -1079,6 +1090,7 @@
 				A00000000000000000009402 /* LauncherMenuPlan.swift in Sources */,
 				A0000000000000000000FA02 /* LauncherChipVisualPlan.swift in Sources */,
 				A0000000000000000000FF02 /* LaunchGateDecision.swift in Sources */,
+				A0000000000000000000FF22 /* AppLaunchTargetDecision.swift in Sources */,
 				A0000000000000000000FB02 /* DockThemeTokens.swift in Sources */,
 				A0000000000000000000FC02 /* DockTheme.swift in Sources */,
 				A00000000000000000009582 /* AppMembershipMenuPlan.swift in Sources */,
@@ -1090,6 +1102,8 @@
 				A00000000000000000009411 /* LauncherMenuPlanTests.swift in Sources */,
 				A0000000000000000000FA11 /* LauncherChipVisualPlanTests.swift in Sources */,
 				A0000000000000000000FF11 /* LaunchGateDecisionTests.swift in Sources */,
+				A0000000000000000000FF31 /* AppLaunchTargetDecisionTests.swift in Sources */,
+				A0000000000000000000FF41 /* WindowDisplayTitleTests.swift in Sources */,
 				A0000000000000000000FD01 /* DockThemeTests.swift in Sources */,
 				A00000000000000000009591 /* AppMembershipMenuPlanTests.swift in Sources */,
 				A00000000000000000009351 /* ShelfLogicTests.swift in Sources */,

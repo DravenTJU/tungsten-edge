@@ -948,12 +948,205 @@ final class FinderP0Tests: XCTestCase {
         )
     }
 
-    func testWindowEligibilityFiltersUntitledRegularWindows() {
+    func testWindowEligibilityKeepsUntitledStandardRegularWindows() {
+        let policy = DockWindowEligibilityPolicy()
+
+        for title in [nil, "", " \n\t"] as [String?] {
+            XCTAssertEqual(
+                policy.evaluate(
+                    candidate(
+                        title: title,
+                        subrole: kAXStandardWindowSubrole as String,
+                        bounds: CGRect(x: 0, y: 0, width: 723, height: 626),
+                        activationPolicy: .regular
+                    )
+                ),
+                .keep
+            )
+        }
+    }
+
+    func testWindowEligibilityAppliesMinimumFrameToUntitledStandardRegularWindows() {
         let policy = DockWindowEligibilityPolicy()
 
         XCTAssertEqual(
-            policy.evaluate(candidate(title: nil, activationPolicy: .regular)),
-            .filter
+            policy.evaluate(
+                candidate(
+                    title: nil,
+                    subrole: kAXStandardWindowSubrole as String,
+                    bounds: CGRect(x: 0, y: 0, width: 80, height: 40),
+                    activationPolicy: .regular
+                )
+            ),
+            .keep
+        )
+
+        for bounds in [
+            CGRect(x: 0, y: 0, width: 79, height: 40),
+            CGRect(x: 0, y: 0, width: 80, height: 39)
+        ] {
+            XCTAssertEqual(
+                policy.evaluate(
+                    candidate(
+                        title: nil,
+                        subrole: kAXStandardWindowSubrole as String,
+                        bounds: bounds,
+                        activationPolicy: .regular
+                    )
+                ),
+                .filter
+            )
+        }
+    }
+
+    func testWindowEligibilityRejectsUntitledRegularWindowsWithoutStandardSubrole() {
+        let policy = DockWindowEligibilityPolicy()
+
+        for subrole in [nil, kAXDialogSubrole as String] as [String?] {
+            XCTAssertEqual(
+                policy.evaluate(
+                    candidate(
+                        title: nil,
+                        subrole: subrole,
+                        activationPolicy: .regular
+                    )
+                ),
+                .filter
+            )
+        }
+    }
+
+    func testWindowEligibilityDoesNotExtendUntitledStandardRuleBeyondRegularApps() {
+        let policy = DockWindowEligibilityPolicy()
+
+        for activationPolicy in [NSApplication.ActivationPolicy.accessory, .prohibited] {
+            XCTAssertEqual(
+                policy.evaluate(
+                    candidate(
+                        title: nil,
+                        subrole: kAXStandardWindowSubrole as String,
+                        activationPolicy: activationPolicy
+                    )
+                ),
+                .filter
+            )
+        }
+    }
+
+    func testAppTrackerEligibilityKeepsOnlyFullyQualifiedUntitledStandardWindow() {
+        let eligibility = AppTrackerWindowEligibility()
+        let application = AppTrackerWindowEligibility.Application(
+            bundleIdentifier: "com.apple.systempreferences",
+            appName: "System Settings",
+            activationPolicy: .regular,
+            executablePath: "/System/Applications/System Settings.app/Contents/MacOS/System Settings"
+        )
+
+        XCTAssertTrue(
+            eligibility.isEligible(
+                title: "",
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                bounds: CGRect(x: 0, y: 0, width: 723, height: 626),
+                alpha: 1,
+                application: application
+            )
+        )
+    }
+
+    func testAppTrackerEligibilityAppliesMetadataDenyFiltersBeforeUntitledAdmission() {
+        let eligibility = AppTrackerWindowEligibility()
+        let frame = CGRect(x: 0, y: 0, width: 723, height: 626)
+        let normal = AppTrackerWindowEligibility.Application(
+            bundleIdentifier: "com.example.app",
+            appName: "Example",
+            activationPolicy: .regular,
+            executablePath: "/Applications/Example.app/Contents/MacOS/Example"
+        )
+        let extensionProcess = AppTrackerWindowEligibility.Application(
+            bundleIdentifier: "com.example.share",
+            appName: "Share Extension",
+            activationPolicy: .regular,
+            executablePath: "/Applications/Example.app/Contents/PlugIns/Share.appex/Contents/MacOS/Share"
+        )
+        let notificationCenter = AppTrackerWindowEligibility.Application(
+            bundleIdentifier: "com.apple.notificationcenterui",
+            appName: "Notification Center",
+            activationPolicy: .regular,
+            executablePath: "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter"
+        )
+
+        XCTAssertFalse(
+            eligibility.isEligible(
+                title: nil,
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                bounds: frame,
+                alpha: 0,
+                application: normal
+            )
+        )
+        XCTAssertFalse(
+            eligibility.isEligible(
+                title: nil,
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                bounds: frame,
+                alpha: 1,
+                application: extensionProcess
+            )
+        )
+        XCTAssertFalse(
+            eligibility.isEligible(
+                title: nil,
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                bounds: frame,
+                alpha: 1,
+                application: notificationCenter
+            )
+        )
+    }
+
+    func testAppTrackerEligibilityDoesNotLetNilBundleBypassUntitledSubroleGate() {
+        let eligibility = AppTrackerWindowEligibility()
+        let application = AppTrackerWindowEligibility.Application(
+            bundleIdentifier: nil,
+            appName: "Unknown",
+            activationPolicy: .regular,
+            executablePath: nil
+        )
+
+        XCTAssertFalse(
+            eligibility.isEligible(
+                title: nil,
+                role: kAXWindowRole as String,
+                subrole: nil,
+                bounds: CGRect(x: 0, y: 0, width: 723, height: 626),
+                alpha: 1,
+                application: application
+            )
+        )
+    }
+
+    func testAppTrackerEligibilityFiltersTransparentFeishuWindowBeforeShortcut() {
+        let eligibility = AppTrackerWindowEligibility()
+        let application = AppTrackerWindowEligibility.Application(
+            bundleIdentifier: "com.electron.lark",
+            appName: "Feishu",
+            activationPolicy: .regular,
+            executablePath: "/Applications/Feishu.app/Contents/MacOS/Feishu"
+        )
+
+        XCTAssertFalse(
+            eligibility.isEligible(
+                title: "Feishu",
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                bounds: CGRect(x: 0, y: 0, width: 723, height: 626),
+                alpha: 0,
+                application: application
+            )
         )
     }
 
@@ -1080,6 +1273,34 @@ final class FinderP0Tests: XCTestCase {
             policy.evaluate(
                 candidate(
                     title: "Share Extension",
+                    activationPolicy: .regular,
+                    executablePath: "/System/Applications/App.app/Contents/PlugIns/ShareExtension.appex/Contents/MacOS/ShareExtension"
+                )
+            ),
+            .filter
+        )
+    }
+
+    func testWindowEligibilityAppliesSystemFiltersBeforeUntitledStandardRule() {
+        let policy = DockWindowEligibilityPolicy()
+
+        XCTAssertEqual(
+            policy.evaluate(
+                candidate(
+                    bundleIdentifier: "com.apple.notificationcenterui",
+                    appName: "Notification Center",
+                    title: nil,
+                    subrole: kAXStandardWindowSubrole as String,
+                    activationPolicy: .regular
+                )
+            ),
+            .filter
+        )
+        XCTAssertEqual(
+            policy.evaluate(
+                candidate(
+                    title: nil,
+                    subrole: kAXStandardWindowSubrole as String,
                     activationPolicy: .regular,
                     executablePath: "/System/Applications/App.app/Contents/PlugIns/ShareExtension.appex/Contents/MacOS/ShareExtension"
                 )
@@ -1519,6 +1740,7 @@ final class FinderP0Tests: XCTestCase {
         bundleIdentifier: String? = "com.example.app",
         appName: String = "Example",
         title: String?,
+        subrole: String? = nil,
         bounds: CGRect? = CGRect(x: 0, y: 0, width: 400, height: 300),
         alpha: Double? = 1,
         activationPolicy: NSApplication.ActivationPolicy,
@@ -1528,6 +1750,7 @@ final class FinderP0Tests: XCTestCase {
             bundleIdentifier: bundleIdentifier,
             appName: appName,
             title: title,
+            subrole: subrole,
             bounds: bounds,
             alpha: alpha,
             activationPolicy: activationPolicy,

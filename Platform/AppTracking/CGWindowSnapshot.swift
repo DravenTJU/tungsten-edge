@@ -1,14 +1,22 @@
 import CoreGraphics
+import Foundation
 
 struct AppTrackerCGWindowSnapshot: Equatable {
     let allWindowIDs: Set<CGWindowID>
     let onScreenWindowIDs: Set<CGWindowID>
     /// 按属主 pid 分组的 layer-0 窗口 id（影子标签池用：CG(pid) − AX 暴露集 = order-out 后台标签）。
     let windowIDsByPID: [pid_t: Set<CGWindowID>]
+    /// AX inventory 没有透明度属性；按同轮 CG window id 补齐，供 admission 的 alpha=0 过滤使用。
+    let alphaByWindowID: [CGWindowID: Double]
 
     static func capture() -> AppTrackerCGWindowSnapshot {
         guard let windowInfo = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else {
-            return AppTrackerCGWindowSnapshot(allWindowIDs: [], onScreenWindowIDs: [], windowIDsByPID: [:])
+            return AppTrackerCGWindowSnapshot(
+                allWindowIDs: [],
+                onScreenWindowIDs: [],
+                windowIDsByPID: [:],
+                alphaByWindowID: [:]
+            )
         }
         return parse(windowInfo)
     }
@@ -27,6 +35,7 @@ struct AppTrackerCGWindowSnapshot: Equatable {
         var allWindowIDs: Set<CGWindowID> = []
         var onScreenWindowIDs: Set<CGWindowID> = []
         var windowIDsByPID: [pid_t: Set<CGWindowID>] = [:]
+        var alphaByWindowID: [CGWindowID: Double] = [:]
 
         for info in windowInfo {
             guard let windowID = layerZeroWindowID(in: info) else { continue }
@@ -37,12 +46,16 @@ struct AppTrackerCGWindowSnapshot: Equatable {
             if let ownerPID = info[kCGWindowOwnerPID as String] as? Int {
                 windowIDsByPID[pid_t(ownerPID), default: []].insert(windowID)
             }
+            if let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue {
+                alphaByWindowID[windowID] = alpha
+            }
         }
 
         return AppTrackerCGWindowSnapshot(
             allWindowIDs: allWindowIDs,
             onScreenWindowIDs: onScreenWindowIDs,
-            windowIDsByPID: windowIDsByPID
+            windowIDsByPID: windowIDsByPID,
+            alphaByWindowID: alphaByWindowID
         )
     }
 

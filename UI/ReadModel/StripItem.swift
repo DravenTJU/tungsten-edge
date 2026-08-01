@@ -1,6 +1,15 @@
 import CoreGraphics
 import Foundation
 
+enum WindowDisplayTitle {
+    static func resolve(rawTitle: String?, fallbackName: String) -> String {
+        let title = rawTitle.flatMap { title in
+            title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : title
+        } ?? fallbackName
+        return title == "macos-dock-cc-v2" ? "任务条" : title
+    }
+}
+
 struct StripItem: Hashable {
     let id: String
     let title: String

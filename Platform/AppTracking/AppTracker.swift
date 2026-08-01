@@ -9,6 +9,7 @@ struct AppEntry {
     let bundleIdentifier: String?
     let appName: String
     let activationPolicy: NSApplication.ActivationPolicy
+    let executablePath: String?
     var windowsByID: [CGWindowID: WindowEntry]
     var windowOrder: [CGWindowID]
     var isHidden: Bool
@@ -91,7 +92,7 @@ final class AppTracker: ObservableObject {
     private var heldLogDeduplicator = InventoryPhantomHeldDeduplicator()
 
     private let reader = AXWindowReader()
-    private let eligibilityPolicy = DockWindowEligibilityPolicy()
+    private let windowEligibility = AppTrackerWindowEligibility()
     private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "app-tracker")
     private let inventoryLog = WindowInventoryAnomalyLog()
 
@@ -209,7 +210,11 @@ final class AppTracker: ObservableObject {
             case .success(let windows):
                 axReadOutcome = .success(count: windows.count)
                 eligible = windows.filter {
-                    isEligible($0, bundleIdentifier: app.bundleIdentifier, activationPolicy: app.activationPolicy)
+                    isEligible(
+                        $0,
+                        application: eligibilityApplication(for: app),
+                        cgSnapshot: cgSnapshot
+                    )
                 }
             case .unread(let error):
                 axReadOutcome = .unread(errorCode: error.rawValue)
@@ -662,7 +667,7 @@ final class AppTracker: ObservableObject {
             guard isRegularNonSelf(app) else { continue }
             let pid = app.processIdentifier
             let bid = app.bundleIdentifier
-            let policy = app.activationPolicy
+            let eligibilityApplication = eligibilityApplication(for: app)
 
             // 限时探测：挂死 app 第一条 AX 消息即超时 → .unread → 跳过，交给补扫。
             let result: AXWindowReadResult
@@ -676,7 +681,9 @@ final class AppTracker: ObservableObject {
             let inventoryReadOutcome: InventoryAXReadOutcome
             switch result {
             case .success(let snaps):
-                probedEligible = snaps.filter { isEligible($0, bundleIdentifier: bid, activationPolicy: policy) }
+                probedEligible = snaps.filter {
+                    isEligible($0, application: eligibilityApplication, cgSnapshot: cgSnapshot)
+                }
                 inventoryReadOutcome = .success(count: snaps.count)
             case .unread(let error):
                 probedEligible = []
@@ -846,6 +853,7 @@ final class AppTracker: ObservableObject {
             bundleIdentifier: app.bundleIdentifier,
             appName: app.localizedName ?? app.bundleIdentifier ?? "\(pid)",
             activationPolicy: app.activationPolicy,
+            executablePath: app.executableURL?.path,
             windowsByID: [:],
             windowOrder: [],
             isHidden: app.isHidden
@@ -881,10 +889,10 @@ final class AppTracker: ObservableObject {
                 }
                 guard NSRunningApplication(processIdentifier: pid)?.isTerminated == false else { return }
                 let windows = self.reader.windows(forPID: pid)
-                let bundleID = app.bundleIdentifier
-                let policy = app.activationPolicy
+                let cgSnapshot = AppTrackerCGWindowSnapshot.capture()
+                let eligibilityApplication = self.eligibilityApplication(for: app)
                 let hasEligible = windows.contains {
-                    self.isEligible($0, bundleIdentifier: bundleID, activationPolicy: policy)
+                    self.isEligible($0, application: eligibilityApplication, cgSnapshot: cgSnapshot)
                 }
                 if hasEligible {
                     self.addApp(app, enumerateImmediately: true)
@@ -906,35 +914,36 @@ final class AppTracker: ObservableObject {
 
     private func isEligible(
         _ snap: AXWindowSnapshot,
-        bundleIdentifier: String?,
-        activationPolicy: NSApplication.ActivationPolicy
+        application: AppTrackerWindowEligibility.Application,
+        cgSnapshot: AppTrackerCGWindowSnapshot
     ) -> Bool {
-        if bundleIdentifier == DockWindowEligibilityPolicy.selfBundleIdentifier { return false }
+        let alpha = snap.cgWindowID.flatMap { cgSnapshot.alphaByWindowID[$0] }
+        return windowEligibility.isEligible(
+            title: snap.title,
+            role: snap.role,
+            subrole: snap.subrole,
+            bounds: snap.bounds,
+            alpha: alpha,
+            application: application
+        )
+    }
 
-        if FeishuBundleRules.isFeishu(bundleIdentifier: bundleIdentifier) {
-            return AXTaskbarWindowRules.isMainWindow(role: snap.role, subrole: snap.subrole, bounds: snap.bounds)
-        }
+    private func eligibilityApplication(for app: AppEntry) -> AppTrackerWindowEligibility.Application {
+        AppTrackerWindowEligibility.Application(
+            bundleIdentifier: app.bundleIdentifier,
+            appName: app.appName,
+            activationPolicy: app.activationPolicy,
+            executablePath: app.executablePath
+        )
+    }
 
-        if let bundleIdentifier {
-            let candidate = DockWindowEligibilityPolicy.Candidate(
-                bundleIdentifier: bundleIdentifier,
-                appName: "",
-                title: snap.title,
-                bounds: snap.bounds,
-                alpha: nil,
-                activationPolicy: activationPolicy,
-                executablePath: nil
-            )
-            if eligibilityPolicy.evaluate(candidate) == .filter { return false }
-        }
-
-        if bundleIdentifier == FinderWindowRules.bundleIdentifier {
-            return FinderWindowRules.isTrackable(
-                title: snap.title, role: snap.role, subrole: snap.subrole, bounds: snap.bounds
-            )
-        }
-
-        return AXTaskbarWindowRules.isMainWindow(role: snap.role, subrole: snap.subrole, bounds: snap.bounds)
+    private func eligibilityApplication(for app: NSRunningApplication) -> AppTrackerWindowEligibility.Application {
+        AppTrackerWindowEligibility.Application(
+            bundleIdentifier: app.bundleIdentifier,
+            appName: app.localizedName ?? app.bundleIdentifier ?? "\(app.processIdentifier)",
+            activationPolicy: app.activationPolicy,
+            executablePath: app.executableURL?.path
+        )
     }
 
     // MARK: - AX Event Handlers
@@ -1122,7 +1131,7 @@ final class AppTracker: ObservableObject {
         for entry in probed {
             guard let app = NSRunningApplication(processIdentifier: entry.pid) else { continue }
             let bundleID = app.bundleIdentifier
-            let policy = app.activationPolicy
+            let eligibilityApplication = eligibilityApplication(for: app)
 
             let rawWindows: [AXWindowSnapshot]?
             let readOutcome: InventoryAXReadOutcome
@@ -1136,7 +1145,7 @@ final class AppTracker: ObservableObject {
             }
 
             let prepared = ScanAdmissionDecision.prepare(rawWindows: rawWindows) {
-                isEligible($0, bundleIdentifier: bundleID, activationPolicy: policy)
+                isEligible($0, application: eligibilityApplication, cgSnapshot: cgSnapshot)
             }
             let verdict = ScanAdmissionDecision.verdict(
                 prepared,
