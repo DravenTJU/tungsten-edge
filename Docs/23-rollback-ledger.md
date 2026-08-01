@@ -49,8 +49,12 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 2026-07-31 发布 `v0.7.2@fbdac51`（**附注标签**）。内容 = v0.7.1 之后三项：启动期布局循环崩溃修复（`328bc59`，四档各 25 次共 100 次冷启动 0 崩溃）、空闲 CPU 中位数 2.60% → 1.40%（`683f1fc`）、面板承载器收尾（`b2b6a38`）。发布提交同样直接打在 `master`，版本号 `0.7.2 (14)`。**本版无用户可见的行为反转**，两项都是修复/优化，交互与设置一律不变。Homebrew cask 已同步至 `0.7.2`（`moonbai-studio/homebrew-tungsten-edge@ece5faf`）。发布后 `master` 未再 bump，**开发构建与已发布包同为 `0.7.2 (14)`**，排查问题先比对提交。
 
+2026-08-01 发布 `v0.7.3@418233b`（**附注标签**）。内容 = v0.7.2 之后两项：启动弹跳提前停在最高点（`a645590`，动画作用域 + 启动会话双修）、剪映点不开 + 系统设置弹跳 20 秒（`6414f9d`，启动目标包解析 + 空标题标准窗口准入）。发布提交同样直接打在 `master`，版本号 `0.7.3 (15)`。**本版无用户可见的行为反转**，三项都是修复，交互与设置一律不变。Homebrew cask 已同步至 `0.7.3`（`moonbai-studio/homebrew-tungsten-edge@0ad7cac`）。发布后 `master` 未再 bump，**开发构建与已发布包同为 `0.7.3 (15)`**，排查问题先比对提交。发版前全表复检结果见上方 2026-08-01 那条（46 条 / 6 条仍可单点撤销 / 唯一新增衰减 `a645590`）。
+
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
+- GitHub `v0.7.3` DMG hash: `747dd0e1c260666c7ed3f0215254e3edf19825e33944b71fe33ebec0a0bca7db`
+- GitHub `v0.7.3` ZIP hash: `2d81c99ecb30eb91dff6c14c10f1c495ee4c194cde11212d5c4aca5744f082e5`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@0ad7cac` 引用此值；两个哈希均已从 GitHub 重新下载实测比对一致）
 - GitHub `v0.7.2` DMG hash: `6a090a8dcc0bfd63399bc405ea45a190041a1a8864273624a904569335f023b9`
 - GitHub `v0.7.2` ZIP hash: `77d792ef053b343928a7ae3a653265432b439a1c15d063868cc12ca3a881689f`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@ece5faf` 引用此值；两个哈希均已从 GitHub 重新下载实测比对一致）
 - GitHub `v0.7.1` DMG hash: `3835c0df16c28fdeb0ddf8444374c2374a1c8744e61d7cfc5ff584822d328f84`
