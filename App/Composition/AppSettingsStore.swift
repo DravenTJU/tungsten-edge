@@ -8,20 +8,20 @@ import Foundation
 /// 两个不受本档位影响的地方（owner 2026-08-02 定）：**抽屉面板里的图标**照旧，
 /// **抽屉入口胶囊**里的九宫格照旧轻微放大——胶囊属于抽屉。
 /// 「标题太长时弹出全文浮层」在两档下都保留：它是看全被截断标题的唯一途径，且不移动任何卡片。
+///
+/// **对外只是一个勾选项**：菜单上叫「鼠标悬停显示应用名」，**勾选 = `.standard`**，
+/// 取消勾选 = `.quiet`（owner 2026-08-02 改名，原来的「悬停效果 ▸ 标准 / 安静」太抽象）。
+/// 那个名字**有意只说了一半**——取消勾选同时也停掉图标缩放和文件夹格放大；
+/// 别为了对齐名字去缩小行为范围，理由见 `Docs/27`。代码里其余地方仍按内部概念叫
+/// 「安静档」（= `.quiet` = 取消勾选），枚举保留也是为了以后可能加第三档。
 enum HoverStyle: String, CaseIterable {
     case standard
     case quiet
 
     static let `default` = HoverStyle.standard
 
-    var title: String {
-        switch self {
-        case .standard: return "标准"
-        case .quiet: return "安静"
-        }
-    }
-
-    /// 悬停是否产生视觉变化。chip 视图统一用它做判据，不各自比 case。
+    /// 悬停是否产生视觉变化。chip 视图统一用它做判据，不各自比 case；
+    /// 菜单的勾选态也读它（`.on` ⟺ `isExpressive`）。
     var isExpressive: Bool { self == .standard }
 }
 

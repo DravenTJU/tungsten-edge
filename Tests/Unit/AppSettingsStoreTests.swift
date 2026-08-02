@@ -158,9 +158,8 @@ final class AppSettingsStoreTests: XCTestCase {
     func testHoverStyleRawValuesAreStableAcrossReleases() {
         // 同 dockSize：raw value 进了 UserDefaults，改名等于把所有老用户悄悄重置回标准档。
         XCTAssertEqual(HoverStyle.allCases.map(\.rawValue), ["standard", "quiet"])
-        XCTAssertEqual(HoverStyle.allCases.map(\.title), ["标准", "安静"])
         XCTAssertEqual(HoverStyle.default, .standard)
-        // isExpressive 是所有 chip 视图的唯一判据，反了就是整档失效。
+        // isExpressive 是所有 chip 视图的唯一判据，也是菜单勾选态的判据，反了就是整档失效。
         XCTAssertTrue(HoverStyle.standard.isExpressive)
         XCTAssertFalse(HoverStyle.quiet.isExpressive)
     }
