@@ -88,6 +88,14 @@
 接上条。判据是现成的、一秒钟的事：`ps -Ao pid,comm | grep macos-dock-cc` 看进程路径是 `/Applications` 还是 `build/`，再比 `/Applications/Tungsten Edge.app/Contents/MacOS/macos-dock-cc-v2` 的修改时间和你改代码的时间——**可执行文件比代码旧，就不可能包含修复**，不用再看别的。这次正是靠这两行在一分钟内定位的（可执行文件 22:05，代码改动 22:27）。
 → owner 报"改了没效果"时，**先验包、再验码**。（2026-08-01 吃过）
 
+**别用 `defaults write` + 重启来切设置档位——会跟 owner 抢方向盘，而且他的选择会被悄悄覆盖。**
+2026-08-02 验收「悬停效果两档」时，为了在两档之间来回切，用的是 `defaults write com.tungsten.edge.hoverStyle …` 加重启应用。问题有两层：① 应用在跑的时候，它内存里的值才是权威，外部写入会被下一次应用自己的写入盖掉，`defaults read` 和 `plutil -p` 甚至会读出互相矛盾的值，白白怀疑了一轮代码；② 更糟的是，**owner 当时正在实机试这个新功能**——他从菜单选的档位，被 agent 这一路"写值 + 重启"抹掉了，收尾时才发现设置回到了默认档。
+→ 需要在两个档位之间对比时，**先确认 owner 此刻没在用**（问一句，或看时间），并且**收尾必须报告最终落在哪一档**、哪些是 agent 写的、哪些可能覆盖了 owner 的选择。读设置一律以 `plutil -p ~/Library/Preferences/<bundleid>.plist` 为准，别信应用运行期间的 `defaults read`。（2026-08-02 吃过）
+
+**用合成事件验"悬停"是可行的，但一步到位地移过去不触发——要补一次原地微动。**
+接上条。`CGWarpMouseCursorPosition` 不产生事件，`NSTrackingArea` 完全不响应；换成 `CGEvent(mouseEventSource:mouseType:.mouseMoved:…).post(tap: .cghidEventTap)` 分步移过去，光标确实到位了（`screencapture -C` 可以拍到），**但悬停态仍然没亮**；在目标点上再补两次几像素的微动，悬停立刻生效。
+→ 这类验证要成立还得有**控制组**：同一批坐标在"效果开着"的档位下跑一遍，差异非零才证明指针真的命中了——否则"零变化"既可能是功能生效，也可能是压根没碰到格子。另注意任务条是半透明的，**背景窗口一变，条上的像素就跟着变**（实测 max=51 的整条差异全部来自背景），所以前后两张图之间不能让背后的窗口动。（2026-08-02 建立）
+
 **开发构建的权限归属可能和装机版不一样，于是"开发时真机验收通过"的功能，装到 `/Applications` 后可能静默失效。**（**猜测，未验证**）
 2026-08-02 查「最小化时飞书主窗口被带出来」时撞上的矛盾：那段选交接目标的逻辑依赖 CG 窗口标题，而读 CG 标题需要「屏幕录制」权限；系统 TCC 表（`/Library/Application Support/com.apple.TCC/TCC.db` 的 `kTCCServiceScreenCapture`）里只有旧的 `com.caye.macosdockcc`，**没有** `com.caye.macosdockcc.v2`。按此推断装机版读不到标题、那段逻辑等于空转。但 `Docs/22` §3.5.6 白纸黑字记着当年 owner 真机实测「A2 不冒头，B 回来很自然」——说明它当时确实选到了正常目标。
 一个说得通的解释是：开发构建从终端启动时，TCC 把权限归属判给了终端（Ghostty 有屏幕录制权限），装机版没有这个"靠山"。**这个解释没有验证过，别当事实用。**
