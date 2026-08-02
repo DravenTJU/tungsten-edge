@@ -27,6 +27,8 @@
 - `System Events` / App 级窗口枚举更接近“用户正在使用哪些 app 窗口”的产品直觉；v2 当前正式实现不用 shell `osascript`，而是用 `NSWorkspace` + `AXWindowReader` 做同类 app-window inventory。
 - 底层 `CG` / `AX` 扫描可能同时出现两种失败：放得太宽会收进假窗口，收得太紧会漏掉真实用户窗口。当前主线已改成用户 app 窗口清单优先，再用底层信号补证据。
 - 透明窗口只应可靠过滤 `alpha == 0` 的情况；不要用“视觉上透明”这种不稳定判断做强过滤。
+- **几乎每个常规应用都常驻着一批无标题 layer-0 窗口**（2026-08-02 实测 owner 机器：微信 8、Photoshop 7、飞书 6，WPS / QQ / ChatGPT / Dia / Obsidian / 访达 / Tailscale 各 5；同一时刻在屏的 9 个候选则全部有标题）。它们平时不在屏，只在启动、弹窗、动画等时刻短暂上屏——所以由它们引起的故障天然是**偶发**的，复现时要先制造"让它上屏"的条件。
+- **`kCGWindowName` 需要「屏幕录制」权限，本项目按产品决策不申请**（`Docs/27`），所以 `DockWindowEligibilityPolicy` 的标题分支在任何 **CG-only 调用点**（`subrole` 传 nil、事后不做 AX 形状复核）都不可靠：要么恒为 filter，要么只剩策略里那条飞书无标题放行能通过，等于击穿整套过滤。该策略只能配合 AX 数据使用；CG-only 判定要么自己先要求非空标题，要么改用任务条快照里已认过的 `cgWindowID`。2026-08-02 「最小化时飞书主窗口被带出来」就是这么来的。
 - 只有通过准入 policy 的可信窗口，才应该享受 keep-slot 和 `disappeared` retention。
 - `AXUIElementCopyAttributeValue` 可能被单个 App 卡住；inventory 读取使用 100ms per-app messaging timeout 和 12 路并发，慢 App 连续 unread 30 轮后会进入 degraded fallback。
 - 调试壳本身如果被准入任务条，会因为内容变化触发窗口尺寸或观察签名变化，造成同一自家窗口被误认成多个条目。当前主线已直接过滤 `com.caye.macosdockcc.v2`，避免任务条自我污染。

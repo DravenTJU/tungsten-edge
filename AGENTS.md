@@ -75,8 +75,9 @@
 
 ## Focus And Action Planning
 
-- Minimizing the frontmost focused window A1 of multi-window app A should return focus to the previous other app B, not sibling A2.
+- Minimizing the frontmost focused window A1 of multi-window app A should return focus to the previous other app B, not sibling A2. **The owner rejected this target rule 2026-08-02** — he wants whatever was directly beneath A1, sibling included — but changing it is out of scope until someone takes the parked work in `Docs/27-product-decisions.md`; do not half-change it.
 - Only fire that background activation path when the target is the frontmost app's focused AX window. Right-click-minimizing a non-focused sibling must not steal focus.
+- **`findBackgroundActivationTarget` must keep its own non-empty-title guard before consulting `DockWindowEligibilityPolicy`.** That policy's untitled-pass branch (`FeishuBundleRules`, `DockWindowEligibilityPolicy.swift:34`) exists only for callers that apply an AX shape check afterwards (`AppTrackerWindowEligibility`); this one is CG-only — it passes `subrole: nil` and never re-checks — so without the guard Feishu's invisible full-width `1512x33@(0,0)` strips become the "previous app" and the front-process switch hoists Feishu's main window (measured 2026-08-02). Nearly every app parks untitled layer-0 windows (微信 8, Photoshop 7, Finder 5 …); only Feishu can currently bypass the title check, so the guard is what generalizes the fix. Do not "simplify" it away, and do not instead delete the Feishu branch from the shared policy — that one is load-bearing for the taskbar inventory.
 - `postSkyLightWindowFocus` is the shared focus core. Its private byte layout is load-bearing; do not simplify or gate fallback on nonzero private return codes.
 - Early focus applies only to `.activateWindow`, cross-app, visible active/inactive windows, using snapshot `record.cgWindowID` before handle capture.
 - Minimized restore is restore-then-switch, never switch-early. Exclude `.minimized` from early focus; after restore, immediately call `postSkyLightWindowFocus` with the snapshot wid, then set `kAXMainAttribute=true`.

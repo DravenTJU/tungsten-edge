@@ -445,6 +445,11 @@ struct AccessibilityWindowActionExecutor {
             let rawTitle = (info[kCGWindowName as String] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let title = rawTitle.flatMap { $0.isEmpty ? nil : $0 }
+            // CG-only 判定：本调用点传 subrole=nil、事后也不做 AX 复核，所以策略里「无标题也放行」
+            // 的分支（飞书）在这里必须失效——否则飞书那些贴在屏幕顶端的隐形 layer-0 窗口会被选成
+            // 交接目标，切前台后 AppKit 把飞书主窗口抬到最前（2026-08-02 实测）。几乎每个 App 都
+            // 挂着无标题 layer-0 窗口，只是别的 App 撞标题检查就被挡住了。见 AGENTS.md。
+            guard title != nil else { continue }
             let bounds = (info[kCGWindowBounds as String] as? [String: Any])
                 .flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
             let alpha = (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue
