@@ -22,12 +22,18 @@ struct PinnedFolderChip: View {
     /// 任务条尺寸档位的缩放系数。中档 = 1.0，此时所有尺寸与历史字面值逐像素相同。
     /// **故意不给默认值**——漏传必须是编译错误，见 AGENTS《Taskbar Size Tiers》。
     let scale: CGFloat
+    /// 悬停效果档位。**同样故意不给默认值**——漏传必须是编译错误，理由同 `scale`。
+    let hoverStyle: HoverStyle
 
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
     private var theme: DockThemeTokens { .resolve(colorScheme) }
 
     @State private var isHovering = false
+
+    /// 悬停视觉的总闸：「安静」档下恒 false，整块放大不再发生。
+    /// 投放高亮（`isDropTarget`）不受它管——那是拖放反馈，不是悬停。
+    private var showsHover: Bool { hoverStyle.isExpressive && isHovering }
 
     private var folderName: String {
         FileManager.default.displayName(atPath: path)
@@ -56,13 +62,13 @@ struct PinnedFolderChip: View {
         .contentShape(Rectangle())
         // 悬停：整个 chip 放大上顶（原生 Dock 手感）。anchor .bottom 让底部名称基本不动、封面往上顶起。
         // scaleEffect 只是渲染变换，不改布局 frame——拖放命中读的是 .background GeometryReader 上报的未缩放 frame，不受影响。
-        .scaleEffect(isHovering ? 1.12 : 1, anchor: .bottom)
+        .scaleEffect(showsHover ? 1.12 : 1, anchor: .bottom)
         .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
         .nativeContextMenu { buildMenu() }
         .help(folderName)
         .animation(.easeOut(duration: 0.12), value: isDropTarget)
-        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .animation(.easeOut(duration: 0.12), value: showsHover)
     }
 
     /// 封面：真缩略图方形裁切 + 细描边（深色下是白、浅色下是黑）；文件图标 / 空文件夹图标 fit 渲染不裁不描边。

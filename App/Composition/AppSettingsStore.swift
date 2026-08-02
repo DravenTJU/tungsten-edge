@@ -1,6 +1,30 @@
 import Combine
 import Foundation
 
+/// 悬停效果档位。
+/// - `standard`：图标 36→24pt 缩放 + 下方冒出名字 + 文件夹格整块放大（原生程序坞手感）。
+/// - `quiet`：鼠标划过任务条时**完全静止**——不缩放、不移动、不冒名字、胶囊底色不提亮。
+///
+/// 两个不受本档位影响的地方（owner 2026-08-02 定）：**抽屉面板里的图标**照旧，
+/// **抽屉入口胶囊**里的九宫格照旧轻微放大——胶囊属于抽屉。
+/// 「标题太长时弹出全文浮层」在两档下都保留：它是看全被截断标题的唯一途径，且不移动任何卡片。
+enum HoverStyle: String, CaseIterable {
+    case standard
+    case quiet
+
+    static let `default` = HoverStyle.standard
+
+    var title: String {
+        switch self {
+        case .standard: return "标准"
+        case .quiet: return "安静"
+        }
+    }
+
+    /// 悬停是否产生视觉变化。chip 视图统一用它做判据，不各自比 case。
+    var isExpressive: Bool { self == .standard }
+}
+
 @MainActor
 final class AppSettingsStore: ObservableObject {
     static let delayStep: Double = 0.1
@@ -18,6 +42,8 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var showShelf: Bool
     /// 任务条尺寸档位。面板几何与条内所有 chip 尺寸都由它派生。
     @Published private(set) var dockSize: DockSize
+    /// 悬停效果档位。只影响条内 chip 的悬停视觉，静息布局逐像素不变（因此无需 relayout）。
+    @Published private(set) var hoverStyle: HoverStyle
     @Published private(set) var nativeDockAutoHideDelay: Double
     @Published private(set) var edgeAutoHideDelay: Double
     /// 「自动隐藏」切换（菜单/全局快捷键）从常驻恢复时要回到的延迟值。
@@ -57,6 +83,7 @@ final class AppSettingsStore: ObservableObject {
         // 坏值（手改过、旧版本残留、类型不对）一律回退中档并**立刻重写**，
         // 否则每次启动都要重新走一遍回退，且 UI 上勾选的档位和存的值对不上。
         dockSize = DockSize(rawValue: defaults.string(forKey: Keys.dockSize) ?? "") ?? .default
+        hoverStyle = HoverStyle(rawValue: defaults.string(forKey: Keys.hoverStyle) ?? "") ?? .default
         let nativeDelay = Self.sanitizedStoredDelay(
             defaults.object(forKey: Keys.nativeDockAutoHideDelay),
             fallback: Self.defaultNativeDockAutoHideDelay
@@ -84,6 +111,7 @@ final class AppSettingsStore: ObservableObject {
             lastEnabledEdgeAutoHideDelay = edgeDelay
         }
         defaults.set(dockSize.rawValue, forKey: Keys.dockSize)
+        defaults.set(hoverStyle.rawValue, forKey: Keys.hoverStyle)
         defaults.set(nativeDelay, forKey: Keys.nativeDockAutoHideDelay)
         defaults.set(lastEnabledNativeDockAutoHideDelay, forKey: Keys.nativeDockAutoHideLastEnabledDelay)
         defaults.set(edgeDelay, forKey: Keys.edgeAutoHideDelay)
@@ -94,6 +122,12 @@ final class AppSettingsStore: ObservableObject {
         guard dockSize != value else { return }
         dockSize = value
         defaults.set(value.rawValue, forKey: Keys.dockSize)
+    }
+
+    func setHoverStyle(_ value: HoverStyle) {
+        guard hoverStyle != value else { return }
+        hoverStyle = value
+        defaults.set(value.rawValue, forKey: Keys.hoverStyle)
     }
 
     func setShowShelf(_ value: Bool) {
@@ -220,6 +254,7 @@ private enum Keys {
     static let launchAtLogin = "com.tungsten.edge.launchAtLogin"
     static let showShelf = "com.tungsten.edge.showShelf"
     static let dockSize = "com.tungsten.edge.dockSize"
+    static let hoverStyle = "com.tungsten.edge.hoverStyle"
     static let nativeDockAutoHideEnabled = "com.tungsten.edge.autoHide.nativeDock.enabled"
     static let nativeDockAutoHideDelay = "com.tungsten.edge.autoHide.nativeDock.delay"
     static let nativeDockAutoHideLastEnabledDelay = "com.tungsten.edge.autoHide.nativeDock.lastEnabledDelay"

@@ -161,6 +161,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let checkForUpdatesItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
     private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
     private let showShelfItem = NSMenuItem(title: "显示中转站", action: #selector(toggleShowShelf), keyEquivalent: "")
+    private let hoverStyleItem = NSMenuItem(title: "悬停效果", action: nil, keyEquivalent: "")
+    private var hoverStyleItems: [HoverStyle: NSMenuItem] = [:]
     private let dockSizeItem = NSMenuItem(title: "任务条大小", action: nil, keyEquivalent: "")
     private var dockSizeItems: [DockSize: NSMenuItem] = [:]
     /// 分组标题，恒不可点（title 在 configureMenu 里落）。
@@ -281,6 +283,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         // 钨极自己的外观开关跟在钨极这一组里（标题恒定，状态用勾表达，同「登录时启动」）。
         showShelfItem.target = self
         menu.addItem(showShelfItem)
+
+        let hoverStyleMenu = NSMenu()
+        for style in HoverStyle.allCases {
+            let item = NSMenuItem(title: style.title, action: #selector(selectHoverStyle(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = style.rawValue
+            hoverStyleMenu.addItem(item)
+            hoverStyleItems[style] = item
+        }
+        hoverStyleItem.submenu = hoverStyleMenu
+        menu.addItem(hoverStyleItem)
 
         let dockSizeMenu = NSMenu()
         for size in DockSize.allCases {
@@ -422,6 +435,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func refreshCheckmarks() {
         refreshLaunchAtLoginState()
         showShelfItem.state = store.showShelf ? .on : .off
+        for (style, item) in hoverStyleItems {
+            item.state = store.hoverStyle == style ? .on : .off
+        }
         for (size, item) in dockSizeItems {
             item.state = store.dockSize == size ? .on : .off
         }
@@ -429,6 +445,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func toggleShowShelf() {
         store.setShowShelf(!store.showShelf)
+        refreshCheckmarks()
+    }
+
+    @objc private func selectHoverStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let style = HoverStyle(rawValue: raw) else { return }
+        store.setHoverStyle(style)
         refreshCheckmarks()
     }
 

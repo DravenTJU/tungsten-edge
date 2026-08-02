@@ -114,6 +114,57 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(AppSettingsStore(defaults: defaults).dockSize, .medium, "类型不对也要回退")
     }
 
+    @MainActor
+    func testHoverStyleDefaultsToStandardAndPersists() {
+        let defaults = makeDefaults()
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).hoverStyle, .standard, "默认保持现有悬停手感，升级用户零变化")
+
+        let store = AppSettingsStore(defaults: defaults)
+        store.setHoverStyle(.quiet)
+        XCTAssertEqual(store.hoverStyle, .quiet)
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).hoverStyle, .quiet, "档位要跨重启保持")
+
+        store.setHoverStyle(.standard)
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).hoverStyle, .standard)
+    }
+
+    @MainActor
+    func testHoverStyleRewritesCorruptStoredValueToStandard() {
+        let defaults = makeDefaults()
+        defaults.set("silent", forKey: "com.tungsten.edge.hoverStyle")
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).hoverStyle, .standard)
+        // 同 dockSize：必须**立刻重写**，否则每次启动都要重走一遍回退，存值和菜单勾选也一直对不上。
+        XCTAssertEqual(defaults.string(forKey: "com.tungsten.edge.hoverStyle"), HoverStyle.standard.rawValue)
+
+        defaults.set(7, forKey: "com.tungsten.edge.hoverStyle")
+        XCTAssertEqual(AppSettingsStore(defaults: defaults).hoverStyle, .standard, "类型不对也要回退")
+    }
+
+    @MainActor
+    func testHoverStyleDoesNotDisturbOtherSettings() {
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(defaults: defaults)
+        store.setDockSize(.large)
+        store.setShowShelf(false)
+
+        store.setHoverStyle(.quiet)
+
+        let reloaded = AppSettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.hoverStyle, .quiet)
+        XCTAssertEqual(reloaded.dockSize, .large, "悬停档位与尺寸档位是两把独立的钥匙")
+        XCTAssertFalse(reloaded.showShelf)
+    }
+
+    func testHoverStyleRawValuesAreStableAcrossReleases() {
+        // 同 dockSize：raw value 进了 UserDefaults，改名等于把所有老用户悄悄重置回标准档。
+        XCTAssertEqual(HoverStyle.allCases.map(\.rawValue), ["standard", "quiet"])
+        XCTAssertEqual(HoverStyle.allCases.map(\.title), ["标准", "安静"])
+        XCTAssertEqual(HoverStyle.default, .standard)
+        // isExpressive 是所有 chip 视图的唯一判据，反了就是整档失效。
+        XCTAssertTrue(HoverStyle.standard.isExpressive)
+        XCTAssertFalse(HoverStyle.quiet.isExpressive)
+    }
+
     func testDockSizeRawValuesAreStableAcrossReleases() {
         // raw value 进了 UserDefaults，改名等于把所有老用户的档位悄悄重置成中档。
         XCTAssertEqual(DockSize.allCases.map(\.rawValue), ["small", "medium", "large", "extraLarge"])

@@ -11,6 +11,8 @@ struct ShelfChip: View {
     /// 任务条尺寸档位的缩放系数。中档 = 1.0，此时所有尺寸与历史字面值逐像素相同。
     /// **故意不给默认值**——漏传必须是编译错误，见 AGENTS《Taskbar Size Tiers》。
     let scale: CGFloat
+    /// 悬停效果档位。**同样故意不给默认值**——漏传必须是编译错误，理由同 `scale`。
+    let hoverStyle: HoverStyle
     let onTap: () -> Void
     let onClear: () -> Void
     let onAddFolder: () -> Void
@@ -21,12 +23,22 @@ struct ShelfChip: View {
 
     @State private var isHovering = false
 
+    /// 悬停视觉的总闸：「安静」档下恒 false，图标不缩、名字气泡不出。
+    /// 投放反馈（`isDropTargeted` 的提亮/描边/发光）不受它管。
+    private var showsHover: Bool { hoverStyle.isExpressive && isHovering }
+
+    /// 件数原本只写在悬停名字里，安静档下那行不出现，所以并进系统 tooltip 兜底。
+    /// 两档都生效，条上不改变任何像素。
+    private var helpText: String {
+        itemCount > 0 ? "中转 · \(itemCount)：拖文件到这里暂存" : "中转：拖文件到这里暂存"
+    }
+
     var body: some View {
-        let coverSize: CGFloat = (isHovering ? 24 : 36) * scale
+        let coverSize: CGFloat = (showsHover ? 24 : 36) * scale
         VStack(spacing: 2 * scale) {
             Spacer(minLength: 0)
             shelfIcon(size: coverSize)
-            if isHovering {
+            if showsHover {
                 Text(itemCount > 0 ? "中转 · \(itemCount)" : "中转")
                     .font(.system(size: 10 * scale, weight: .medium, design: .rounded))
                     .foregroundStyle(theme.labelHover.color)
@@ -40,8 +52,8 @@ struct ShelfChip: View {
         .onHover { isHovering = $0 }
         .onTapGesture { onTap() }
         .nativeContextMenu { buildMenu() }
-        .help("中转：拖文件到这里暂存")
-        .animation(.easeInOut(duration: 0.18), value: isHovering)
+        .help(helpText)
+        .animation(.easeInOut(duration: 0.18), value: showsHover)
         .animation(.easeInOut(duration: 0.12), value: isDropTargeted)
     }
 

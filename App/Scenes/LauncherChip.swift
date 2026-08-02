@@ -19,6 +19,9 @@ struct LauncherChip: View {
     /// 档位系数（条内传 `DockSize.scale`，抽屉恒定 0.7）。**故意不给默认值**——漏传必须是编译错误，
     /// 见 AGENTS《Taskbar Size Tiers》。
     let scale: CGFloat
+    /// 悬停效果档位。**同样故意不给默认值**——漏传必须是编译错误，理由同 `scale`。
+    /// 抽屉调用处有意写死 `.standard`（抽屉不受该设置影响，owner 2026-08-02）。
+    let hoverStyle: HoverStyle
     /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「标记为消息应用」。
     /// 空数组 = 无成员项。
     var membershipItems: [LauncherMembershipItem] = []
@@ -44,8 +47,11 @@ struct LauncherChip: View {
     private static let launchTraceEnabled =
         ProcessInfo.processInfo.environment["DOCK_LAUNCH_TRACE"] == "1"
 
+    /// 悬停视觉的总闸：「安静」档下恒 false，图标不缩、名字不浮出，连动画事务都不产生。
+    private var showsHover: Bool { hoverStyle.isExpressive && isHovering }
+
     var body: some View {
-        let iconSize: CGFloat = isHovering ? 24 * scale : 36 * scale
+        let iconSize: CGFloat = showsHover ? 24 * scale : 36 * scale
         let visual = LauncherChipVisualPlan.visual(isRunning: isRunning)
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
@@ -68,10 +74,10 @@ struct LauncherChip: View {
                     .lineLimit(1)
                     .frame(maxWidth: 64 * scale)
                     .offset(y: 26 * scale)
-                    .opacity(isHovering ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.18), value: isHovering)
+                    .opacity(showsHover ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.18), value: showsHover)
                     .allowsHitTesting(false)
-                    .accessibilityHidden(!isHovering)
+                    .accessibilityHidden(!showsHover)
             }
             .frame(width: 44 * scale, height: 36 * scale, alignment: .top)
             Spacer(minLength: 0)

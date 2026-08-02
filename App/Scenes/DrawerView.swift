@@ -205,6 +205,10 @@ struct DrawerView: View {
                      isHidden: running ? isHiddenInSnapshot(id) : false,
                      isLaunching: runtime.launchingBundleIDs.contains(id),
                      scale: 0.7,
+                     // 抽屉有意不受「悬停效果」设置影响（owner 2026-08-02）：抽屉是网格，
+                     // 悬停冒名字在这里很有用。和上面的 scale: 0.7 同理——有意固定的值写在
+                     // 调用处，不靠默认值（视图侧刻意没有默认值，漏传是编译错误）。
+                     hoverStyle: .standard,
                      membershipItems: membershipItems(for: id),
                      onLaunch: { runtime.beginLaunch(id) },
                      onPrimaryAction: onPrimaryAction)

@@ -15,6 +15,9 @@ struct DragCarrierView: View {
 
     /// 来自任务条的载体用档位缩放；**未转正的抽屉图标不缩**——它离开的是抽屉，抽屉本轮不随档位缩放。
     private var dockScale: CGFloat { settingsStore.dockSize.scale }
+    /// 载体不可命中、且三处都传 `forceHover: false`，两档渲染其实相同；跟着 store 走只为自洽，
+    /// 免得以后有人打开 forceHover 时这里悄悄留一份写死的档位。
+    private var hoverStyle: HoverStyle { settingsStore.hoverStyle }
 
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
@@ -38,7 +41,7 @@ struct DragCarrierView: View {
         // 抽屉拖回任务条·转正后:载体改画**代表卡**整张(与条内载体同款),让"拖回来"和"条内拖动"观感一致。
         // 代表卡由 DockStripView 在窗口卡实体化后写入;未实体化前 nil → 仍按 visualKind 画(抽屉里就是小图标)。
         if let rep = controller.convertedRepresentative {
-            ChipView(item: rep, scale: dockScale, showRunningDot: true, forceHover: false)
+            ChipView(item: rep, scale: dockScale, hoverStyle: hoverStyle, showRunningDot: true, forceHover: false)
                 .dockShadow(theme.carrierShadow)
         } else {
             switch p.visualKind {
@@ -46,7 +49,7 @@ struct DragCarrierView: View {
                 if let item = p.item {
                     // forceHover: false —— 悬停态会在图标下方带出 app 名,拖动时不想要（owner 2026-06-21）。
                     // 非悬停态 = 干净的大图标(单窗口卡),贴近抽屉拖动的观感。代价是起拖瞬间图标略放大,可接受。
-                    ChipView(item: item, scale: dockScale, showRunningDot: true, forceHover: false)
+                    ChipView(item: item, scale: dockScale, hoverStyle: hoverStyle, showRunningDot: true, forceHover: false)
                         .dockShadow(theme.carrierShadow)
                 }
             case .drawerIcon:
@@ -72,7 +75,8 @@ struct DragCarrierView: View {
                                  sortOrder: .default,
                                  onTap: {}, onPreview: {}, onOpenInFinder: {}, onAddFolder: {}, onRemove: {},
                                  onSetSortOrder: { _ in },
-                                 scale: dockScale)
+                                 scale: dockScale,
+                                 hoverStyle: hoverStyle)
                     .dockShadow(theme.carrierShadow)
                     .opacity(aboutToRemove ? 0.35 : 1.0)
                     .scaleEffect(aboutToRemove ? 1.1 : 1.0)

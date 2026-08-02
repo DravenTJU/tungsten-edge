@@ -54,6 +54,9 @@ struct DockStripView: View {
     /// 放大缩小的值都乘 `dockScale`；发丝线（分隔线宽、描边）保持 1pt 不缩。
     private var metrics: PanelLayoutMetrics { settingsStore.dockSize.metrics }
     private var dockScale: CGFloat { settingsStore.dockSize.scale }
+    /// 悬停效果档位。条内每个 chip 都显式接收它（同 `dockScale`，漏传是编译错误）；
+    /// 抽屉面板与抽屉入口胶囊有意不受它影响（owner 2026-08-02）。
+    private var hoverStyle: HoverStyle { settingsStore.hoverStyle }
     @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var runningApplicationStore: RunningApplicationStore
     @EnvironmentObject var appMembershipController: AppMembershipController
@@ -870,6 +873,7 @@ struct DockStripView: View {
         case let .window(item):
             ChipView(item: item,
                      scale: dockScale,
+                     hoverStyle: hoverStyle,
                      showRunningDot: true,
                      forceHover: dragging,
                      pulseNonce: chipPulseNonces[item.id] ?? 0,
@@ -894,7 +898,8 @@ struct DockStripView: View {
                 onRemove: { pinnedFolderStore.remove(path) },
                 onSetSortOrder: { pinnedFolderStore.setSortOrder($0, for: path) },
                 isDropTarget: externalDropTarget == .moveInto(path: path),
-                scale: dockScale
+                scale: dockScale,
+                hoverStyle: hoverStyle
             )
             .stripEntrance(id: entry.id, delay: delay, animatedEntryIDs: $animatedEntryIDs)
         case .shelf:
@@ -902,6 +907,7 @@ struct DockStripView: View {
                 itemCount: shelfStore.itemPaths.count,
                 isDropTargeted: externalDropTarget == .stash,
                 scale: dockScale,
+                hoverStyle: hoverStyle,
                 onTap: { shelfChipTapped() },
                 onClear: { shelfStore.clear() },
                 onAddFolder: onAddFolder
@@ -914,7 +920,7 @@ struct DockStripView: View {
                 if let main {
                     // 运行中有主窗 → app chip 即主窗卡：标准 toggle + 完整窗口菜单。iconOnly 保持消息区
                     // 定宽图标行，运行点标记它是 app 入口。
-                    ChipView(item: main, scale: dockScale, iconOnly: true, showRunningDot: true)
+                    ChipView(item: main, scale: dockScale, hoverStyle: hoverStyle, iconOnly: true, showRunningDot: true)
                 } else {
                     // 无主窗两态：运行中（关窗/常驻）→ 点击 reopen 主窗；未运行（图标下方无运行点）→ 点击启动。
                     // 统一模型下消息应用也有「在程序坞中保留」勾选（与「取消标记」并存），由纯投影决定。
@@ -924,6 +930,7 @@ struct DockStripView: View {
                                  isHidden: running && isHiddenInSnapshot(bundleID: bid),
                                  isLaunching: runtime.launchingBundleIDs.contains(bid),
                                  scale: dockScale,
+                                 hoverStyle: hoverStyle,
                                  membershipItems: LauncherMembershipItem.items(
                                     surface: .strip,
                                     bundleID: bid,
@@ -951,6 +958,7 @@ struct DockStripView: View {
                 isHidden: runningApplicationStore.isHidden(bid),
                 isLaunching: runtime.launchingBundleIDs.contains(bid),
                 scale: dockScale,
+                hoverStyle: hoverStyle,
                 membershipItems: keptAppMembershipItems(bundleID: bid),
                 onTap: reopen,
                 onLaunch: { runtime.beginLaunch(bid) }
@@ -1118,6 +1126,9 @@ struct ChipView: View {
     /// 档位系数（`DockSize.scale`）。**故意不给默认值**：消息区曾因为它有默认值 1.0 而静默漏传，
     /// 在非中档下渲染成中档尺寸（见 AGENTS《Taskbar Size Tiers》）。漏传必须是编译错误。
     let scale: CGFloat
+    /// 悬停效果档位。**同样故意不给默认值**——漏传是编译错误，理由见上面 `scale` 那条。
+    /// `.quiet` 下悬停不产生任何视觉变化；长标题的全文浮层不受影响（它跟的是裸 `isHovering`）。
+    let hoverStyle: HoverStyle
     var iconOnly: Bool = false
     var showRunningDot: Bool = false
     var drawerTap: (() -> Void)? = nil
@@ -1136,8 +1147,9 @@ struct ChipView: View {
     /// 声明式 .animation(value:) 驱动（LauncherChip 僵尸动画教训:禁 repeatForever+复位）。
     @State private var isTapPressed = false
 
-    /// Visual hover state: the real pointer hover OR forced (drag copy).
-    private var showsHover: Bool { forceHover || isHovering }
+    /// Visual hover state: the real pointer hover OR forced (drag copy)，再受悬停档位一道总闸。
+    /// 「安静」档下恒 false，于是图标不缩、应用名不冒、胶囊底色不提亮、整行不重排。
+    private var showsHover: Bool { hoverStyle.isExpressive && (forceHover || isHovering) }
 
     /// 短促按压(0.93)后由 spring 回弹;90ms 后复位状态,动画由 value 变化声明式触发。
     private func fireTapPulse() {
@@ -1227,7 +1239,9 @@ struct ChipView: View {
         }
         .nativeContextMenu { buildChipMenu() }
         .help(displayTitle)
-        .animation(.easeInOut(duration: 0.18), value: isHovering)
+        // 跟 showsHover 而不是裸 isHovering：安静档下它恒 false，连事务都不产生
+        //（一个只是"没有可见效果"的动画事务仍会下沉覆盖子树，是启动弹跳被顶掉的旧病根）。
+        .animation(.easeInOut(duration: 0.18), value: showsHover)
         .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
     }
 
@@ -1298,7 +1312,7 @@ struct ChipView: View {
             if isHovering { updateWindowTitleTooltip(hovering: true) }
         }
         .onDisappear { onWindowTitleTooltipEvent(.exit(chipID: item.id)) }
-        .animation(.easeInOut(duration: 0.18), value: isHovering)
+        .animation(.easeInOut(duration: 0.18), value: showsHover)
         .animation(.spring(response: 0.22, dampingFraction: 0.5), value: isTapPressed)
     }
 
