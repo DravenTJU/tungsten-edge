@@ -45,20 +45,6 @@ final class DockThemeTests: XCTestCase {
         XCTAssertEqual(dark.panelMaterial, .popover)
     }
 
-    /// 图标淡化：深色继续用改造前那两个纯 opacity 字面值（`DockStripView` 的 0.45、
-    /// `LauncherChipVisualPlan` 的 0.45 / 0.35）。**`usesColorFilters` 必须为假**——
-    /// 它决定桥接层走哪条分支，为真就会多挂 `.grayscale` / `.brightness`，
-    /// 恒等滤镜也可能触发离屏渲染，深色的逐像素冻结就不再严格。
-    func testDarkIconDimIsLegacyPlainOpacity() {
-        XCTAssertEqual(dark.iconDimHidden, DockIconDim(opacity: 0.45, grayscale: 0, brightness: 0))
-        XCTAssertEqual(dark.iconDimNotRunning, DockIconDim(opacity: 0.35, grayscale: 0, brightness: 0))
-        XCTAssertFalse(dark.iconDimHidden.usesColorFilters, "深色必须走只挂 .opacity 的老路径")
-        XCTAssertFalse(dark.iconDimNotRunning.usesColorFilters, "深色必须走只挂 .opacity 的老路径")
-        XCTAssertEqual(dark.iconDim(.bright), .bright)
-        XCTAssertEqual(dark.iconDim(.hidden), dark.iconDimHidden)
-        XCTAssertEqual(dark.iconDim(.notRunning), dark.iconDimNotRunning)
-    }
-
     /// 厚度层是 2026-07-30 第二轮新增的。深色必须**整层不画**——不是"画一层全透明的"，
     /// 而是 `drawsPanelThickness == false` 让它根本不进视图树（`.blur(radius: 0)` 仍可能
     /// 触发离屏渲染，多一层就可能破坏深色的逐像素冻结）。
@@ -90,34 +76,14 @@ final class DockThemeTests: XCTestCase {
         XCTAssertGreaterThan(light.panelInnerShadowWidth, 0)
     }
 
-    /// 图标淡化的浅色取值（owner 2026-07-30 实机验收通过，已是默认观感）。
-    ///
-    /// 起因是他反馈「灰色的图标灰蒙蒙」：纯 `.opacity()` 是往底板颜色上褪，浅底板上
-    /// 等于往浅灰里化。所以浅色必须真的用上颜色滤镜，并且透明度要**比老值高**（更"实"）。
-    func testLightIconDimUsesColorFilters() {
-        for (name, dim) in [("hidden", light.iconDimHidden), ("notRunning", light.iconDimNotRunning)] {
-            XCTAssertTrue(dim.usesColorFilters, "浅色的 \(name) 必须靠去饱和/压暗，不能只褪透明")
-            XCTAssertTrue((0...1).contains(dim.opacity), "\(name) 不透明度越界")
-            XCTAssertTrue((0...1).contains(dim.grayscale), "\(name) 去饱和量越界")
-            XCTAssertTrue((-1...0).contains(dim.brightness), "\(name) 只该压暗，不该提亮")
-        }
-        XCTAssertGreaterThan(light.iconDimHidden.opacity, DockIconDim.legacyHidden.opacity,
-                             "浅色隐藏档要比老的 0.45 更实，否则还是灰蒙蒙")
-        XCTAssertGreaterThan(light.iconDimNotRunning.opacity, DockIconDim.legacyNotRunning.opacity,
-                             "浅色退出档要比老的 0.35 更实")
-    }
-
-    /// 两档的**相对关系**：隐藏（还在运行）永远比退出更"活"——更不透明、更留色。
-    /// 这条不变式是两档能一眼分辨的依据；调参时把某一格调过头会在这里红。
-    func testHiddenIsAlwaysLessDimmedThanNotRunning() {
+    /// 运行小圆点在两套外观里都必须真的看得见。图标不再按状态淡化（owner 2026-08-02），
+    /// 这颗点就成了「应用还在不在」的**唯一**信号——浅色下曾经是白点画在浅玻璃上、等于没有。
+    func testRunningDotIsVisibleInBothAppearances() {
+        XCTAssertEqual(dark.runningDot.base, .white, "深底上是亮点")
+        XCTAssertEqual(light.runningDot.base, .black, "浅底上必须反过来用暗点")
         for (name, tokens) in [("dark", dark), ("light", light)] {
-            XCTAssertGreaterThan(tokens.iconDimHidden.opacity, tokens.iconDimNotRunning.opacity,
-                                 "\(name)：隐藏档要比退出档更不透明")
-            XCTAssertLessThanOrEqual(tokens.iconDimHidden.grayscale, tokens.iconDimNotRunning.grayscale,
-                                     "\(name)：隐藏档要比退出档留更多颜色")
+            XCTAssertGreaterThan(tokens.runningDot.opacity, 0.3, "\(name)：运行点太淡就等于没有")
         }
-        XCTAssertLessThan(light.iconDimNotRunning.grayscale, 1.0,
-                          "退出档**不该**抽成灰色剪影：是否运行由白点表达，图标不必再扛一遍（owner 2026-07-30 第二次微调推翻了「退出 = 全灰」）")
     }
 
     /// 「要画」需要颜色和线宽同时成立：任一为 0 都等于看不见，此时就不该多挂一层。

@@ -19,10 +19,6 @@ struct LauncherChip: View {
     /// 档位系数（条内传 `DockSize.scale`，抽屉恒定 0.7）。**故意不给默认值**——漏传必须是编译错误，
     /// 见 AGENTS《Taskbar Size Tiers》。
     let scale: CGFloat
-    /// 只控制「运行但隐藏」要不要降级变暗（抽屉 / 普通 kept 传 true → 0.45；消息区传 false → 保持全亮）。
-    /// **未运行恒定灰显（0.35）与本标志无关**——消息区退出态因此也会变灰，与所有退出应用统一
-    /// （owner 2026-07-19，反转了旧的「消息图标常亮、随时可点」决策）。决策见 `LauncherChipVisualPlan`。
-    var dimsWhenHidden: Bool = true
     /// 成员 / 管理菜单项（右键菜单末尾），如「在程序坞中保留」「标记为消息应用」。
     /// 空数组 = 无成员项。
     var membershipItems: [LauncherMembershipItem] = []
@@ -50,10 +46,7 @@ struct LauncherChip: View {
 
     var body: some View {
         let iconSize: CGFloat = isHovering ? 24 * scale : 36 * scale
-        let visual = LauncherChipVisualPlan.visual(isRunning: isRunning,
-                                                   isHidden: isHidden,
-                                                   dimsWhenHidden: dimsWhenHidden)
-        let iconDim: DockIconDim = theme.iconDim(visual.dim)
+        let visual = LauncherChipVisualPlan.visual(isRunning: isRunning)
         return VStack(spacing: 0) {
             Spacer(minLength: 0)
             // Keep hover layout stable and animate only the icon size and label alpha;
@@ -64,7 +57,6 @@ struct LauncherChip: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: iconSize, height: iconSize)
                     .clipShape(RoundedRectangle(cornerRadius: iconSize / 4, style: .continuous))
-                    .dockIconDim(iconDim)
                     .dockShadow(theme.iconShadow)
                     .animation(.easeInOut(duration: 0.18), value: iconSize)
                     .offset(y: bounceUp ? -6 : 0)

@@ -916,7 +916,7 @@ struct DockStripView: View {
                     // 定宽图标行，运行点标记它是 app 入口。
                     ChipView(item: main, scale: dockScale, iconOnly: true, showRunningDot: true)
                 } else {
-                    // 无主窗两态：运行中（关窗/常驻）→ 亮图标、点击 reopen 主窗；未运行 → 灰图标、点击启动。
+                    // 无主窗两态：运行中（关窗/常驻）→ 点击 reopen 主窗；未运行（图标下方无运行点）→ 点击启动。
                     // 统一模型下消息应用也有「在程序坞中保留」勾选（与「取消标记」并存），由纯投影决定。
                     let running = runningApplicationStore.isRunning(bid)
                     LauncherChip(bundleID: bid,
@@ -924,7 +924,6 @@ struct DockStripView: View {
                                  isHidden: running && isHiddenInSnapshot(bundleID: bid),
                                  isLaunching: runtime.launchingBundleIDs.contains(bid),
                                  scale: dockScale,
-                                 dimsWhenHidden: false,
                                  membershipItems: LauncherMembershipItem.items(
                                     surface: .strip,
                                     bundleID: bid,
@@ -1196,11 +1195,10 @@ struct ChipView: View {
     // MARK: - Icon-only chip
 
     private var bareIconChip: some View {
-        let iconDim: DockIconDim = theme.iconDim(effectiveIsOnDesktop ? .bright : .hidden)
         let iconSize: CGFloat = showsHover ? 24 * scale : 36 * scale
         return VStack(spacing: 2) {
             Spacer(minLength: 0)
-            appIcon(size: iconSize, dim: iconDim)
+            appIcon(size: iconSize)
             if showsHover {
                 Text(displayTitle)
                     .font(.system(size: max(8, 10 * scale), weight: .medium, design: .rounded))
@@ -1236,7 +1234,7 @@ struct ChipView: View {
     // MARK: - Labeled chip
 
     private var multiWindowChip: some View {
-        let iconDim: DockIconDim = theme.iconDim(effectiveIsOnDesktop ? .bright : .hidden)
+        // 图标恒为原色（不按状态淡化，owner 2026-08-02）；「在不在桌面上」只由标题颜色表达。
         let titleColor: Color = effectiveIsOnDesktop ? theme.labelActive.color : theme.labelInactive.color
 
         let pillHeight: CGFloat = showsHover ? 28 * scale : 34 * scale
@@ -1244,7 +1242,7 @@ struct ChipView: View {
         let pill = HStack(spacing: 6 * scale) {
             // Fixed layout frame (22pt) so HStack width never changes on hover;
             // only the visual icon content shrinks.
-            appIcon(size: pillIconSize, dim: iconDim)
+            appIcon(size: pillIconSize)
                 .frame(width: 22 * scale, height: 22 * scale)
             Text(displayTitle)
                 .font(.system(size: max(10, 12 * scale), weight: .medium, design: .rounded))
@@ -1306,13 +1304,12 @@ struct ChipView: View {
 
     // MARK: - Shared Icon
 
-    private func appIcon(size: CGFloat, dim: DockIconDim) -> some View {
+    private func appIcon(size: CGFloat) -> some View {
         Image(nsImage: AppIconResolver.icon(for: item.bundleIdentifier ?? item.appID))
             .resizable()
             .aspectRatio(contentMode: .fit)
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size / 4, style: .continuous))
-            .dockIconDim(dim)
             .dockShadow(theme.iconShadow)
     }
 

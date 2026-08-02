@@ -3,35 +3,10 @@ import XCTest
 
 final class LauncherChipVisualPlanTests: XCTestCase {
 
-    // 退出态：无论本区是否对隐藏态降级，都恒定灰显、无点。
-    func testNotRunningIsGrayNoDot() {
-        for dims in [true, false] {
-            let v = LauncherChipVisualPlan.visual(isRunning: false, isHidden: false, dimsWhenHidden: dims)
-            XCTAssertEqual(v.dim, .notRunning)
-            XCTAssertFalse(v.showsRunningDot)
-        }
-    }
-
-    // 运行可见：全亮、有点。
-    func testRunningVisibleIsBrightWithDot() {
-        for dims in [true, false] {
-            let v = LauncherChipVisualPlan.visual(isRunning: true, isHidden: false, dimsWhenHidden: dims)
-            XCTAssertEqual(v.dim, .bright)
-            XCTAssertTrue(v.showsRunningDot)
-        }
-    }
-
-    // 消息区运行隐藏（dimsWhenHidden=false）：保持全亮、有点（随时可点）。
-    func testMessagingRunningHiddenStaysBright() {
-        let v = LauncherChipVisualPlan.visual(isRunning: true, isHidden: true, dimsWhenHidden: false)
-        XCTAssertEqual(v.dim, .bright)
-        XCTAssertTrue(v.showsRunningDot)
-    }
-
-    // 默认区（抽屉 / 普通 kept）运行隐藏（dimsWhenHidden=true）：降级到 hidden 档、有点。
-    func testDefaultRunningHiddenDims() {
-        let v = LauncherChipVisualPlan.visual(isRunning: true, isHidden: true, dimsWhenHidden: true)
-        XCTAssertEqual(v.dim, .hidden)
-        XCTAssertTrue(v.showsRunningDot)
+    // 运行点是**唯一**的状态信号（2026-08-02 拿掉图标淡化之后）：运行=有点，退出=无点。
+    // 与所在分区无关——消息区、抽屉下区、保留图标一视同仁。
+    func testRunningDotFollowsProcessStateOnly() {
+        XCTAssertTrue(LauncherChipVisualPlan.visual(isRunning: true).showsRunningDot)
+        XCTAssertFalse(LauncherChipVisualPlan.visual(isRunning: false).showsRunningDot)
     }
 }
