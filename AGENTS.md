@@ -18,6 +18,7 @@
 - Engineering hard constraints: this file.
 - Platform quirks: `Docs/05-known-platform-quirks.md`.
 - Rollback ledger (executable revert commands + verification state): `Docs/23-rollback-ledger.md`; keep it updated alongside the Obsidian checkpoint map.
+- Shipping a release (version bump → tag → package → notes → GitHub → Homebrew → verification): `Docs/29-release-runbook.md`. Follow it step by step — this is the project's only publicly irreversible action, and a wrong cask sha256 breaks `brew install` for every user.
 - Trust model history: `Docs/Archive/Engineering/19-taskbar-trust-incident.md`, `Docs/Archive/Engineering/20-inventory-first-taskbar-trust.md`.
 - Focus debug history: `Docs/22-window-focus-flicker-debugging.md`.
 - Idle-period background polling — **four** timers (frontmost poll / window lift / 5s `reconcile` / badge), measured frequencies, shares, hard constraints, and the reviewed-and-corrected throttling designs: `Docs/26-idle-performance-polling.md`. The frontmost-poll and window-lift throttling were **rejected by the owner** (2026-07-31, perceptible latency); that file is a design archive, not a backlog. The `reconcile` timer was missing from that table until 2026-08-03 — before designing any throttling, enumerate **every** timer in the subsystem first (this list has now been wrong twice).
