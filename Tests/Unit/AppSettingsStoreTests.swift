@@ -356,6 +356,32 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertTrue(state.isVisible)
     }
 
+    /// 钨极菜单（状态栏图标或任务条右键弹出的同一个）开着时，边缘自动隐藏必须停摆——
+    /// 否则空闲计时照跑，任务条会从弹出的菜单底下缩掉。
+    func testTaskbarMenuOpenInhibitsIdleHideAndReleasesOnClose() {
+        var state = PanelVisibilityState()
+        XCTAssertTrue(EdgeAutoHideRuntimeRules.canArmIdleHide(state: state, delay: 0.9))
+
+        state.setInhibitor(.taskbarMenuOpen, active: true)
+        XCTAssertFalse(EdgeAutoHideRuntimeRules.canArmIdleHide(state: state, delay: 0.9))
+
+        state.setInhibitor(.taskbarMenuOpen, active: false)
+        XCTAssertTrue(EdgeAutoHideRuntimeRules.canArmIdleHide(state: state, delay: 0.9))
+    }
+
+    /// 菜单是在任务条已经缩起来的状态下弹的（用户从状态栏图标点开）：
+    /// 抑制器要把它拉回来，不能让菜单孤零零地挂在没有任务条的地方。
+    func testTaskbarMenuOpenClearsAnAlreadyHiddenEdgeAutoHide() {
+        var state = PanelVisibilityState()
+        state.setEdgeAutoHidden(true)
+        XCTAssertFalse(state.isVisible)
+
+        state.setInhibitor(.taskbarMenuOpen, active: true)
+        state.reconcileEdgeAutoHide(isEnabled: true)
+
+        XCTAssertTrue(state.isVisible)
+    }
+
     func testEdgeAutoHideWakeRulesRequireHiddenFiniteDelayAndNoInhibitors() {
         var state = PanelVisibilityState()
 
@@ -547,17 +573,17 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(AppSettingsStore.sanitizedLastEnabledDelay(AppSettingsStore.neverWakeDelay), AppSettingsStore.neverWakeDelay)
     }
 
-    // MARK: - 动态显隐命令纯逻辑
+    // MARK: - 菜单分组标题纯逻辑
 
-    func testEdgeToggleTitleDescribesNextModeAction() {
+    /// 快捷键只在 Carbon 注册成功时才写进标题——注册失败时按不出来，提了就是骗人。
+    func testEdgeSectionTitleMentionsShortcutOnlyWhenRegistered() {
         XCTAssertEqual(
-            AutoHideToggleMenuModel.edgeTitle(delay: AppSettingsStore.neverHideDelay),
-            "隐藏 Tungsten Edge 钨极"
+            AutoHideToggleMenuModel.edgeSectionTitle(isHotKeyRegistered: true),
+            "Tungsten Edge 钨极（⌥⇧⌘D 显隐）"
         )
-        XCTAssertEqual(AutoHideToggleMenuModel.edgeTitle(delay: 0.5), "显示 Tungsten Edge 钨极")
         XCTAssertEqual(
-            AutoHideToggleMenuModel.edgeTitle(delay: AppSettingsStore.neverWakeDelay),
-            "显示 Tungsten Edge 钨极"
+            AutoHideToggleMenuModel.edgeSectionTitle(isHotKeyRegistered: false),
+            "Tungsten Edge 钨极"
         )
     }
 
@@ -733,18 +759,6 @@ final class AppSettingsStoreTests: XCTestCase {
         reused.begin(currentDelay: 0.4)
         reused.stage(0.8)
         XCTAssertEqual(reused.consume()?.previous, 0.4)
-    }
-
-    func testToggleMenuKeyEquivalentShownOnlyWhenHotKeyRegistered() {
-        let shortcut = GlobalHotKeyShortcut.edgeAutoHideMode
-
-        let shown = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: true, shortcut: shortcut)
-        XCTAssertEqual(shown.key, "d")
-        XCTAssertEqual(shown.mask, [.option, .shift, .command])
-
-        let hidden = AutoHideToggleMenuModel.keyEquivalentPresentation(isHotKeyRegistered: false, shortcut: shortcut)
-        XCTAssertEqual(hidden.key, "")
-        XCTAssertEqual(hidden.mask, [])
     }
 
     func testNativeDockSectionTitleMentionsSystemShortcutAsPlainText() {

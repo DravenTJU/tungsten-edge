@@ -41,6 +41,9 @@ enum EdgeAutoHideInhibitor: Hashable {
     case dragging
     case drawerOpen
     case folderPopupOpen
+    /// 钨极菜单（状态栏图标或任务条右键弹出的那一个）正开着。
+    /// 不挡的话，自动隐藏档位下空闲计时照跑，任务条会从菜单底下缩掉。
+    case taskbarMenuOpen
 }
 
 struct PanelVisibilityState: Equatable {

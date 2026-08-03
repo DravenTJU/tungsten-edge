@@ -6,109 +6,11 @@ private enum StatusMenuLayout {
     static let trailingInsetX: CGFloat = 14
 }
 
-/// 两条动态显隐命令（系统 Dock + 钨极）的纯展示/去重决策（单测覆盖）。
-@MainActor
-enum AutoHideToggleMenuModel {
-    static func isAutoHideEnabled(delay: Double) -> Bool {
-        delay != AppSettingsStore.neverHideDelay
-    }
-
-    static func edgeTitle(delay: Double) -> String {
-        isAutoHideEnabled(delay: delay)
-            ? "显示 Tungsten Edge 钨极"
-            : "隐藏 Tungsten Edge 钨极"
-    }
-
-    /// 系统 Dock 这一组的分组标题（不可点）。两条滑块长得一模一样，没有标题分不清谁管谁。
-    ///
-    /// ⌥⌘D 以**纯文字**写进标题，不设 `keyEquivalent`：这一行本就不可点，设了会被菜单捕获，
-    /// 也会让禁用行看起来能点。这个键归 macOS 持有、恒生效，我们只是告诉用户它在——
-    /// 删掉显隐命令之后，它就是「把 Dock 临时叫回来」的一键入口。
-    static let nativeDockSectionTitle = "系统 Dock（⌥⌘D 显隐）"
-
-    /// 滑块档位的显示名。滑块本体与确认行必须共用这一份口径，
-    /// 否则确认行说的档位和滑块上显示的不是一回事。
-    static func delayDisplayName(sliderIndex index: Int) -> String {
-        switch index {
-        case 0:
-            return "常驻"
-        case AppSettingsStore.sliderIndexMax:
-            return "不唤醒"
-        default:
-            return String(format: "%.1fs", AppSettingsStore.delayFromSliderIndex(index))
-        }
-    }
-
-    /// 系统 Dock 的每次写入都以 `killall Dock` 收尾，屏幕必然闪一下——这一下消除不了
-    /// （改 `autohide-delay` 在 macOS 上只有这条生效路径），只能让它发生在用户主动确认**之后**，
-    /// 预期之中的闪不觉得怪。所以滑块不再自动提交，草稿与已生效值不同时才浮出这一行。
-    ///
-    /// 比**整数档位**而不是浮点值：滑块本来就只能停在档位上，比浮点会被表示误差咬到。
-    static func shouldShowNativeApply(draft: Double, applied: Double) -> Bool {
-        AppSettingsStore.sliderIndexFromDelay(draft) != AppSettingsStore.sliderIndexFromDelay(applied)
-    }
-
-    /// 标题带上目标档位是有意的：它同时在提醒「你拖到的这一档现在还没生效」。
-    static func nativeApplyTitle(draft: Double) -> String {
-        let name = delayDisplayName(sliderIndex: AppSettingsStore.sliderIndexFromDelay(draft))
-        return "应用「\(name)」（Dock 会重启一下）"
-    }
-
-    /// autohide-delay 键不存在时系统 Dock 的实际默认延迟。
-    static let systemDefaultAutohideDelay = 0.5
-
-    /// 系统真值 → 本地镜像应有的档位值。
-    static func storeDelay(systemEnabled: Bool, systemDelay: Double?) -> Double {
-        guard systemEnabled else { return AppSettingsStore.neverHideDelay }
-        let rawDelay = systemDelay ?? systemDefaultAutohideDelay
-        // 系统开关已经明确为开；负 delay 只能视为外部自定义的极短延迟，
-        // 不能穿透 snapDelay 被误解释成本 App 的「常驻」哨兵 -1。
-        let enabledDelay = rawDelay.isFinite
-            ? max(rawDelay, AppSettingsStore.finiteDelayMin)
-            : AppSettingsStore.defaultNativeDockAutoHideDelay
-        return AppSettingsStore.snapDelay(
-            enabledDelay,
-            fallbackForNonFinite: AppSettingsStore.defaultNativeDockAutoHideDelay
-        )
-    }
-
-    /// 菜单打开时把系统实际状态回灌进本地镜像，让滑块、标题、点击方向从同一真值出发。
-    /// 返回 nil = 已一致，无需改动。
-    static func reconciledStoreDelay(systemEnabled: Bool, systemDelay: Double?, currentStoreDelay: Double) -> Double? {
-        let target = storeDelay(systemEnabled: systemEnabled, systemDelay: systemDelay)
-        return currentStoreDelay == target ? nil : target
-    }
-
-    /// 写系统之后本地镜像该落什么值。四象限，**不能一律「失败就回 previous」**：
-    /// 写成功但读不回来时回滚，会让 UI 显示得和已经生效的系统设置相反。
-    ///
-    /// |            | 系统可读     | 系统不可读   |
-    /// |------------|--------------|--------------|
-    /// | **写成功** | 按读到的值   | 保留 target  |
-    /// | **写失败** | 按读到的值（可能是部分写入的结果） | 保留 previous |
-    static func resolvedStoreDelay(writeSucceeded: Bool,
-                                   systemState: NativeDockAutohideState?,
-                                   target: Double,
-                                   previous: Double) -> Double {
-        if let systemState {
-            return storeDelay(systemEnabled: systemState.enabled, systemDelay: systemState.delay)
-        }
-        return writeSucceeded ? target : previous
-    }
-
-    /// keyEquivalent 提示只在对应全局热键真实生效时显示。
-    /// （系统 Dock 行传 true：⌥⌘D 由 macOS 持有，恒生效，无注册环节。）
-    static func keyEquivalentPresentation(isHotKeyRegistered: Bool,
-                                          shortcut: GlobalHotKeyShortcut) -> (key: String, mask: NSEvent.ModifierFlags) {
-        isHotKeyRegistered ? (shortcut.keyEquivalent, shortcut.keyEquivalentModifierMask) : ("", [])
-    }
-
-}
-
-/// 系统 Dock 滑块的草稿账本。记的是**改动前**的值：写入是 defaults + killall 的多步非事务序列，
-/// 失败时要靠 previous 回滚本地镜像（见 `AutoHideToggleMenuModel.resolvedStoreDelay` 四象限）。
+/// 系统 Dock 滑块的草稿账本。记着**改动前**的值，但只用来判「到底变没变」——
+/// 写入失败时回滚到哪一档，由 `SettingsCoordinator.applyNativeDock` 自己重读系统真值决定
+/// （界面手里的起点在草稿摊着的那段时间里可能已被 ⌥⌘D 改掉，见那里的注释）。
 ///
-/// 提交源现在只有确认行一个（滑块本身不再自动写系统），但 `consume()` 的**原子**语义保留：
+/// 提交源只有确认行一个（滑块本身不自动写系统），`consume()` 的**原子**语义是关键：
 /// 它同时承担「值没变就不写」「没有起点就不写」两道闸，重复调用一律拿到 nil。
 struct PreferenceSliderCommitTracker {
     private var baseline: Double?
@@ -139,32 +41,39 @@ struct PreferenceSliderCommitTracker {
 @MainActor
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let store: AppSettingsStore
-    private let launchAtLoginService: LaunchAtLoginServicing
-    private let nativeDockPreferencesService: NativeDockPreferencesServicing
-    private let updateChecker: UpdateChecking
+    private let settingsCoordinator: SettingsCoordinator
     // 闭包注入而非直接依赖 PermissionService：测试 target 编译本文件但不含 PermissionService.swift。
     private let isAccessibilityTrusted: () -> Bool
     private let onShowDebugConsole: () -> Void
     private let onExportDebugSnapshot: () -> Void
+    private let onShowSettings: () -> Void
+    /// 菜单开 / 关。任务条的边缘自动隐藏要在菜单开着时停摆，否则空闲计时照跑，
+    /// 任务条会从弹出的菜单底下缩掉（同 `folderPopupOpen`）。走闭包是因为
+    /// `PanelCoordinator` 在权限引导完成前根本不存在。
+    private let onMenuVisibilityChanged: (Bool) -> Void
     private let onQuit: () -> Void
     private let toggleHotKeyShortcut: GlobalHotKeyShortcut
     // 闭包注入：注册状态归 AppDelegate 持有的 GlobalHotKeyMonitor，菜单每次刷新时现查。
     private let isToggleHotKeyRegistered: () -> Bool
     private var edgeDelaySubscription: AnyCancellable?
+    /// 本次菜单是不是从任务条右键弹出来的。菜单锚在任务条上沿，任务条一缩它就悬空了，
+    /// 所以这条路径下**不做实时预览**（owner 2026-08-03）；状态栏图标那条不受影响。
+    private var isPresentedFromTaskbar = false
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let menu = NSMenu()
     private let permissionWarningItem = NSMenuItem(title: "辅助功能权限未开启", action: #selector(openAccessibilitySettings), keyEquivalent: "")
     private let permissionWarningSeparator = NSMenuItem.separator()
+    private let settingsItem = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
     private let launchAtLoginItem = NSMenuItem(title: "登录时启动", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
     private let openLoginItemsSettingsItem = NSMenuItem(title: "打开登录项设置…", action: #selector(openLoginItemsSettings), keyEquivalent: "")
     private let checkForUpdatesItem = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
-    private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
-    private let showShelfItem = NSMenuItem(title: "显示中转站", action: #selector(toggleShowShelf), keyEquivalent: "")
-    private let hoverStyleItem = NSMenuItem(title: "鼠标悬停显示应用名", action: #selector(toggleHoverStyle), keyEquivalent: "")
-    private let windowLiftItem = NSMenuItem(title: "最大化窗口避开任务条", action: #selector(toggleWindowLift), keyEquivalent: "")
-    private let dockSizeItem = NSMenuItem(title: "任务条大小", action: nil, keyEquivalent: "")
-    private var dockSizeItems: [DockSize: NSMenuItem] = [:]
+    /// 钨极组的分组标题，恒不可点（title 在 refreshEdgeSectionTitle 里随热键注册状态落）。
+    private let edgeSectionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    // 中转站 / 悬停 / 最大化避让 / 任务条大小**只在设置窗口里**（owner 2026-08-03）：
+    // 它们是「调一次就不再动」的外观偏好，留在菜单里只是把菜单撑长。
+    // 菜单保留的是真正需要随手切的东西：两条唤醒滑块、登录项。
+
     /// 分组标题，恒不可点（title 在 configureMenu 里落）。
     private let nativeDockSectionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     /// 滑块草稿的唯一提交入口，默认隐藏。承载的是**真按钮**而不是普通菜单文字行：
@@ -176,25 +85,24 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let openNativeDockSettingsItem = NSMenuItem(title: "打开系统 Dock 设置…", action: #selector(openNativeDockSettings), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
-    private var updateCheckState = UpdateCheckMenuState()
 
     init(store: AppSettingsStore,
-         launchAtLoginService: LaunchAtLoginServicing,
-         nativeDockPreferencesService: NativeDockPreferencesServicing,
-         updateChecker: UpdateChecking,
+         settingsCoordinator: SettingsCoordinator,
          isAccessibilityTrusted: @escaping () -> Bool,
          onShowDebugConsole: @escaping () -> Void,
          onExportDebugSnapshot: @escaping () -> Void,
+         onShowSettings: @escaping () -> Void,
+         onMenuVisibilityChanged: @escaping (Bool) -> Void = { _ in },
          onQuit: @escaping () -> Void,
          toggleHotKeyShortcut: GlobalHotKeyShortcut = .edgeAutoHideMode,
          isToggleHotKeyRegistered: @escaping () -> Bool = { false }) {
         self.store = store
-        self.launchAtLoginService = launchAtLoginService
-        self.nativeDockPreferencesService = nativeDockPreferencesService
-        self.updateChecker = updateChecker
+        self.settingsCoordinator = settingsCoordinator
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.onShowDebugConsole = onShowDebugConsole
         self.onExportDebugSnapshot = onExportDebugSnapshot
+        self.onShowSettings = onShowSettings
+        self.onMenuVisibilityChanged = onMenuVisibilityChanged
         self.onQuit = onQuit
         self.toggleHotKeyShortcut = toggleHotKeyShortcut
         self.isToggleHotKeyRegistered = isToggleHotKeyRegistered
@@ -205,16 +113,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         configureMenu()
         refreshCheckmarks()
         refreshUpdateCheckItem()
-        // 钨极组：动态命令与滑块同处一个打开着的菜单，拖动时要实时同步标题（本地值即时生效）。
+        // 钨极滑块是即时生效的本地值：⌥⇧⌘D、设置窗口都可能在菜单开着时改它，滑块要跟着动。
         // sink 用 publisher 发出的新值：@Published 在赋值完成前发布，此刻回读 store 是旧值。
         //
-        // 系统 Dock 组刻意**没有**同款订阅：它的标题描述的是系统真值，而草稿在松手写进系统之前
-        // 系统没变，标题就不该变。滑块位置由 menuWillOpen 与提交完成后各同步一次。
+        // 系统 Dock 组刻意**没有**同款订阅：草稿在松手写进系统之前系统没变，滑块就不该动。
+        // 它的位置由 menuWillOpen 与提交完成后各同步一次。
         edgeDelaySubscription = store.$edgeAutoHideDelay
             .removeDuplicates()
             .sink { [weak self] delay in
                 self?.edgeSliderView.sync(delay: delay)
-                self?.refreshEdgeAutoHideToggleItem(delay: delay)
             }
     }
 
@@ -243,6 +150,32 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(openLoginItemsSettingsItem)
         menu.addItem(.separator())
 
+        // 钨极组排在系统 Dock 组之前——这是钨极自己的菜单，自家的设置在前。
+        // 两组都有灰色组标题当"帽子"：从前只有系统 Dock 有，整个菜单只有一顶帽子在上面，
+        // 于是它下面的钨极命令看起来也归它管（owner 2026-08-03 反馈）。
+        edgeSectionItem.isEnabled = false
+        menu.addItem(edgeSectionItem)
+
+        // 钨极滑块即时生效：每拖一格就写进 store。但**光写值看不到效果**——
+        // 菜单一打开就设了 `taskbarMenuOpen` 抑制器，任务条被强制保持可见、不许隐藏，
+        // 于是拖到 0.5s 也纹丝不动，得关掉菜单才看见（owner 2026-08-03 报的"要取消菜单栏才生效"）。
+        //
+        // 所以**动了这条滑块就解除抑制**，让任务条按新档位真的动起来：碰滑块 = 要求看效果。
+        // 没碰滑块时抑制照旧，菜单开着发呆任务条不会从菜单底下缩掉。
+        //
+        // **但任务条右键弹出的菜单例外**：它锚在任务条上沿，任务条一缩菜单就悬在半空，
+        // 比看不到效果更难受（owner 2026-08-03）。那条路径只写值、不解除抑制，
+        // 关掉菜单即生效。`menuDidClose` 之后还会再调一次 false，幂等。
+        edgeSliderView.onDelayChange = { [weak self, weak store] delay in
+            store?.setEdgeAutoHideDelay(delay)
+            guard let self, !self.isPresentedFromTaskbar else { return }
+            self.onMenuVisibilityChanged(false)
+        }
+        let edgeItem = NSMenuItem()
+        edgeItem.view = edgeSliderView
+        menu.addItem(edgeItem)
+        menu.addItem(.separator())
+
         nativeDockSectionItem.title = AutoHideToggleMenuModel.nativeDockSectionTitle
         nativeDockSectionItem.isEnabled = false
         menu.addItem(nativeDockSectionItem)
@@ -253,8 +186,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         nativeDockSliderView.onDraftChange = { [weak self] draft in
             self?.refreshNativeDockApplyItem(draft: draft)
         }
-        nativeDockSliderView.onDelayCommit = { [weak self] previous, target in
-            self?.commitNativeDockDelay(previous: previous, target: target)
+        nativeDockSliderView.onDelayCommit = { [weak self] target in
+            self?.scheduleNativeDockWrite(target: target)
         }
         let nativeDockSliderItem = NSMenuItem()
         nativeDockSliderItem.view = nativeDockSliderView
@@ -266,42 +199,6 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         nativeDockApplyItem.view = nativeDockApplyRow
         nativeDockApplyItem.isHidden = true
         menu.addItem(nativeDockApplyItem)
-
-        openNativeDockSettingsItem.target = self
-        menu.addItem(openNativeDockSettingsItem)
-        menu.addItem(.separator())
-
-        edgeAutoHideToggleItem.target = self
-        menu.addItem(edgeAutoHideToggleItem)
-        edgeSliderView.onDelayChange = { [weak store] delay in
-            store?.setEdgeAutoHideDelay(delay)
-        }
-        let edgeItem = NSMenuItem()
-        edgeItem.view = edgeSliderView
-        menu.addItem(edgeItem)
-
-        // 钨极自己的外观开关跟在钨极这一组里（标题恒定，状态用勾表达，同「登录时启动」）。
-        showShelfItem.target = self
-        menu.addItem(showShelfItem)
-
-        hoverStyleItem.target = self
-        menu.addItem(hoverStyleItem)
-
-        // 自动隐藏档位下避让本来就不工作（只在常驻可见时抬窗口），但这一项**恒可点**：
-        // 它是偏好不是当前状态，置灰只会让人以为功能没了（owner 2026-08-03 定）。
-        windowLiftItem.target = self
-        menu.addItem(windowLiftItem)
-
-        let dockSizeMenu = NSMenu()
-        for size in DockSize.allCases {
-            let item = NSMenuItem(title: size.title, action: #selector(selectDockSize(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = size.rawValue
-            dockSizeMenu.addItem(item)
-            dockSizeItems[size] = item
-        }
-        dockSizeItem.submenu = dockSizeMenu
-        menu.addItem(dockSizeItem)
 
         menu.addItem(.separator())
         #if DEBUG
@@ -318,9 +215,20 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         #endif
 
+        // 「设置…」和「检查更新 / 版本号 / 退出」归为底部一组（owner 2026-08-03）：
+        // 菜单栏应用的普遍习惯是把这类"进另一个界面"的入口放在下面，上面留给随手切的开关。
+        settingsItem.target = self
+        settingsItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(settingsItem)
+
+        // 和「设置…」并列：两条都是"打开另一个界面"。它因此离开了系统 Dock 组
+        //（owner 2026-08-03；原先它是那组的末行，和下一组的首行看起来像一对）。
+        openNativeDockSettingsItem.target = self
+        menu.addItem(openNativeDockSettingsItem)
+
         checkForUpdatesItem.target = self
         menu.addItem(checkForUpdatesItem)
-        if let versionTitle = Self.versionMenuTitle() {
+        if let versionTitle = settingsCoordinator.versionTitle {
             let versionItem = NSMenuItem(title: versionTitle, action: nil, keyEquivalent: "")
             versionItem.isEnabled = false
             menu.addItem(versionItem)
@@ -331,31 +239,43 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(quitItem)
     }
 
-    private static func versionMenuTitle() -> String? {
-        let info = Bundle.main.infoDictionary
-        #if DEBUG
-        let isDebugBuild = true
-        #else
-        let isDebugBuild = false
-        #endif
-        // 版本号在发布后主线不 bump，光看数字分不出开发构建和用户装的包，
-        // 因此把来源一并显示出来。判定逻辑在纯 BuildProvenance 里，有单测。
-        return BuildProvenance.versionTitle(
-            version: info?["CFBundleShortVersionString"] as? String,
-            build: info?["CFBundleVersion"] as? String,
-            isDebugBuild: isDebugBuild,
-            bundlePath: Bundle.main.bundleURL.path
-        )
+
+    /// 任务条 / 胶囊右键的弹出入口。
+    ///
+    /// 和状态栏图标**共用同一个 `NSMenu` 实例**：菜单里的两条滑块和确认按钮是有状态的自绘 NSView，
+    /// 克隆一份会立刻出现"两个滑块各记各的草稿"。`menuWillOpen` 的既有逻辑（回灌系统 Dock 真值、
+    /// 刷新勾选、丢弃未确认草稿）走的是同一个 delegate，所以两个入口行为完全一致。
+    func popUpFromTaskbar(with event: NSEvent, in view: NSView) {
+        // 自己算锚点，让菜单**底边贴任务条上沿**、左边对齐鼠标——像右键系统程序坞那样浮在条的
+        // 上方，不遮挡它。交给 `NSMenu.popUpContextMenu` 自动翻转的话，实测菜单底边会落在鼠标
+        // 下方 28pt，把整条任务条盖住（owner 2026-08-03 反馈"不跟手"的一半原因）。
+        //
+        // `MenuHostNSView` 是普通 NSView（`isFlipped == false`，原点在左下），它铺满任务条
+        // 可视区，所以 `bounds.maxY` 就是任务条上沿；`popUp(positioning:at:in:)` 把菜单
+        // **左上角**放在给定点，于是再往上抬一个菜单高度。
+        isPresentedFromTaskbar = true
+        let local = view.convert(event.locationInWindow, from: nil)
+        let anchor = NSPoint(x: local.x, y: view.bounds.maxY + menu.size.height)
+        menu.popUp(positioning: nil, at: anchor, in: view)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isPresentedFromTaskbar = false
+        onMenuVisibilityChanged(false)
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        onMenuVisibilityChanged(true)
         let granted = isAccessibilityTrusted()
         permissionWarningItem.isHidden = granted
         permissionWarningSeparator.isHidden = granted
-        // 先把系统实际状态回灌进本地镜像，再刷新动态命令标题。
-        reconcileNativeDockStoreWithSystem()
+        // 这里**只用缓存值**把菜单摆好，两个系统真值的读取推迟到菜单已经显示之后
+        // （见 refreshSystemTruthAfterPresenting）。它们加起来实测约 100ms：
+        // 右键任务条 158–176ms vs 右键 chip（菜单现搭、不走本回调）60–78ms。
+        // 从状态栏图标点开还能忍，右键要求菜单立刻跟着鼠标出来，这 100ms 就是「不跟手」。
         refreshCheckmarks()
         refreshUpdateCheckItem()
+        refreshSystemTruthAfterPresenting()
         // 没点确认就关菜单 = 作废：什么都不写，下次打开一切从系统真值重新起步。
         // （否则「随手拨一下看看」也会招来一次 killall Dock——关个菜单屏幕突然闪一下，
         // 正是这次要消除的怪异感。）
@@ -369,30 +289,34 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
         nativeDockApplyItem.isHidden = true
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
-        refreshEdgeAutoHideToggleItem(delay: store.edgeAutoHideDelay)
+        refreshEdgeSectionTitle()
     }
 
-    /// 只改本地存值让 UI 对齐系统真值，绝不反向应用（菜单打开不许 killall Dock）。
-    private func reconcileNativeDockStoreWithSystem() {
-        guard let state = nativeDockPreferencesService.currentAutohideState() else { return }
-        if let target = AutoHideToggleMenuModel.reconciledStoreDelay(
-            systemEnabled: state.enabled,
-            systemDelay: state.delay,
-            currentStoreDelay: store.nativeDockAutoHideDelay
-        ) {
-            store.setNativeDockAutoHideDelay(target)
+    /// 菜单已经显示出来之后再补读系统真值，读完就地更新。
+    ///
+    /// **必须挂 `.common`**：菜单跟踪跑的是嵌套 run loop，普通 `DispatchQueue.main.async`
+    /// 要等菜单关掉才执行（同仓库既有那条「拖动期间的定时器必须挂 `.common`」）。
+    ///
+    /// 晚这一下**不会导致写错档位**：`SettingsCoordinator.applyNativeDock(target:)` 在写系统之前
+    /// 自己会重读一次真值，镜像临时落后于系统不影响写入结果。
+    private func refreshSystemTruthAfterPresenting() {
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            guard let self else { return }
+            self.settingsCoordinator.refreshLaunchAtLoginState()
+            self.settingsCoordinator.reconcileNativeDockMirror()
+            self.refreshCheckmarks()
+            // 滑块只在用户还没开始拖的时候才跟着真值走——正在拖的手不能被跳一下。
+            guard !self.nativeDockSliderView.hasDraft else { return }
+            self.nativeDockSliderView.sync(delay: self.store.nativeDockAutoHideDelay)
         }
     }
 
-    private func refreshEdgeAutoHideToggleItem(delay: Double) {
-        edgeAutoHideToggleItem.title = AutoHideToggleMenuModel.edgeTitle(delay: delay)
-        edgeAutoHideToggleItem.state = .off
-        let presentation = AutoHideToggleMenuModel.keyEquivalentPresentation(
-            isHotKeyRegistered: isToggleHotKeyRegistered(),
-            shortcut: toggleHotKeyShortcut
+    /// 组标题**不设 `keyEquivalent`**：禁用行设了会被菜单捕获，还会让它看起来能点。
+    /// ⌥⇧⌘D 只以纯文字写进标题，且只在 Carbon 注册成功时才提——注册失败时按不出来，写上去是骗人。
+    private func refreshEdgeSectionTitle() {
+        edgeSectionItem.title = AutoHideToggleMenuModel.edgeSectionTitle(
+            isHotKeyRegistered: isToggleHotKeyRegistered()
         )
-        edgeAutoHideToggleItem.keyEquivalent = presentation.key
-        edgeAutoHideToggleItem.keyEquivalentModifierMask = presentation.mask
     }
 
     /// 草稿与已生效值不同才浮出确认行。已生效值取本地镜像——`menuWillOpen` 刚把它对齐过系统真值。
@@ -411,16 +335,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    @objc private func toggleEdgeAutoHideModeFromMenu() {
-        store.toggleEdgeAutoHideMode()
-    }
-
     private func applyNativeDockDelay() {
         nativeDockSliderView.commitDraft()
     }
 
     @objc private func openNativeDockSettings() {
-        guard nativeDockPreferencesService.openSystemSettings() else {
+        guard settingsCoordinator.openNativeDockSettings() else {
             presentError(
                 title: "无法打开系统 Dock 设置",
                 message: "请从系统设置进入「桌面与程序坞」（macOS 12 为「程序坞与菜单栏」）。"
@@ -431,41 +351,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     private func refreshCheckmarks() {
         refreshLaunchAtLoginState()
-        showShelfItem.state = store.showShelf ? .on : .off
-        hoverStyleItem.state = store.hoverStyle.isExpressive ? .on : .off
-        windowLiftItem.state = store.windowLiftEnabled ? .on : .off
-        for (size, item) in dockSizeItems {
-            item.state = store.dockSize == size ? .on : .off
-        }
-    }
-
-    @objc private func toggleShowShelf() {
-        store.setShowShelf(!store.showShelf)
-        refreshCheckmarks()
-    }
-
-    /// 勾选 = 标准悬停（放大图标 + 冒名字 + 文件夹格放大），取消 = 完全静止。
-    /// 标题只提了「应用名」，是 owner 有意选的短名字，不是漏写——别据此缩小行为范围（见 `Docs/27`）。
-    @objc private func toggleHoverStyle() {
-        store.setHoverStyle(store.hoverStyle.isExpressive ? .quiet : .standard)
-        refreshCheckmarks()
-    }
-
-    /// 勾选 = 前台铺满窗口的底边抬到任务条上方；取消勾选立刻停止避让，
-    /// 并把已经抬起来的窗口还原回原生尺寸（`WindowLiftAvoidanceController.stop()` 全套）。
-    @objc private func toggleWindowLift() {
-        store.setWindowLiftEnabled(!store.windowLiftEnabled)
-        refreshCheckmarks()
-    }
-
-    @objc private func selectDockSize(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let size = DockSize(rawValue: raw) else { return }
-        store.setDockSize(size)
-        refreshCheckmarks()
     }
 
     private func refreshLaunchAtLoginState() {
-        let presentation = LaunchAtLoginMenuPresentation(state: launchAtLoginService.state)
+        let presentation = LaunchAtLoginMenuPresentation(state: settingsCoordinator.launchAtLoginState)
         launchAtLoginItem.title = presentation.title
         launchAtLoginItem.state = presentation.isChecked ? .on : .off
         launchAtLoginItem.isEnabled = presentation.isEnabled
@@ -473,81 +362,58 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     }
 
     private func refreshUpdateCheckItem() {
-        let presentation = updateCheckState.presentation
+        // 在飞守卫在共享层：设置窗口里也有一个「检查更新」，各自守卫会同时发两次请求。
+        let presentation = settingsCoordinator.updateCheckState.presentation
         checkForUpdatesItem.title = presentation.title
         checkForUpdatesItem.isEnabled = presentation.isEnabled
     }
 
     @objc private func toggleLaunchAtLogin() {
-        guard let enable = LaunchAtLoginMenuModel.requestedEnabledValue(afterSelecting: launchAtLoginService.state) else { return }
-        do {
-            try launchAtLoginService.setEnabled(enable)
-            store.setLaunchAtLogin(enable)
-        } catch {
+        guard let enable = LaunchAtLoginMenuModel.requestedEnabledValue(afterSelecting: settingsCoordinator.launchAtLoginState) else { return }
+        if case .failure(let error) = settingsCoordinator.setLaunchAtLogin(enable) {
             presentError(title: "登录时启动设置失败", message: error.localizedDescription)
         }
         refreshCheckmarks()
     }
 
     @objc private func openLoginItemsSettings() {
-        launchAtLoginService.openSystemSettings()
+        settingsCoordinator.openLoginItemsSettings()
     }
 
     @objc private func checkForUpdates() {
-        guard updateCheckState.begin() else { return }
+        guard settingsCoordinator.beginUpdateCheck() else { return }
         refreshUpdateCheckItem()
         menu.cancelTrackingWithoutAnimation()
 
-        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
         Task { [weak self] in
             guard let self else { return }
-            do {
-                let outcome = try await updateChecker.check(currentVersion: currentVersion)
-                finishUpdateCheck()
-                presentUpdateOutcome(outcome)
-            } catch {
-                finishUpdateCheck()
-                presentUpdateCheckFailure()
-            }
+            let content = await self.settingsCoordinator.performUpdateCheck()
+            self.finishUpdateCheck()
+            self.presentUpdateCheckResult(content)
         }
     }
 
     private func finishUpdateCheck() {
-        updateCheckState.finish()
+        settingsCoordinator.finishUpdateCheck()
         refreshUpdateCheckItem()
     }
 
-    private func presentUpdateOutcome(_ outcome: UpdateCheckOutcome) {
+    /// 文案来自共享的 `UpdateCheckAlertContent`——设置窗口那边渲染同一份内容。
+    private func presentUpdateCheckResult(_ content: UpdateCheckAlertContent) {
         let alert = NSAlert()
-        alert.alertStyle = .informational
-
-        switch outcome {
-        case .updateAvailable(let currentVersion, let latestVersion, let releaseURL):
-            alert.messageText = "发现新版本 \(latestVersion)"
-            alert.informativeText = "当前版本 \(currentVersion)。钨极目前仍需手动下载安装。"
-            alert.addButton(withTitle: "前往下载")
+        alert.alertStyle = content.isWarning ? .warning : .informational
+        alert.messageText = content.title
+        alert.informativeText = content.message
+        if let openButtonTitle = content.openButtonTitle, let openURL = content.openURL {
+            alert.addButton(withTitle: openButtonTitle)
             alert.addButton(withTitle: "稍后")
             if Self.runModalInForeground(alert) == .alertFirstButtonReturn {
-                NSWorkspace.shared.open(releaseURL)
+                NSWorkspace.shared.open(openURL)
             }
-        case .upToDate(let currentVersion, let latestVersion):
-            alert.messageText = "当前已是最新版本"
-            alert.informativeText = "当前版本 \(currentVersion)，GitHub 最新正式版为 \(latestVersion)。"
-            alert.addButton(withTitle: "好")
-            Self.runModalInForeground(alert)
+            return
         }
-    }
-
-    private func presentUpdateCheckFailure() {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "暂时无法检查更新"
-        alert.informativeText = "请检查网络连接后重试，也可以直接打开 GitHub 发布页。"
-        alert.addButton(withTitle: "打开发布页")
         alert.addButton(withTitle: "好")
-        if Self.runModalInForeground(alert) == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(GitHubUpdateChecker.releasesURL)
-        }
+        Self.runModalInForeground(alert)
     }
 
     @objc private func openAccessibilitySettings() {
@@ -555,55 +421,19 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         NSWorkspace.shared.open(url)
     }
 
-    private func commitNativeDockDelay(previous: Double, target: Double) {
-        scheduleNativeDockWrite(previous: previous, target: target) { [nativeDockPreferencesService] in
-            try nativeDockPreferencesService.apply(delay: target)
-        }
-    }
 
     /// 系统 Dock 的唯一写入路径。先收菜单——写入以 `killall Dock` 收尾，
     /// 菜单不该在系统 Dock 重启时还开着；下一轮再执行。
-    private func scheduleNativeDockWrite(previous: Double,
-                                         target: Double,
-                                         write: @escaping @MainActor () throws -> Void) {
+    private func scheduleNativeDockWrite(target: Double) {
         menu.cancelTrackingWithoutAnimation()
         DispatchQueue.main.async { [weak self] in
-            self?.applyNativeDockWrite(previous: previous, target: target, write: write)
-        }
-    }
-
-    private func applyNativeDockWrite(previous: Double,
-                                      target: Double,
-                                      write: @MainActor () throws -> Void) {
-        guard nativeDockPreferencesService.isAvailable else {
-            presentError(title: "系统 Dock 设置失败", message: NativeDockPreferencesError.sandboxed.localizedDescription)
-            return
-        }
-
-        // defaults/killall 是多步非事务序列，写完一律重读系统真值再决定本地镜像落什么
-        // （四象限见 AutoHideToggleMenuModel.resolvedStoreDelay）。
-        var writeError: Error?
-        do {
-            try write()
-        } catch {
-            writeError = error
-        }
-
-        let resolved = AutoHideToggleMenuModel.resolvedStoreDelay(
-            writeSucceeded: writeError == nil,
-            systemState: nativeDockPreferencesService.currentAutohideState(),
-            target: target,
-            previous: previous
-        )
-        store.setNativeDockAutoHideDelay(resolved)
-        // 写完之后草稿即已生效值，确认行没有存在意义了（菜单此时已收起，这里只是把状态摆正，
-        // 免得下次打开菜单前有人读到过期的可见性）。
-        nativeDockSliderView.sync(delay: resolved)
-        nativeDockApplyItem.isHidden = true
-
-        // 只有写失败才提示。写成功但读不回来时弹窗会让用户以为没生效，其实系统已经改了。
-        if let writeError {
-            presentError(title: "系统 Dock 设置失败", message: writeError.localizedDescription)
+            guard let self else { return }
+            let outcome = self.settingsCoordinator.applyNativeDock(target: target)
+            self.nativeDockSliderView.sync(delay: outcome.resolvedDelay)
+            self.nativeDockApplyItem.isHidden = true
+            if let error = outcome.error {
+                self.presentError(title: "系统 Dock 设置失败", message: error.localizedDescription)
+            }
         }
     }
 
@@ -631,6 +461,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func showDebugConsole() { onShowDebugConsole() }
     @objc private func exportDebugSnapshot() { onExportDebugSnapshot() }
+    @objc private func showSettings() {
+        menu.cancelTrackingWithoutAnimation()
+        DispatchQueue.main.async { [onShowSettings] in onShowSettings() }
+    }
     @objc private func quit() { onQuit() }
 }
 
@@ -643,7 +477,15 @@ final class PreferenceSliderMenuItemView: NSView {
     var onDraftChange: ((Double) -> Void)?
     /// 确认提交。**设了它就启用草稿机制**：系统 Dock 每次写入都以 `killall Dock` 收尾、
     /// 屏幕必然闪一下，那一下只能发生在用户主动确认之后。
-    var onDelayCommit: ((_ previous: Double, _ target: Double) -> Void)?
+    var onDelayCommit: ((_ target: Double) -> Void)?
+
+    /// 选中那一端的小字颜色：强调色**带一点透明**（owner 2026-08-03）。
+    /// 实心圆点保持满强度，小字比它弱一档——圆点是主标记，小字是它的回声。
+    /// 别把这个透明度做到字重上：加粗会让标签宽度变化、两端文字左右跳动。
+    static let activeEndpointColor = NSColor.controlAccentColor.withAlphaComponent(0.7)
+
+    /// 用户已经动过滑块、还没提交。菜单显示后补读系统真值时要看它——正在拖的手不能被跳一下。
+    var hasDraft: Bool { commitTracker.hasPending }
 
     private let accessibilityTitle: String
     private var delay = 0.0
@@ -777,7 +619,7 @@ final class PreferenceSliderMenuItemView: NSView {
     /// 用户按下确认行。**唯一**的提交入口——滑块自己在任何情况下都不写系统。
     func commitDraft() {
         guard let commit = commitTracker.consume() else { return }
-        onDelayCommit?(commit.previous, commit.target)
+        onDelayCommit?(commit.target)
     }
 
     /// 未确认的草稿作废，滑块拨回草稿开始前的已生效值。
@@ -793,13 +635,17 @@ final class PreferenceSliderMenuItemView: NSView {
         displayString = displayString(for: index)
         delay = AppSettingsStore.delayFromSliderIndex(index)
         delayLabel.stringValue = displayString
-        // 两端「常驻/不唤醒」小字恒定可见，端点圆点在选中时变实心强调；
+        // 两端「常驻/不唤醒」小字恒定可见；选中时圆点变实心、**小字同时染成强调色**
+        //（owner 2026-08-03：光靠圆点不够明显）。**只换颜色、不加粗**——加粗会让这一行的
+        // 排版宽度变化、两端标签左右跳动。
         // 中间数值文字到达端点时改为隐藏，避免和恒定可见的端点小字重复显示同一个词。
         let isAtLeftEnd = index == 0
         let isAtRightEnd = index == AppSettingsStore.sliderIndexMax
         delayLabel.isHidden = isAtLeftEnd || isAtRightEnd
         leftEndpointDot.isOn = isAtLeftEnd
         rightEndpointDot.isOn = isAtRightEnd
+        leftEndpointLabel.textColor = isAtLeftEnd ? Self.activeEndpointColor : .tertiaryLabelColor
+        rightEndpointLabel.textColor = isAtRightEnd ? Self.activeEndpointColor : .tertiaryLabelColor
         setAccessibilityLabel("\(accessibilityTitle)，\(displayString)")
         setAccessibilityValue(displayString)
         slider.displayString = displayString

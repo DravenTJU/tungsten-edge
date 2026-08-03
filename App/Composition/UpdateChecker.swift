@@ -155,3 +155,54 @@ struct UpdateCheckMenuState {
         isCheckingUpdates = false
     }
 }
+
+/// 检查更新结果的**文案单一来源**。状态栏菜单渲染成 `NSAlert`、设置窗口渲染成附着式
+/// SwiftUI alert，两处的措辞必须一致——各写一份迟早会漂。纯值类型，可单测。
+struct UpdateCheckAlertContent: Equatable {
+    let title: String
+    let message: String
+    /// 非 nil 时展示一个打开链接的按钮；nil 时只有「好」。
+    let openButtonTitle: String?
+    let openURL: URL?
+    /// 只有「查不到」是警告，查到结果（无论有没有新版）都是普通信息。
+    let isWarning: Bool
+
+    init(
+        title: String,
+        message: String,
+        openButtonTitle: String? = nil,
+        openURL: URL? = nil,
+        isWarning: Bool = false
+    ) {
+        self.title = title
+        self.message = message
+        self.openButtonTitle = openButtonTitle
+        self.openURL = openURL
+        self.isWarning = isWarning
+    }
+
+    init(outcome: UpdateCheckOutcome) {
+        switch outcome {
+        case let .updateAvailable(currentVersion, latestVersion, releaseURL):
+            self.init(
+                title: "发现新版本 \(latestVersion)",
+                message: "当前版本 \(currentVersion)。钨极目前仍需手动下载安装。",
+                openButtonTitle: "前往下载",
+                openURL: releaseURL
+            )
+        case let .upToDate(currentVersion, latestVersion):
+            self.init(
+                title: "当前已是最新版本",
+                message: "当前版本 \(currentVersion)，GitHub 最新正式版为 \(latestVersion)。"
+            )
+        }
+    }
+
+    static let failure = UpdateCheckAlertContent(
+        title: "暂时无法检查更新",
+        message: "请检查网络连接后重试，也可以直接打开 GitHub 发布页。",
+        openButtonTitle: "打开发布页",
+        openURL: GitHubUpdateChecker.releasesURL,
+        isWarning: true
+    )
+}

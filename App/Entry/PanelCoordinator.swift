@@ -95,6 +95,10 @@ final class PanelCoordinator: NSObject {
     private let fileDropQueue = DispatchQueue(label: "com.caye.macosdockcc.v2.folder-drop", qos: .userInitiated)
     /// 文件夹 chip / 中转格右键「添加文件夹…」入口（AppDelegate 注入，NSOpenPanel 归它管）。
     var onAddFolder: () -> Void = {}
+    /// 右键任务条 / 胶囊时弹出钨极菜单。菜单归 `StatusMenuController` 持有，这里只转发事件——
+    /// 正常运行时应用是 `.accessory`（没有菜单栏，也就没有 ⌘,），状态栏图标一旦被挤掉或被刘海挡住，
+    /// 这就是打开设置的唯一后路。
+    var onRequestTaskbarMenu: ((NSEvent, NSView) -> Void)?
     private var dockPanel: NSPanel?
     /// 主任务条的 SwiftUI 承载器。窗口 frame 归 PanelCoordinator，内容尺寸只从这里读取。
     private var dockContentHost: ManualPanelHost?
@@ -1202,6 +1206,9 @@ final class PanelCoordinator: NSObject {
             },
             onWindowTitleTooltipEvent: { [weak self] event in
                 self?.handleWindowTitleTooltipEvent(event)
+            },
+            onRequestTaskbarMenu: { [weak self] event, view in
+                self?.onRequestTaskbarMenu?(event, view)
             }
         ).environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore).environmentObject(badgeStore).environmentObject(stripOrderStore).environmentObject(pinnedFolderStore).environmentObject(folderCoverStore).environmentObject(shelfStore).environmentObject(dragController).environmentObject(keptAppStore).environmentObject(runningApplicationStore).environmentObject(appMembershipController).environmentObject(settingsStore))
         hosting.autoresizingMask = [.width, .height]
@@ -1239,7 +1246,12 @@ final class PanelCoordinator: NSObject {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         let hosting = NSHostingView(rootView:
-            DrawerCapsuleButton { [weak self] in self?.toggleDrawer() }
+            DrawerCapsuleButton(
+                onRequestTaskbarMenu: { [weak self] event, view in
+                    self?.onRequestTaskbarMenu?(event, view)
+                },
+                action: { [weak self] in self?.toggleDrawer() }
+            )
                 .environmentObject(runtime)
                 .environmentObject(drawerStore)
                 .environmentObject(messagingStore)
@@ -1793,6 +1805,11 @@ final class PanelCoordinator: NSObject {
         } else if edgeWakeTargetScreen == screen, edgeWakeRequiresHotZone {
             cancelEdgeWake()
         }
+    }
+
+    /// 钨极菜单开着时停掉边缘自动隐藏，否则空闲计时照跑、任务条会从菜单底下缩掉。
+    func setTaskbarMenuOpen(_ open: Bool) {
+        setAutoHideInhibitor(.taskbarMenuOpen, active: open)
     }
 
     private func setAutoHideInhibitor(_ inhibitor: EdgeAutoHideInhibitor, active: Bool) {

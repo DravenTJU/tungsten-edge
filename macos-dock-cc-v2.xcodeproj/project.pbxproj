@@ -7,6 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D20000000000000000000001 /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* SettingsWindowController.swift */; };
+		D20000000000000000000002 /* SettingsWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000002 /* SettingsWindowView.swift */; };
+		D20000000000000000000003 /* SettingsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000003 /* SettingsCoordinator.swift */; };
+		D20000000000000000000004 /* AutoHideToggleMenuModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* AutoHideToggleMenuModel.swift */; };
+		D20000000000000000000006 /* AccessoryWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000006 /* AccessoryWindowPresentation.swift */; };
+		D20000000000000000000041 /* StripContextMenuZone.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000041 /* StripContextMenuZone.swift */; };
+		D20000000000000000000013 /* SettingsCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000003 /* SettingsCoordinator.swift */; };
+		D20000000000000000000014 /* AutoHideToggleMenuModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* AutoHideToggleMenuModel.swift */; };
+		D20000000000000000000016 /* AccessoryWindowPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000006 /* AccessoryWindowPresentation.swift */; };
+		D20000000000000000000042 /* StripContextMenuZone.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000041 /* StripContextMenuZone.swift */; };
+		D20000000000000000000017 /* SettingsCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000007 /* SettingsCoordinatorTests.swift */; };
+		D20000000000000000000019 /* AccessoryWindowPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000009 /* AccessoryWindowPresentationTests.swift */; };
+		D20000000000000000000043 /* StripContextMenuZoneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000042 /* StripContextMenuZoneTests.swift */; };
 		A00000000000000000001040 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000066 /* AppDelegate.swift */; };
 		A00000000000000000001046 /* PanelCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000006C /* PanelCoordinator.swift */; };
 		A00000000000000000001041 /* DockStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000067 /* DockStripView.swift */; };
@@ -234,6 +247,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		D10000000000000000000001 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
+		D10000000000000000000002 /* SettingsWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowView.swift; sourceTree = "<group>"; };
+		D10000000000000000000003 /* SettingsCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsCoordinator.swift; sourceTree = "<group>"; };
+		D10000000000000000000004 /* AutoHideToggleMenuModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoHideToggleMenuModel.swift; sourceTree = "<group>"; };
+		D10000000000000000000006 /* AccessoryWindowPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessoryWindowPresentation.swift; sourceTree = "<group>"; };
+		D10000000000000000000041 /* StripContextMenuZone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripContextMenuZone.swift; sourceTree = "<group>"; };
+		D10000000000000000000007 /* SettingsCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsCoordinatorTests.swift; sourceTree = "<group>"; };
+		D10000000000000000000009 /* AccessoryWindowPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessoryWindowPresentationTests.swift; sourceTree = "<group>"; };
+		D10000000000000000000042 /* StripContextMenuZoneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripContextMenuZoneTests.swift; sourceTree = "<group>"; };
 		A00000000000000000000068 /* AppWindowObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppWindowObserver.swift; sourceTree = "<group>"; };
 		A00000000000000000000069 /* AppTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTracker.swift; sourceTree = "<group>"; };
 		A00000000000000000009600 /* TabFoldDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabFoldDecision.swift; sourceTree = "<group>"; };
@@ -440,6 +462,7 @@
 				A00000000000000000000001 /* MacOSDockCCV2App.swift */,
 				A00000000000000000000066 /* AppDelegate.swift */,
 				A00000000000000000008020 /* StatusMenuController.swift */,
+				D10000000000000000000001 /* SettingsWindowController.swift */,
 				A0000000000000000000006C /* PanelCoordinator.swift */,
 				A00000000000000000009750 /* NonConstrainingPanel.swift */,
 			);
@@ -457,6 +480,8 @@
 				A00000000000000000009740 /* DragCarrierView.swift */,
 				A00000000000000000007010 /* DrawerOrderStore.swift */,
 				A00000000000000000008010 /* AppSettingsStore.swift */,
+				D10000000000000000000003 /* SettingsCoordinator.swift */,
+				D10000000000000000000004 /* AutoHideToggleMenuModel.swift */,
 				A00000000000000000009F00 /* GlobalHotKeyMonitor.swift */,
 				A00000000000000000009010 /* LaunchAtLoginService.swift */,
 				A00000000000000000009020 /* NativeDockPreferencesService.swift */,
@@ -502,6 +527,7 @@
 			children = (
 				A00000000000000000000002 /* ContentView.swift */,
 				A000000000000000000000F1 /* PermissionOnboardingView.swift */,
+				D10000000000000000000002 /* SettingsWindowView.swift */,
 				A00000000000000000000067 /* DockStripView.swift */,
 				A00000000000000000009D00 /* WindowTitleTooltip.swift */,
 				A0000000000000000000006A /* DrawerView.swift */,
@@ -552,6 +578,8 @@
 				A00000000000000000009A00 /* WindowLiftAvoidance.swift */,
 				A00000000000000000009360 /* FolderChipDropZone.swift */,
 				A00000000000000000009E07 /* BuildProvenance.swift */,
+				D10000000000000000000006 /* AccessoryWindowPresentation.swift */,
+				D10000000000000000000041 /* StripContextMenuZone.swift */,
 			);
 			path = Support;
 			sourceTree = "<group>";
@@ -760,6 +788,9 @@
 				A0000000000000000000B060 /* PermissionOnboardingTests.swift */,
 				A00000000000000000000F04 /* FinderAppleEventMatcherTests.swift */,
 				A00000000000000000008040 /* AppSettingsStoreTests.swift */,
+				D10000000000000000000007 /* SettingsCoordinatorTests.swift */,
+				D10000000000000000000009 /* AccessoryWindowPresentationTests.swift */,
+				D10000000000000000000042 /* StripContextMenuZoneTests.swift */,
 				A00000000000000000009F10 /* GlobalHotKeyMonitorTests.swift */,
 				A000000000000000000090A0 /* PanelGeometryTests.swift */,
 				A00000000000000000009D10 /* WindowTitleTooltipTests.swift */,
@@ -925,6 +956,12 @@
 				files = (
 					A00000000000000000001001 /* MacOSDockCCV2App.swift in Sources */,
 					A00000000000000000001040 /* AppDelegate.swift in Sources */,
+					D20000000000000000000001 /* SettingsWindowController.swift in Sources */,
+					D20000000000000000000002 /* SettingsWindowView.swift in Sources */,
+					D20000000000000000000003 /* SettingsCoordinator.swift in Sources */,
+					D20000000000000000000004 /* AutoHideToggleMenuModel.swift in Sources */,
+					D20000000000000000000006 /* AccessoryWindowPresentation.swift in Sources */,
+					D20000000000000000000041 /* StripContextMenuZone.swift in Sources */,
 					A00000000000000000001046 /* PanelCoordinator.swift in Sources */,
 					A00000000000000000001041 /* DockStripView.swift in Sources */,
 					A00000000000000000009D01 /* WindowTitleTooltip.swift in Sources */,
@@ -1068,6 +1105,13 @@
 				A0000000000000000000B052 /* PermissionService.swift in Sources */,
 				A0000000000000000000B062 /* PermissionOnboardingTests.swift in Sources */,
 				A00000000000000000008031 /* AppSettingsStore.swift in Sources */,
+				D20000000000000000000013 /* SettingsCoordinator.swift in Sources */,
+				D20000000000000000000014 /* AutoHideToggleMenuModel.swift in Sources */,
+				D20000000000000000000016 /* AccessoryWindowPresentation.swift in Sources */,
+				D20000000000000000000042 /* StripContextMenuZone.swift in Sources */,
+				D20000000000000000000017 /* SettingsCoordinatorTests.swift in Sources */,
+				D20000000000000000000019 /* AccessoryWindowPresentationTests.swift in Sources */,
+				D20000000000000000000043 /* StripContextMenuZoneTests.swift in Sources */,
 				A00000000000000000008041 /* AppSettingsStoreTests.swift in Sources */,
 				A00000000000000000009F02 /* GlobalHotKeyMonitor.swift in Sources */,
 				A00000000000000000009F11 /* GlobalHotKeyMonitorTests.swift in Sources */,

@@ -8,5 +8,13 @@ struct MacOSDockCCV2App: App {
         Settings {
             EmptyView()
         }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("设置…") {
+                    appDelegate.openSettings(nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
 }

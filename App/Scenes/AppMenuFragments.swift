@@ -26,11 +26,19 @@ final class ClosureMenuItem: NSMenuItem {
 /// beneath it (so tap-to-activate and drag-reorder are unaffected).
 final class MenuHostNSView: NSView {
     var builder: (() -> NSMenu)?
+    /// 由外部自己负责弹出的通道（任务条 / 胶囊右键走这条）。设了它就不再走 `builder`：
+    /// 钨极菜单是 `StatusMenuController` 持有的**同一个** `NSMenu` 实例（里面的滑块是有状态的
+    /// 自绘 NSView，不能克隆），弹出时机也归它管，所以不把菜单对象漏出来。
+    var popUpHandler: ((NSEvent, NSView) -> Void)?
+    /// 命中过滤（屏幕坐标）。任务条底板用它把响应范围收窄到"两端空白 + 分割线"，
+    /// 别的调用点不设，行为与从前完全一致。
+    var shouldClaim: ((CGPoint) -> Bool)?
 
     // Only claim right-click / control-click; return nil otherwise so the click
     // falls through to the SwiftUI content below this overlay.
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard super.hitTest(point) != nil, let e = NSApp.currentEvent else { return nil }
+        if let shouldClaim, !shouldClaim(NSEvent.mouseLocation) { return nil }
         switch e.type {
         case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
             return self
@@ -48,20 +56,44 @@ final class MenuHostNSView: NSView {
     }
 
     private func popUp(_ event: NSEvent) {
+        if let popUpHandler {
+            popUpHandler(event, self)
+            return
+        }
         guard let menu = builder?(), !menu.items.isEmpty else { return }
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 }
 
 struct NativeMenuHost: NSViewRepresentable {
-    let builder: () -> NSMenu
+    var builder: (() -> NSMenu)?
+    var popUpHandler: ((NSEvent, NSView) -> Void)?
+    var shouldClaim: ((CGPoint) -> Bool)?
+
+    init(builder: @escaping () -> NSMenu) {
+        self.builder = builder
+    }
+
+    init(
+        popUpHandler: @escaping (NSEvent, NSView) -> Void,
+        shouldClaim: ((CGPoint) -> Bool)? = nil
+    ) {
+        self.popUpHandler = popUpHandler
+        self.shouldClaim = shouldClaim
+    }
+
     func makeNSView(context: Context) -> MenuHostNSView {
         let v = MenuHostNSView()
         v.builder = builder
+        v.popUpHandler = popUpHandler
+        v.shouldClaim = shouldClaim
         return v
     }
     func updateNSView(_ v: MenuHostNSView, context: Context) {
-        v.builder = builder   // keep the closure capturing current SwiftUI state
+        // keep the closures capturing current SwiftUI state
+        v.builder = builder
+        v.popUpHandler = popUpHandler
+        v.shouldClaim = shouldClaim
     }
 }
 

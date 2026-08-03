@@ -75,6 +75,8 @@ struct DockStripView: View {
     var onMoveExternalFiles: ([URL], String) -> Void = { _, _ in }
     /// 被截断窗口标题的真实悬停事件。PanelCoordinator 负责延迟与独立提示面板。
     var onWindowTitleTooltipEvent: (WindowTitleTooltipEvent) -> Void = { _ in }
+    /// 右键任务条底板 → 弹钨极菜单（`StatusMenuController` 持有那个菜单）。
+    var onRequestTaskbarMenu: (NSEvent, NSView) -> Void = { _, _ in }
     /// 跨面板拖动权威（拖卡进抽屉 路线 C）：起拖 → beginDrag；读 draggingItem 隐藏原位卡片、
     /// 读 isOverDropZone 在进投放区时停掉条内重排。载体面板/监视器/收尾都在它里面，本视图不碰。
     @EnvironmentObject var dragController: DragController
@@ -316,6 +318,21 @@ struct DockStripView: View {
                 WheelScrollInterceptorRepresentable()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // 右键任务条底板弹钨极菜单。
+            //
+            // **必须挂成 `.overlay` 而不是 `.background`**：SwiftUI 的 ScrollView 背后是真的
+            // `NSScrollView`，它自己就会接住命中测试，放在它下面的 host 永远收不到事件
+            // （实测过：两端空白右键毫无反应）。放到上层是安全的，因为 `shouldClaim` 只在
+            // 「两端空白 + 分割线」认领，其余一律返回 nil 穿透下去，chip / 文件夹 / 中转格
+            // 右键仍是各自的菜单。范围判定在纯 `StripContextMenuZone` 里（chip 之间那 8pt
+            // 窄缝刻意不认，理由见那个类型）。
+            //
+            // overlay 与 background 一样都不影响父视图尺寸——任务条宽度靠 `fittingSize` 量，
+            // 千万别改成 ZStack 的兄弟节点，那会把条撑宽。
+            .overlay(NativeMenuHost(
+                popUpHandler: onRequestTaskbarMenu,
+                shouldClaim: { taskbarMenuZoneClaims(atScreen: $0) }
+            ))
         }
         // 抽屉图标拖到任务条上方 = 移出抽屉的投放反馈：整条任务条高亮描边（对称于胶囊的收纳高亮）。
         // 外部拖目录悬停文件夹区（pin 落点）复用同一条高亮。
@@ -584,6 +601,23 @@ struct DockStripView: View {
         guard stripRootScreenRect != .zero else { return nil }
         return CGPoint(x: global.x - stripRootScreenRect.minX,
                        y: stripRootScreenRect.maxY - global.y)
+    }
+
+    /// 右键任务条底板时该不该弹钨极菜单。判定本身在纯 `StripContextMenuZone` 里，
+    /// 这里只负责换算坐标、把四个区的帧凑齐（消息区 / 固定文件夹 / 中转格的帧各有独立的
+    /// PreferenceKey，从来不合并进 `chipFrames`）。
+    private func taskbarMenuZoneClaims(atScreen global: CGPoint) -> Bool {
+        guard let point = stripPoint(from: global) else { return false }
+        var frames = Array(chipFrames.values)
+        frames.append(contentsOf: folderChipFrames.values)
+        frames.append(contentsOf: messagingChipFrames.values)
+        if shelfFrame != .zero { frames.append(shelfFrame) }
+        return StripContextMenuZone.claims(
+            point: point,
+            chipFrames: frames,
+            bounds: CGRect(origin: .zero, size: stripRootScreenRect.size),
+            minimumGapWidth: StripContextMenuZone.defaultMinimumGapWidth * dockScale
+        )
     }
 
     /// 在 "strip" 点上命中**不属于本组**的目标卡（整帧命中），返回落到它左/右。
@@ -1430,6 +1464,9 @@ struct DrawerCapsuleButton: View {
     /// 浅 / 深色两套视觉数值（见 `DockThemeTokens`）。
     @Environment(\.colorScheme) private var colorScheme
     private var theme: DockThemeTokens { .resolve(colorScheme) }
+    /// 右键胶囊 → 弹钨极菜单。胶囊是设置的**主要后路入口**：它恒在、位置固定、尺寸等于面板高度，
+    /// 而且是钨极自己的部件（不属于任何 app），不像任务条底板那样只剩几条缝可点。
+    var onRequestTaskbarMenu: (NSEvent, NSView) -> Void = { _, _ in }
     let action: () -> Void
 
     @State private var isHovering = false
@@ -1519,6 +1556,9 @@ struct DrawerCapsuleButton: View {
         .padding(PanelCoordinator.shadowPadding)
         .contentShape(Rectangle())
         .onTapGesture { fireTapPulse(); action() }
+        // MenuHostNSView 只认右键 / Control-click，左键一律返回 nil 穿透下去，
+        // 所以上面那条「点胶囊开抽屉」不受影响。
+        .overlay(NativeMenuHost(popUpHandler: onRequestTaskbarMenu))
     }
 }
 

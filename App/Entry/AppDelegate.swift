@@ -27,6 +27,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private var panelCoordinator: PanelCoordinator?
     private var windowLiftAvoidanceController: WindowLiftAvoidanceController?
+    private lazy var launchAtLoginService = LaunchAtLoginService()
+    private lazy var nativeDockPreferencesService = NativeDockPreferencesService()
+    private lazy var settingsCoordinator = SettingsCoordinator(
+        store: settingsStore,
+        launchAtLoginService: launchAtLoginService,
+        nativeDockPreferencesService: nativeDockPreferencesService,
+        updateChecker: GitHubUpdateChecker()
+    )
+    private lazy var settingsWindowController = SettingsWindowController(
+        store: settingsStore,
+        coordinator: settingsCoordinator
+    )
     /// 常驻切换全局快捷键。回调只切设置（经 settingsStore），不经过 panelCoordinator——
     /// 后者在权限引导完成前是 nil，settingsStore 从 AppDelegate 构造起即存在。
     private var edgeToggleHotKey: GlobalHotKeyMonitor?
@@ -45,12 +57,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissionLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "permissions")
     private lazy var statusMenuController = StatusMenuController(
         store: settingsStore,
-        launchAtLoginService: LaunchAtLoginService(),
-        nativeDockPreferencesService: NativeDockPreferencesService(),
-        updateChecker: GitHubUpdateChecker(),
+        settingsCoordinator: settingsCoordinator,
         isAccessibilityTrusted: { [permissionService] in permissionService.hasRequiredPermissions() },
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
+        onShowSettings: { [weak self] in self?.openSettings(nil) },
+        onMenuVisibilityChanged: { [weak self] isOpen in
+            self?.panelCoordinator?.setTaskbarMenuOpen(isOpen)
+        },
         onQuit: { NSApp.terminate(nil) },
         toggleHotKeyShortcut: .edgeAutoHideMode,
         isToggleHotKeyRegistered: { [weak self] in self?.edgeToggleHotKey?.isRegistered ?? false }
@@ -103,6 +117,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         // 用户从系统设置切回来时立刻复检，不用等下一次轮询。
         permissionCoordinator?.applicationDidBecomeActive()
+        if !installLocation.isTransient {
+            settingsCoordinator.refreshLaunchAtLoginState()
+        }
     }
 
     private func logPermissionLaunch(installLocation: AppInstallLocation, isTrusted: Bool) {
@@ -292,6 +309,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelCoordinator = coordinator
         runtime.onToggleDrawer = { [weak coordinator] in coordinator?.toggleDrawer() }
         coordinator.onAddFolder = { [weak self] in self?.presentAddPinnedFolderPanel() }
+        // 右键任务条 / 胶囊弹钨极菜单。走到这里说明已授权且不是临时副本，
+        // 状态栏菜单必然已经建好（`applicationDidFinishLaunching` 的非临时分支），
+        // 不存在"凭空造出一个状态栏图标"的问题。
+        coordinator.onRequestTaskbarMenu = { [weak self] event, view in
+            self?.statusMenuController.popUpFromTaskbar(with: event, in: view)
+        }
         coordinator.start()
         let windowLiftAvoidanceController = WindowLiftAvoidanceController(host: coordinator)
         self.windowLiftAvoidanceController = windowLiftAvoidanceController
@@ -325,6 +348,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.runModal() == .OK {
             for url in panel.urls { pinnedFolderStore.add(url.path) }
         }
+    }
+
+    /// 设置窗口的存在前提是「任务条正常在跑」。
+    ///
+    /// 临时副本、还没授权、以及权限丢失后的恢复态，此刻用户唯一该做的事都是处理引导窗口——
+    /// 这时再开一个完整设置面，只会盖在引导窗口上，而且里面的开关全都作用于一条根本没起来的
+    /// 任务条（少数派用户 2026-08-03 反馈的正是这个自相矛盾的画面）。所以一律改为把引导窗口置前。
+    @objc func openSettings(_ sender: Any?) {
+        guard !installLocation.isTransient,
+              hasStartedApp,
+              permissionService.hasRequiredPermissions() else {
+            showPermissionWindow()
+            return
+        }
+        settingsWindowController.present()
     }
 
     func exportDebugSnapshot() {
@@ -424,6 +462,9 @@ extension AppDelegate: PermissionEffectHandler {
     }
 
     func suspendPanelsAndStores() {
+        // 设置窗口也要一起收：权限一丢任务条整条被拆掉，留着一扇改任务条外观的窗
+        // 既没有意义，也会挡住紧接着弹出的恢复引导。
+        settingsWindowController.close()
         messagingAutoRegisterSubscription?.cancel()
         messagingAutoRegisterSubscription = nil
         runtime.onToggleDrawer = nil
