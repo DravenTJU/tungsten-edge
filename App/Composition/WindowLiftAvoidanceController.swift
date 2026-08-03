@@ -234,6 +234,11 @@ final class WindowLiftAvoidanceController {
     private var usesAnimatedLift = false
     private var traceEnabled = false
     private var isEnabled = false
+    /// 用户设置（菜单「最大化窗口避开任务条」）。**默认关**，由 `AppDelegate` 起步时按
+    /// 持久化值灌一次、之后订阅同步。放在控制器自己身上而不是只在调用方拦——
+    /// `endPermissionUncertainty()` 内部会调 `start()`，只在外面拦的话一次权限抖动
+    /// 就能把用户关掉的功能重新打开。
+    private var isEnabledBySetting = false
 
     /// 冻结期间：只丢任务引用，绝不动 `states` / `managedFrames` / `suppressedFrames` /
     /// `pendingRestorations`。撤权之后 AX 写不动窗口，这时候清掉快照等于永久丢失还原能力。
@@ -373,8 +378,26 @@ final class WindowLiftAvoidanceController {
         MainActor.assumeIsolated { stop() }
     }
 
+    /// 用户设置的开关。关 → `stop()`（顺带把已抬起的窗口还原回原生尺寸）；
+    /// 开 → 重新起轮询。
+    ///
+    /// 冻结期间不重新起：`enterFreeze` 已经把 workspace 观察者拆了、`isEnabled` 清了，
+    /// 这时候 `start()` 只会挂一个空转定时器并装回冻结期不该有的观察者。解冻时
+    /// `endPermissionUncertainty()` 自己会调 `start()`，那条路径现在也认这个标志位。
+    func setEnabledBySetting(_ enabled: Bool) {
+        guard isEnabledBySetting != enabled else { return }
+        isEnabledBySetting = enabled
+        if enabled {
+            guard !isPermissionFrozen else { return }
+            start()
+        } else {
+            stop()
+        }
+    }
+
     func start(environment: [String: String] = ProcessInfo.processInfo.environment) {
         guard pollTimer == nil else { return }
+        guard isEnabledBySetting else { return }
         guard environment["DOCK_WINDOW_LIFT"] != "0" else {
             logger.info("window lift disabled by DOCK_WINDOW_LIFT=0")
             return

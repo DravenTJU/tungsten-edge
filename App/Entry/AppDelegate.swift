@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionHostingView: NSHostingView<PermissionOnboardingWindowContent>?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var messagingAutoRegisterSubscription: AnyCancellable?
+    private var windowLiftSettingSubscription: AnyCancellable?
     private let permissionService = PermissionService()
     private var installLocation: AppInstallLocation = .other
     private var permissionCoordinator: PermissionRecoveryCoordinator?
@@ -294,7 +295,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator.start()
         let windowLiftAvoidanceController = WindowLiftAvoidanceController(host: coordinator)
         self.windowLiftAvoidanceController = windowLiftAvoidanceController
+        // 避让默认关，起步先把持久化的开关状态灌进去；start() 自己认这个标志位，
+        // 没勾选时它直接空转返回，两个定时器（5 Hz 扫描 / 20 Hz tracked probe）都不会起来。
+        windowLiftAvoidanceController.setEnabledBySetting(settingsStore.windowLiftEnabled)
         windowLiftAvoidanceController.start()
+        // sink 用闭包参数里的新值：@Published 在赋值完成前发布，此刻回读 store 是旧值。
+        // 走 self?.windowLiftAvoidanceController 而不是强捕获控制器——权限恢复路径会把它置 nil。
+        windowLiftSettingSubscription = settingsStore.$windowLiftEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.windowLiftAvoidanceController?.setEnabledBySetting(enabled)
+            }
         badgeStore.start()
         // 探针结论（2026-07-06,阶段0探针3）：访达窗口 AX 属性表虽列有 AXDocument 但恒无值
         // （kAXErrorNoValue），AXProxy/AXTitleUIElement 也只有文件夹名无路径——「拖任务条访达

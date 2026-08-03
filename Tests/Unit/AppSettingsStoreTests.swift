@@ -129,6 +129,22 @@ final class AppSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testWindowLiftEnabledDefaultsToOffAndPersists() {
+        let defaults = makeDefaults()
+        // 默认关是**拍板过的**，不是漏注册的默认值：最大化避让会真的改写别人应用的窗口尺寸，
+        // 没主动选过的人不该被改。别顺手把它「修」成 true（理由与复议条件见 Docs/27）。
+        XCTAssertFalse(AppSettingsStore(defaults: defaults).windowLiftEnabled, "默认不动用户窗口，由用户主动开")
+
+        let store = AppSettingsStore(defaults: defaults)
+        store.setWindowLiftEnabled(true)
+        XCTAssertTrue(store.windowLiftEnabled)
+        XCTAssertTrue(AppSettingsStore(defaults: defaults).windowLiftEnabled, "开启后要跨重启保持")
+
+        store.setWindowLiftEnabled(false)
+        XCTAssertFalse(AppSettingsStore(defaults: defaults).windowLiftEnabled)
+    }
+
+    @MainActor
     func testHoverStyleRewritesCorruptStoredValueToStandard() {
         let defaults = makeDefaults()
         defaults.set("silent", forKey: "com.tungsten.edge.hoverStyle")

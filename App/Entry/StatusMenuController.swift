@@ -162,6 +162,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private let edgeAutoHideToggleItem = NSMenuItem(title: "", action: #selector(toggleEdgeAutoHideModeFromMenu), keyEquivalent: "")
     private let showShelfItem = NSMenuItem(title: "显示中转站", action: #selector(toggleShowShelf), keyEquivalent: "")
     private let hoverStyleItem = NSMenuItem(title: "鼠标悬停显示应用名", action: #selector(toggleHoverStyle), keyEquivalent: "")
+    private let windowLiftItem = NSMenuItem(title: "最大化窗口避开任务条", action: #selector(toggleWindowLift), keyEquivalent: "")
     private let dockSizeItem = NSMenuItem(title: "任务条大小", action: nil, keyEquivalent: "")
     private var dockSizeItems: [DockSize: NSMenuItem] = [:]
     /// 分组标题，恒不可点（title 在 configureMenu 里落）。
@@ -285,6 +286,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         hoverStyleItem.target = self
         menu.addItem(hoverStyleItem)
+
+        // 自动隐藏档位下避让本来就不工作（只在常驻可见时抬窗口），但这一项**恒可点**：
+        // 它是偏好不是当前状态，置灰只会让人以为功能没了（owner 2026-08-03 定）。
+        windowLiftItem.target = self
+        menu.addItem(windowLiftItem)
 
         let dockSizeMenu = NSMenu()
         for size in DockSize.allCases {
@@ -427,6 +433,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         refreshLaunchAtLoginState()
         showShelfItem.state = store.showShelf ? .on : .off
         hoverStyleItem.state = store.hoverStyle.isExpressive ? .on : .off
+        windowLiftItem.state = store.windowLiftEnabled ? .on : .off
         for (size, item) in dockSizeItems {
             item.state = store.dockSize == size ? .on : .off
         }
@@ -441,6 +448,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     /// 标题只提了「应用名」，是 owner 有意选的短名字，不是漏写——别据此缩小行为范围（见 `Docs/27`）。
     @objc private func toggleHoverStyle() {
         store.setHoverStyle(store.hoverStyle.isExpressive ? .quiet : .standard)
+        refreshCheckmarks()
+    }
+
+    /// 勾选 = 前台铺满窗口的底边抬到任务条上方；取消勾选立刻停止避让，
+    /// 并把已经抬起来的窗口还原回原生尺寸（`WindowLiftAvoidanceController.stop()` 全套）。
+    @objc private func toggleWindowLift() {
+        store.setWindowLiftEnabled(!store.windowLiftEnabled)
         refreshCheckmarks()
     }
 
