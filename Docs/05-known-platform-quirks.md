@@ -31,6 +31,7 @@
 - **`kCGWindowName` 需要「屏幕录制」权限，本项目按产品决策不申请**（`Docs/27`），所以 `DockWindowEligibilityPolicy` 的标题分支在任何 **CG-only 调用点**（`subrole` 传 nil、事后不做 AX 形状复核）都不可靠：要么恒为 filter，要么只剩策略里那条飞书无标题放行能通过，等于击穿整套过滤。该策略只能配合 AX 数据使用；CG-only 判定要么自己先要求非空标题，要么改用任务条快照里已认过的 `cgWindowID`。2026-08-02 「最小化时飞书主窗口被带出来」就是这么来的。
 - 只有通过准入 policy 的可信窗口，才应该享受 keep-slot 和 `disappeared` retention。
 - `AXUIElementCopyAttributeValue` 可能被单个 App 卡住；inventory 读取使用 100ms per-app messaging timeout 和 12 路并发，慢 App 连续 unread 30 轮后会进入 degraded fallback。
+- **WPS 重启后整组卡缺失的 timeout 猜测尚未坐实**（2026-08-05）。同一现场两进程 A/B：默认 100ms 和 untimed seed 都对 pid 40474 读到 raw=2 / eligible=2 并 admit，对 pid 47258 读到 success/raw=0；两臂没有 unread，默认臂也正常显示两张窗口卡。本次只能判定「未复现」，不能把历史那次缺卡归因于 100ms。后续复发先开 `InventoryLog` 看逐 PID `admissionProbe`，不要先改超时或补扫轮次。
 - 调试壳本身如果被准入任务条，会因为内容变化触发窗口尺寸或观察签名变化，造成同一自家窗口被误认成多个条目。当前主线已直接过滤 `com.caye.macosdockcc.v2`，避免任务条自我污染。
 - 长时间空闲 / 睡眠 / 过夜后，6 秒身份记忆会自然过期。不能依赖短记忆认回窗口；必须把当前任务条 `DockSnapshot` 当作长期座位图来对账。
 - 同一个真实窗口在恢复或跨屏状态变化后，frame 可能发生较大偏移；如果同进程同应用下标题唯一，可以用唯一标题认回旧座位。多个同名候选时不能猜。
