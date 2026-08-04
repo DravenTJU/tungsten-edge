@@ -717,13 +717,15 @@ final class AppTracker: ObservableObject {
             let pid = app.processIdentifier
             let bid = app.bundleIdentifier
             let eligibilityApplication = eligibilityApplication(for: app)
+            let probeIdentity = inventoryLog.isEnabled ? processIdentity(pid: pid, bundleID: bid) : nil
 
             // 限时探测：挂死 app 第一条 AX 消息即超时 → .unread → 跳过，交给补扫。
             let result: AXWindowReadResult
             if useTimeout {
                 result = reader.inventoryWindows(forPID: pid, messagingTimeout: messagingTimeout)
             } else {
-                result = .success(reader.windows(forPID: pid))
+                // Keep legacy untimed/two-attempt behavior while preserving `.unread` for diagnostics.
+                result = reader.windowReadResult(forPID: pid)
             }
 
             let probedEligible: [AXWindowSnapshot]
@@ -738,6 +740,29 @@ final class AppTracker: ObservableObject {
                 probedEligible = []
                 inventoryReadOutcome = .unread(errorCode: error.rawValue)
                 unreadList.append(app.localizedName ?? bid ?? "\(pid)")
+            }
+
+            let seedVerdict: InventoryAdmissionProbeVerdict
+            if FinderWindowRules.isFinder(bundleIdentifier: bid) {
+                seedVerdict = .admitFinderPersistent
+            } else if case .unread = result {
+                seedVerdict = .skipUnread
+            } else if probedEligible.isEmpty {
+                seedVerdict = .skipNoEligible
+            } else {
+                seedVerdict = .admit
+            }
+            if let probeIdentity {
+                recordAdmissionProbe(
+                    source: .seed,
+                    identity: probeIdentity,
+                    readMode: useTimeout ? .timed : .untimed,
+                    messagingTimeoutMs: useTimeout ? Int((messagingTimeout * 1_000).rounded()) : nil,
+                    maxAttempts: useTimeout ? 1 : 2,
+                    result: result,
+                    eligibleWindowCount: result.isSuccess ? probedEligible.count : nil,
+                    verdict: seedVerdict
+                )
             }
 
             if FinderWindowRules.isFinder(bundleIdentifier: bid) {
@@ -1159,7 +1184,19 @@ final class AppTracker: ObservableObject {
         var admitted = false
 
         for entry in probed {
-            guard let app = NSRunningApplication(processIdentifier: entry.pid) else { continue }
+            guard let app = NSRunningApplication(processIdentifier: entry.pid) else {
+                recordAdmissionProbe(
+                    source: .scan,
+                    identity: entry.identity,
+                    readMode: .timed,
+                    messagingTimeoutMs: 100,
+                    maxAttempts: 1,
+                    result: entry.result,
+                    eligibleWindowCount: nil,
+                    verdict: .skipProcessUnavailable
+                )
+                continue
+            }
             let bundleID = app.bundleIdentifier
             let eligibilityApplication = eligibilityApplication(for: app)
 
@@ -1184,6 +1221,16 @@ final class AppTracker: ObservableObject {
                 isRegularNonSelf: isRegularNonSelf(app),
                 isTerminated: app.isTerminated,
                 alreadyTracked: apps[entry.pid] != nil
+            )
+            recordAdmissionProbe(
+                source: .scan,
+                identity: entry.identity,
+                readMode: .timed,
+                messagingTimeoutMs: 100,
+                maxAttempts: 1,
+                result: entry.result,
+                eligibleWindowCount: prepared.readFailed ? nil : prepared.eligible.count,
+                verdict: inventoryAdmissionVerdict(verdict)
             )
             guard verdict == .admit else { continue }
 
@@ -1223,6 +1270,61 @@ final class AppTracker: ObservableObject {
             startTimeUsec: start.map { $0.tv_usec },
             bundleID: bundleID
         )
+    }
+
+    private func recordAdmissionProbe(
+        source: InventoryAdmissionProbeSource,
+        identity: ScanAdmissionDecision.ProcessIdentity,
+        readMode: InventoryAdmissionReadMode,
+        messagingTimeoutMs: Int?,
+        maxAttempts: Int,
+        result: AXWindowReadResult,
+        eligibleWindowCount: Int?,
+        verdict: InventoryAdmissionProbeVerdict
+    ) {
+        guard inventoryLog.isEnabled else { return }
+        let readResult: InventoryAdmissionProbeReadResult
+        let errorCode: Int32?
+        let rawWindowCount: Int?
+        switch result {
+        case .success(let windows):
+            readResult = .success
+            errorCode = nil
+            rawWindowCount = windows.count
+        case .unread(let error):
+            readResult = .unread
+            errorCode = error.rawValue
+            rawWindowCount = nil
+        }
+        inventoryLog.record(.admissionProbe(InventoryAdmissionProbePayload(
+            source: source,
+            pid: identity.pid,
+            bundleID: identity.bundleID,
+            processStartTimeSec: identity.startTimeSec,
+            processStartTimeUsec: identity.startTimeUsec,
+            readMode: readMode,
+            messagingTimeoutMs: messagingTimeoutMs,
+            maxAttempts: maxAttempts,
+            readResult: readResult,
+            errorCode: errorCode,
+            rawWindowCount: rawWindowCount,
+            eligibleWindowCount: eligibleWindowCount,
+            verdict: verdict
+        )))
+    }
+
+    private func inventoryAdmissionVerdict(
+        _ verdict: ScanAdmissionDecision.Verdict
+    ) -> InventoryAdmissionProbeVerdict {
+        switch verdict {
+        case .admit: return .admit
+        case .skipNotRegular: return .skipNotRegular
+        case .skipTerminated: return .skipTerminated
+        case .skipAlreadyTracked: return .skipAlreadyTracked
+        case .skipIdentityMismatch: return .skipIdentityMismatch
+        case .skipUnread: return .skipUnread
+        case .skipNoEligible: return .skipNoEligible
+        }
     }
 
     // MARK: - Snapshot Building

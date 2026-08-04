@@ -100,6 +100,11 @@ enum AXWindowReadResult {
         case .unread: return []
         }
     }
+
+    var isSuccess: Bool {
+        if case .success = self { return true }
+        return false
+    }
 }
 
 struct AXWindowReader {

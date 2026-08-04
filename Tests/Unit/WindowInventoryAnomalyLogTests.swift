@@ -409,6 +409,65 @@ final class WindowInventoryAnomalyLogTests: XCTestCase {
         ])
     }
 
+    func testAdmissionProbePersistsModeGenerationCountsAndVerdict() throws {
+        let directory = makeRoot().appendingPathComponent("logs")
+        let log = makeLogger(directory: directory)
+        log.record(.admissionProbe(.init(
+            source: .scan,
+            pid: 40474,
+            bundleID: "com.kingsoft.wpsoffice.mac",
+            processStartTimeSec: 1_700_000_000,
+            processStartTimeUsec: 123_456,
+            readMode: .timed,
+            messagingTimeoutMs: 100,
+            maxAttempts: 1,
+            readResult: .success,
+            errorCode: nil,
+            rawWindowCount: 3,
+            eligibleWindowCount: 2,
+            verdict: .admit
+        )))
+        log.flush()
+
+        let payload = try XCTUnwrap(jsonRecords(at: log.currentFileURL).first?["payload"] as? [String: Any])
+        XCTAssertEqual(payload["source"] as? String, "scan")
+        XCTAssertEqual(payload["pid"] as? Int, 40474)
+        XCTAssertEqual(payload["readMode"] as? String, "timed")
+        XCTAssertEqual(payload["messagingTimeoutMs"] as? Int, 100)
+        XCTAssertEqual(payload["maxAttempts"] as? Int, 1)
+        XCTAssertEqual(payload["rawWindowCount"] as? Int, 3)
+        XCTAssertEqual(payload["eligibleWindowCount"] as? Int, 2)
+        XCTAssertEqual(payload["verdict"] as? String, "admit")
+    }
+
+    func testUnreadAdmissionProbeOmitsUnsampledCounts() throws {
+        let directory = makeRoot().appendingPathComponent("logs")
+        let log = makeLogger(directory: directory)
+        log.record(.admissionProbe(.init(
+            source: .seed,
+            pid: 47258,
+            bundleID: "com.kingsoft.wpsoffice.mac",
+            processStartTimeSec: 1_700_000_001,
+            processStartTimeUsec: 654_321,
+            readMode: .untimed,
+            messagingTimeoutMs: nil,
+            maxAttempts: 2,
+            readResult: .unread,
+            errorCode: -25204,
+            rawWindowCount: nil,
+            eligibleWindowCount: nil,
+            verdict: .skipUnread
+        )))
+        log.flush()
+
+        let payload = try XCTUnwrap(jsonRecords(at: log.currentFileURL).first?["payload"] as? [String: Any])
+        XCTAssertEqual(payload["readResult"] as? String, "unread")
+        XCTAssertEqual(payload["errorCode"] as? Int, -25204)
+        XCTAssertNil(payload["messagingTimeoutMs"])
+        XCTAssertNil(payload["rawWindowCount"])
+        XCTAssertNil(payload["eligibleWindowCount"])
+    }
+
     private func makeLogger(
         directory: URL,
         enabled: Bool = true,

@@ -277,6 +277,49 @@ struct InventoryOrderChipPlacedPayload: Codable, Equatable {
     let reason: String
 }
 
+enum InventoryAdmissionProbeSource: String, Codable {
+    case seed
+    case scan
+}
+
+enum InventoryAdmissionReadMode: String, Codable {
+    case timed
+    case untimed
+}
+
+enum InventoryAdmissionProbeReadResult: String, Codable {
+    case success
+    case unread
+}
+
+enum InventoryAdmissionProbeVerdict: String, Codable {
+    case admit
+    case admitFinderPersistent
+    case skipUnread
+    case skipNoEligible
+    case skipNotRegular
+    case skipTerminated
+    case skipAlreadyTracked
+    case skipIdentityMismatch
+    case skipProcessUnavailable
+}
+
+struct InventoryAdmissionProbePayload: Codable, Equatable {
+    let source: InventoryAdmissionProbeSource
+    let pid: Int32
+    let bundleID: String?
+    let processStartTimeSec: Int64?
+    let processStartTimeUsec: Int32?
+    let readMode: InventoryAdmissionReadMode
+    let messagingTimeoutMs: Int?
+    let maxAttempts: Int
+    let readResult: InventoryAdmissionProbeReadResult
+    let errorCode: Int32?
+    let rawWindowCount: Int?
+    let eligibleWindowCount: Int?
+    let verdict: InventoryAdmissionProbeVerdict
+}
+
 enum InventoryShadowPoolStatus: String, Codable {
     case initialized
     case changed
@@ -308,6 +351,7 @@ enum WindowInventoryLogEvent: Encodable {
     case orderProjectionChanged(InventoryOrderProjectionChangedPayload)
     case orderMemoryDropped(InventoryOrderMemoryDroppedPayload)
     case orderChipPlaced(InventoryOrderChipPlacedPayload)
+    case admissionProbe(InventoryAdmissionProbePayload)
 
     var name: String {
         switch self {
@@ -320,6 +364,7 @@ enum WindowInventoryLogEvent: Encodable {
         case .orderProjectionChanged: return "orderProjectionChanged"
         case .orderMemoryDropped: return "orderMemoryDropped"
         case .orderChipPlaced: return "orderChipPlaced"
+        case .admissionProbe: return "admissionProbe"
         }
     }
 
@@ -334,6 +379,7 @@ enum WindowInventoryLogEvent: Encodable {
         case .orderProjectionChanged(let payload): try payload.encode(to: encoder)
         case .orderMemoryDropped(let payload): try payload.encode(to: encoder)
         case .orderChipPlaced(let payload): try payload.encode(to: encoder)
+        case .admissionProbe(let payload): try payload.encode(to: encoder)
         }
     }
 }
