@@ -1234,13 +1234,26 @@ final class AppTracker: ObservableObject {
 
         var windows: [WindowID: WindowRecord] = [:]
         var orderedWindowIDs: [WindowID] = []
+        let fallbackByPID = Dictionary(uniqueKeysWithValues: AppFallbackChipDecision.fallbacks(
+            for: appOrder.compactMap { pid in
+                apps[pid].map { app in
+                    AppFallbackChipDecision.Process(
+                        pid: pid,
+                        bundleID: app.bundleIdentifier,
+                        appName: app.appName,
+                        hasSeats: !app.windowOrder.isEmpty,
+                        isFrontmost: pid == frontmostPID
+                    )
+                }
+            }
+        ).map { ($0.pid, $0) })
 
         for pid in appOrder {
             guard let app = apps[pid] else { continue }
 
             if app.windowOrder.isEmpty {
-                let key = app.bundleIdentifier ?? app.appName
-                let id = WindowID(rawValue: "app-\(key)")
+                guard let fallback = fallbackByPID[pid] else { continue }
+                let id = WindowID(rawValue: fallback.windowID)
                 windows[id] = WindowRecord(
                     id: id,
                     appID: AppID(rawValue: app.bundleIdentifier ?? app.appName),
