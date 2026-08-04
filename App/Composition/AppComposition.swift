@@ -49,7 +49,7 @@ final class AppRuntime: ObservableObject {
 
     private var launchSessions = LaunchSessionTokenRegistry<LaunchSession>()
 
-    private let tracker = AppTracker()
+    private let tracker: AppTracker
     private let intentPipeline = IntentPipeline(actionPlanning: LifecycleActionPlanner())
     private let actionExecutor = PlatformActionExecutor()
     private let permissionService = PermissionService()
@@ -63,6 +63,10 @@ final class AppRuntime: ObservableObject {
     private let launchLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "Launch")
     private static let launchTraceEnabled = ProcessInfo.processInfo.environment["DOCK_LAUNCH_TRACE"] == "1"
     private static let launchPolicyRecheckDeadlines: [TimeInterval] = [1.5, 3.0, 5.0]
+
+    init(inventoryLog: WindowInventoryAnomalyLog = WindowInventoryAnomalyLog()) {
+        tracker = AppTracker(inventoryLog: inventoryLog)
+    }
 
     func start() {
         guard snapshotSubscription == nil else { return }

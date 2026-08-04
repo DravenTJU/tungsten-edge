@@ -130,6 +130,24 @@ struct StripItem: Hashable {
 /// 的窗口都保留在 snapshot 里（座位不释放），只有「真关闭」才从 snapshot 消失。所以本层
 /// 「当前列表里不在」即等于「座位真结束」，无需也不应在此重新判断窗口在不在。
 enum StripOrdering {
+    enum PlacementReason: String, Codable, Equatable {
+        case sameAppSibling
+        case headPreferred
+        case stableKeptRank
+        case tail
+    }
+
+    struct Placement: Equatable {
+        let chipID: String
+        let index: Int
+        let reason: PlacementReason
+    }
+
+    struct ReconcileResult: Equatable {
+        let order: [String]
+        let placements: [Placement]
+    }
+
     /// 把「记住的显示顺序」和「当前还活着的 chip」对账，产出新的显示顺序。
     ///
     /// - 已记住且仍在 → 保持记住的相对顺序（**防打乱核心**：邻居增删不动既有排好的卡）。
@@ -139,27 +157,82 @@ enum StripOrdering {
     /// - 记住的但当前已不在 → 丢弃（座位真结束，见类型注释）。
     /// `headPreferredKeys`：属这些 app 键的**新**窗口若无同伴，插到 live 区**头部**（而非末尾）——
     /// 消息应用的弹出窗口紧邻消息区落地（owner 2026-07-12 #4）。只影响没记过的新 id；已记住的保持原位。
+    /// `stableKeptRanks`：普通 kept 应用的跨重启排名（appKey → 名次）。无同伴、非 head-preferred 的
+    /// 新 id 若属于排名内的应用，按名次落在已有排名卡之间，而非甩到末尾。
     static func reconcile(remembered: [String], current: [String], appKeyOf: [String: String] = [:],
-                          headPreferredKeys: Set<String> = []) -> [String] {
+                          headPreferredKeys: Set<String> = [],
+                          stableKeptRanks: [String: Int] = [:]) -> [String] {
+        reconcileWithTrace(
+            remembered: remembered,
+            current: current,
+            appKeyOf: appKeyOf,
+            headPreferredKeys: headPreferredKeys,
+            stableKeptRanks: stableKeptRanks
+        ).order
+    }
+
+    static func reconcileWithTrace(
+        remembered: [String],
+        current: [String],
+        appKeyOf: [String: String] = [:],
+        headPreferredKeys: Set<String> = [],
+        stableKeptRanks: [String: Int] = [:]
+    ) -> ReconcileResult {
         let currentSet = Set(current)
         let rememberedSet = Set(remembered)
         // 已记住且仍在：保持记住的相对顺序
         var result = remembered.filter { currentSet.contains($0) }
+        var placements: [Placement] = []
+        func rank(_ id: String) -> Int? { appKeyOf[id].flatMap { stableKeptRanks[$0] } }
         // 新出现：① 有同 app 同伴 → 插同伴之后；② 无同伴且 app 属 head-preferred（消息应用弹出窗）→
-        // 插头部（排在已有 head-preferred 之后，保持彼此相对序）；③ 否则末尾。按 current 顺序处理 →
-        // 同一 app 的多个新窗口彼此也保持相对序。
+        // 插头部（排在已有 head-preferred 之后，保持彼此相对序）；③ 无同伴但属跨重启排名内的 kept
+        // 应用 → 按名次落在已排名卡之间；④ 否则末尾。按 current 顺序处理 → 同一 app 的多个新窗口
+        // 彼此也保持相对序。
         for id in current where !rememberedSet.contains(id) {
             let app = appKeyOf[id]
             if let app, let pos = result.lastIndex(where: { appKeyOf[$0] == app }) {
                 result.insert(id, at: pos + 1)
+                placements.append(Placement(chipID: id, index: pos + 1, reason: .sameAppSibling))
             } else if let app, headPreferredKeys.contains(app) {
                 let headPos = result.lastIndex { appKeyOf[$0].map(headPreferredKeys.contains) ?? false }
-                result.insert(id, at: headPos.map { $0 + 1 } ?? 0)
+                let index = headPos.map { $0 + 1 } ?? 0
+                result.insert(id, at: index)
+                placements.append(Placement(chipID: id, index: index, reason: .headPreferred))
+            } else if let app, let myRank = stableKeptRanks[app] {
+                let index = stableKeptInsertIndex(
+                    in: result,
+                    myRank: myRank,
+                    rank: rank,
+                    appKeyOf: appKeyOf,
+                    headPreferredKeys: headPreferredKeys
+                )
+                result.insert(id, at: index)
+                placements.append(Placement(chipID: id, index: index, reason: .stableKeptRank))
             } else {
                 result.append(id)
+                placements.append(Placement(chipID: id, index: result.count - 1, reason: .tail))
             }
         }
-        return result
+        return ReconcileResult(order: result, placements: placements)
+    }
+
+    /// 排名落点：排在最后一张「名次不比我靠后」的卡之后；没有这种卡就排在第一张更靠后的卡之前；
+    /// 一张已排名的卡都还没有，就落在 head-preferred 区之后（= 消息弹出窗右边、普通临时窗口左边）。
+    private static func stableKeptInsertIndex(
+        in result: [String],
+        myRank: Int,
+        rank: (String) -> Int?,
+        appKeyOf: [String: String],
+        headPreferredKeys: Set<String>
+    ) -> Int {
+        if let pos = result.lastIndex(where: { rank($0).map { $0 <= myRank } ?? false }) {
+            return pos + 1
+        }
+        if let pos = result.firstIndex(where: { rank($0).map { $0 > myRank } ?? false }) {
+            return pos
+        }
+        let headEnd = result.lastIndex { appKeyOf[$0].map(headPreferredKeys.contains) ?? false }
+        return headEnd.map { $0 + 1 } ?? 0
     }
 
     /// 应用一次拖动落位：把 `draggedID` 移到 `targetID` 的左边（`after == false`）或右边

@@ -234,7 +234,13 @@ struct DockStripView: View {
     /// chip id → 所属 app 键（bundleId 优先，缺则 appID）。喂给顺序层，让新窗口插到同 app 同伴旁
     /// 而非任务条最右（拖标签出来成独立窗口 / Cmd+N）。keptApp 占位 id "app-\(bid)" 映射到 bid。
     private var liveAppKeys: [String: String] {
-        Dictionary(partitioned().liveNatural.map { entry -> (String, String) in
+        Self.appKeys(of: partitioned().liveNatural)
+    }
+
+    /// 渲染路径（`reconciled`）与副作用路径（`sync`）**必须喂同一份 appKeyOf**，否则落盘的记忆序
+    /// 与显示序不一致。抽成一个函数，让两条路径无从写岔。
+    private static func appKeys(of liveNatural: [StripEntry]) -> [String: String] {
+        Dictionary(liveNatural.map { entry -> (String, String) in
             switch entry {
             case let .window(item): return (entry.id, item.bundleIdentifier ?? item.appID)
             case let .keptApp(bid): return (entry.id, bid)
@@ -392,6 +398,8 @@ struct DockStripView: View {
         // new) as a side-effect — never during body eval. The `.onAppear` seed mirrors the old
         // `initial: true` so the very first render's reconcile (empty → current) is a no-op.
         .onChange(of: liveOrderIDs) { _ in reconcileLiveOrder() }
+        .onChange(of: keptAppStore.bundleIDs) { _ in reconcileLiveOrder() }
+        .onChange(of: messagingStore.bundleIDs) { _ in reconcileLiveOrder() }
         .onAppear { reconcileLiveOrder() }
         .onPreferenceChange(ChipFramePreferenceKey.self) { chipFrames = $0 }
         .onPreferenceChange(FolderChipFramePreferenceKey.self) { folderChipFrames = $0 }
@@ -536,9 +544,29 @@ struct DockStripView: View {
     /// Called on every `liveOrderIDs` change **and** once on appear (the latter mirrors the old
     /// `onChange(of:initial:)` seed that pre-macOS-14 `onChange` doesn't provide).
     private func reconcileLiveOrder() {
-        let current = liveOrderIDs
-        stripOrderStore.sync(current: current, appKeyOf: liveAppKeys,
-                             headPreferred: Set(messagingStore.bundleIDs))
+        // `partitioned()` 不便宜（全量过滤 + 建字典），这里只算一次，`current`/`appKeyOf`/诊断都从它派生。
+        let partition = partitioned()
+        let current = partition.liveNatural.map(\.id)
+        let appKeys = Self.appKeys(of: partition.liveNatural)
+        // 诊断载荷含整份 appKey 字典，**日志关着就别构造**（同 AppTracker 的 isEnabled 门控）。
+        let sample: InventoryOrderProjectionSample? = stripOrderStore.isInventoryLogEnabled
+            ? InventoryOrderProjectionSample(
+                currentLiveIDs: current,
+                absorbedMessagingMainIDs: partition.messaging.compactMap { entry in
+                    guard case let .messagingApp(_, mainWindow) = entry else { return nil }
+                    return mainWindow?.id
+                },
+                visibleMessagingBundleIDs: partition.messaging.compactMap { entry in
+                    guard case let .messagingApp(bundleID, _) = entry else { return nil }
+                    return bundleID
+                },
+                drawerBundleIDs: drawerStore.bundleIDs,
+                appKeyByChipID: appKeys
+              )
+            : nil
+        stripOrderStore.sync(current: current, appKeyOf: appKeys,
+                             headPreferred: Set(messagingStore.bundleIDs),
+                             projectionSample: sample)
         // 拖动中被拖窗口消失 → 取消拖动，免得空位卡死。(松手无回调那条由 DragController 的轮询兜底。)
         if let p = dragController.draggingPayload, p.source == .strip, !current.contains(p.id) {
             dragController.cancelDrag()

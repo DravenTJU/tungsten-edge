@@ -101,6 +101,8 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 代码 revert 不会回退用户磁盘上的数据。`5f5efa0`（抽屉位置与保留拆分）和 `a25add5`（消息应用纳入统一保留勾选）两次改动的键矩阵与回滚后行为，见 `Docs/Archive/Engineering/25-userdefaults-data-boundaries.md`；键的当前权威定义在 `AGENTS.md` 的 Kept Apps 一节。
 
+**`stripKeptAppOrderV1`（2026-08-04 新增，归属 `StripOrderStore`）**：普通 kept 应用的跨重启 bundleID 排名，**只存 bundleID、不存任何窗口 id**。写入时机 = 每次 `sync` / 拖动重排后由当前 chip 顺序反推；成员集合跟随 `KeptAppStore − MessagingAppStore` 增删。首次迁移从旧 `stripLiveOrder` 存档里可识别的 kept `app-*` 取序，再把 `KeptAppStore` 剩余顺序追加在后。**回退行为**：该键会成为孤儿键（无害，不再被读），跨重启的应用级次序退回「按当初勾选『在程序坞中保留』的先后」——即用户拖出来的顺序在重启后丢失，这正是它要修的症状。同开机周期内的精确 chip 序仍由 `stripLiveOrder` + `stripLiveOrderBootTime` 负责，不受影响。
+
 ## 回退命令有有效期（2026-07-29 建立）
 
 下表每条的「当前实证」都是**登记当时**在那棵树上验证的，**不是永久保证**。后续提交碰到同一批文件后，`git revert` 会从单点变成需要手工解冲突。读这张表时必须先看下面的复检结果，不要直接把「已验证 revert」当成现在还成立。

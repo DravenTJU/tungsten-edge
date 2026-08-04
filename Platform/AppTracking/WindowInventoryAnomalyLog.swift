@@ -161,10 +161,12 @@ struct InventoryPhantomHealedPayload: Codable, Equatable {
     let ownerCandidateCount: Int
 }
 
-/// 座位释放原因。4.5 只补 `reconcile()` 批量删除路径的 `processGone`；
-/// 其他逐座位释放路径（absentBeyondGrace / leftCGList / phantom heal 等）暂不扩展。
+/// Every path that drops a stable seat records one of these reasons.
 enum InventorySeatReleasedReason: String, Codable {
     case processGone
+    case leftCGList
+    case absentBeyondGrace
+    case phantomHealed
 }
 
 /// 座位释放日志载荷。批量 `processGone` 路径发生在 `reconcileSeats` 之外，没有本轮 AX/CG 采样，
@@ -172,6 +174,7 @@ enum InventorySeatReleasedReason: String, Codable {
 /// 身份字段用稳定的 `pid + seatToken`；附带内存中已有的 bundleID、当前 activeCgID 与座位状态。
 struct InventorySeatReleasedPayload: Codable, Equatable {
     let reason: InventorySeatReleasedReason
+    let context: InventoryReconcileContext?
     let pid: Int32
     let bundleID: String?
     let seatToken: String
@@ -183,9 +186,7 @@ struct InventorySeatReleasedPayload: Codable, Equatable {
     let bounds: InventoryLogRect?
 }
 
-/// 批量座位释放的内存快照（不采样 AX/CG）。从 `AppEntry` 投影出纯值，供
-/// `InventorySeatReleasePlan` 转成 `processGone` 载荷。独立于 `AppEntry`/`WindowEntry`，
-/// 使「N 个座位按原顺序产生 N 条；空 entry 0 条」可在不引入 AppTracker 依赖的情况下单测。
+/// 座位释放的内存快照。从 `AppEntry` 投影出纯值，供批量和逐座位释放路径共用。
 struct InventorySeatReleaseSnapshot {
     let pid: pid_t
     let bundleID: String?
@@ -205,9 +206,18 @@ struct InventorySeatReleaseSnapshot {
 /// 纯函数：把内存座位快照按原顺序转成 `processGone` 载荷。供单测验证顺序与数量。
 enum InventorySeatReleasePlan {
     static func processGonePayloads(for snapshot: InventorySeatReleaseSnapshot) -> [InventorySeatReleasedPayload] {
+        payloads(for: snapshot, reason: .processGone, context: nil)
+    }
+
+    static func payloads(
+        for snapshot: InventorySeatReleaseSnapshot,
+        reason: InventorySeatReleasedReason,
+        context: InventoryReconcileContext?
+    ) -> [InventorySeatReleasedPayload] {
         snapshot.seats.map { seat in
             InventorySeatReleasedPayload(
-                reason: .processGone,
+                reason: reason,
+                context: context,
                 pid: snapshot.pid,
                 bundleID: snapshot.bundleID,
                 seatToken: seat.seatToken,
@@ -220,6 +230,51 @@ enum InventorySeatReleasePlan {
             )
         }
     }
+}
+
+struct InventoryOrderProjectionChangedPayload: Codable, Equatable {
+    let previousLiveIDs: [String]
+    let currentLiveIDs: [String]
+    let absorbedMessagingMainIDs: [String]
+    let visibleMessagingBundleIDs: [String]
+    let drawerBundleIDs: [String]
+    let appKeyByChipID: [String: String]
+}
+
+/// 调用方（视图层）能观测到的那一半：**不含 `previousLiveIDs`**。
+/// 「上一轮是什么」只有顺序层自己知道，由它在落日志时补上——调用点传个空数组再被覆盖是误导。
+/// 构造它本身有成本（整份 appKey 字典 + 三个数组），所以**只在日志开着时才构造**。
+struct InventoryOrderProjectionSample: Equatable {
+    let currentLiveIDs: [String]
+    let absorbedMessagingMainIDs: [String]
+    let visibleMessagingBundleIDs: [String]
+    let drawerBundleIDs: [String]
+    let appKeyByChipID: [String: String]
+
+    func payload(previousLiveIDs: [String]) -> InventoryOrderProjectionChangedPayload {
+        InventoryOrderProjectionChangedPayload(
+            previousLiveIDs: previousLiveIDs,
+            currentLiveIDs: currentLiveIDs,
+            absorbedMessagingMainIDs: absorbedMessagingMainIDs,
+            visibleMessagingBundleIDs: visibleMessagingBundleIDs,
+            drawerBundleIDs: drawerBundleIDs,
+            appKeyByChipID: appKeyByChipID
+        )
+    }
+}
+
+struct InventoryOrderMemoryDroppedPayload: Codable, Equatable {
+    let chipID: String
+    let appKey: String?
+    let previousIndex: Int
+    let absentForMs: Int
+}
+
+struct InventoryOrderChipPlacedPayload: Codable, Equatable {
+    let chipID: String
+    let appKey: String?
+    let index: Int
+    let reason: String
 }
 
 enum InventoryShadowPoolStatus: String, Codable {
@@ -250,6 +305,9 @@ enum WindowInventoryLogEvent: Encodable {
     case phantomHealed(InventoryPhantomHealedPayload)
     case shadowPoolState(InventoryShadowPoolPayload)
     case seatReleased(InventorySeatReleasedPayload)
+    case orderProjectionChanged(InventoryOrderProjectionChangedPayload)
+    case orderMemoryDropped(InventoryOrderMemoryDroppedPayload)
+    case orderChipPlaced(InventoryOrderChipPlacedPayload)
 
     var name: String {
         switch self {
@@ -259,6 +317,9 @@ enum WindowInventoryLogEvent: Encodable {
         case .phantomHealed: return "phantomHealed"
         case .shadowPoolState: return "shadowPoolState"
         case .seatReleased: return "seatReleased"
+        case .orderProjectionChanged: return "orderProjectionChanged"
+        case .orderMemoryDropped: return "orderMemoryDropped"
+        case .orderChipPlaced: return "orderChipPlaced"
         }
     }
 
@@ -270,6 +331,9 @@ enum WindowInventoryLogEvent: Encodable {
         case .phantomHealed(let payload): try payload.encode(to: encoder)
         case .shadowPoolState(let payload): try payload.encode(to: encoder)
         case .seatReleased(let payload): try payload.encode(to: encoder)
+        case .orderProjectionChanged(let payload): try payload.encode(to: encoder)
+        case .orderMemoryDropped(let payload): try payload.encode(to: encoder)
+        case .orderChipPlaced(let payload): try payload.encode(to: encoder)
         }
     }
 }

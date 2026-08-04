@@ -13,11 +13,7 @@ final class RunningApplicationStore: ObservableObject {
     @Published private(set) var runningBundleIDs: Set<String> = []
     @Published private(set) var hiddenBundleIDs: Set<String> = []
 
-    private struct ProcessGeneration: Equatable {
-        let pid: pid_t
-        let startTimeSeconds: Int64
-        let startTimeMicroseconds: Int64
-    }
+    typealias ProcessGeneration = RunningStateSweepDecision.Generation
 
     private struct ProcessIdentity: Equatable {
         let generation: ProcessGeneration
@@ -34,6 +30,7 @@ final class RunningApplicationStore: ObservableObject {
         let identity: ProcessIdentity
         let token: UUID
         var application: NSRunningApplication
+        var removeTrackedOnNextNonRegularConfirmation: Bool
         let task: Task<Void, Never>
     }
 
@@ -66,16 +63,38 @@ final class RunningApplicationStore: ObservableObject {
         1_000_000_000,
     ]
     private static let terminationSlowRecheckNanoseconds: UInt64 = 5_000_000_000
+    private static let workspaceSweepInterval: TimeInterval = 2.0
 
     private let workspace: NSWorkspace
+    private let generationProvider: (pid_t) -> ProcessGeneration?
+    private let workspaceObservationProvider: (() -> [RunningStateSweepDecision.Observation])?
+    private let uptimeProvider: () -> TimeInterval
     private var processesByPID: [pid_t: ProcessState] = [:]
     private var policyRechecksByPID: [pid_t: PolicyRecheck] = [:]
     private var terminationRechecksByPID: [pid_t: TerminationRecheck] = [:]
     private var observers: [NSObjectProtocol] = []
+    private var pendingWorkspaceSweepTask: Task<Void, Never>?
+    private var lastWorkspaceSweepAt: TimeInterval?
     private var isStarted = false
 
-    init(workspace: NSWorkspace = .shared) {
+    init(
+        workspace: NSWorkspace = .shared,
+        generationProvider: ((pid_t) -> ProcessGeneration?)? = nil,
+        workspaceObservationProvider: (() -> [RunningStateSweepDecision.Observation])? = nil,
+        uptimeProvider: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
         self.workspace = workspace
+        self.generationProvider = generationProvider ?? { pid in
+            guard ProcessLiveness.isAlive(pid: pid),
+                  let startTime = ProcessLiveness.startTime(pid: pid) else { return nil }
+            return ProcessGeneration(
+                pid: pid,
+                startTimeSeconds: Int64(startTime.tv_sec),
+                startTimeMicroseconds: Int64(startTime.tv_usec)
+            )
+        }
+        self.workspaceObservationProvider = workspaceObservationProvider
+        self.uptimeProvider = uptimeProvider
     }
 
     deinit {
@@ -85,6 +104,7 @@ final class RunningApplicationStore: ObservableObject {
         for recheck in terminationRechecksByPID.values {
             recheck.task.cancel()
         }
+        pendingWorkspaceSweepTask?.cancel()
         for observer in observers {
             workspace.notificationCenter.removeObserver(observer)
         }
@@ -94,7 +114,11 @@ final class RunningApplicationStore: ObservableObject {
         guard !isStarted else { return }
         isStarted = true
         subscribeWorkspaceNotifications()
-        seedRunningApplications()
+        if workspaceObservationProvider == nil {
+            seedRunningApplications()
+        } else {
+            reconcileWithWorkspace()
+        }
     }
 
     func stop() {
@@ -106,6 +130,9 @@ final class RunningApplicationStore: ObservableObject {
         observers.removeAll()
         cancelAllPolicyRechecks()
         cancelAllTerminationRechecks()
+        pendingWorkspaceSweepTask?.cancel()
+        pendingWorkspaceSweepTask = nil
+        lastWorkspaceSweepAt = nil
         processesByPID.removeAll()
         publishProjection()
     }
@@ -138,6 +165,7 @@ final class RunningApplicationStore: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.isStarted else { return }
                 self.handleAdmissionCandidate(application)
+                self.requestWorkspaceSweep()
             }
         })
 
@@ -150,6 +178,7 @@ final class RunningApplicationStore: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.isStarted else { return }
                 self.handleAdmissionCandidate(application)
+                self.requestWorkspaceSweep()
             }
         })
 
@@ -163,6 +192,7 @@ final class RunningApplicationStore: ObservableObject {
                 guard let self, self.isStarted else { return }
                 self.handleTermination(application)
                 self.publishProjection()
+                self.requestWorkspaceSweep()
             }
         })
 
@@ -191,6 +221,19 @@ final class RunningApplicationStore: ObservableObject {
                 self.publishProjection()
             }
         })
+
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            observers.append(notificationCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isStarted else { return }
+                    self.requestWorkspaceSweep(force: true)
+                }
+            })
+        }
     }
 
     private func handleAdmissionCandidate(
@@ -291,12 +334,18 @@ final class RunningApplicationStore: ObservableObject {
 
     private func schedulePolicyRechecks(
         for application: NSRunningApplication,
-        identity: ProcessIdentity
+        identity: ProcessIdentity,
+        removeTrackedOnNextNonRegularConfirmation: Bool = false
     ) {
         let pid = identity.generation.pid
-        cancelTerminationRecheck(forPID: pid)
+        if !removeTrackedOnNextNonRegularConfirmation {
+            cancelTerminationRecheck(forPID: pid)
+        }
         if var existing = policyRechecksByPID[pid], existing.identity == identity {
             existing.application = application
+            existing.removeTrackedOnNextNonRegularConfirmation =
+                existing.removeTrackedOnNextNonRegularConfirmation
+                    || removeTrackedOnNextNonRegularConfirmation
             policyRechecksByPID[pid] = existing
             return
         }
@@ -320,6 +369,7 @@ final class RunningApplicationStore: ObservableObject {
             identity: identity,
             token: token,
             application: application,
+            removeTrackedOnNextNonRegularConfirmation: removeTrackedOnNextNonRegularConfirmation,
             task: task
         )
     }
@@ -338,7 +388,20 @@ final class RunningApplicationStore: ObservableObject {
             return false
         }
 
-        guard recheck.application.activationPolicy == .regular else { return true }
+        guard recheck.application.activationPolicy == .regular else {
+            if recheck.removeTrackedOnNextNonRegularConfirmation {
+                confirmNonRegular(
+                    pid: pid,
+                    generation: identity.generation,
+                    bundleID: identity.bundleID
+                )
+                if var current = policyRechecksByPID[pid], current.token == token {
+                    current.removeTrackedOnNextNonRegularConfirmation = false
+                    policyRechecksByPID[pid] = current
+                }
+            }
+            return true
+        }
         guard upsert(recheck.application, expectedIdentity: identity) else {
             cancelPolicyRecheck(forPID: pid, token: token)
             return false
@@ -415,13 +478,117 @@ final class RunningApplicationStore: ObservableObject {
     }
 
     private func processGeneration(pid: pid_t) -> ProcessGeneration? {
-        guard ProcessLiveness.isAlive(pid: pid),
-              let startTime = ProcessLiveness.startTime(pid: pid) else { return nil }
-        return ProcessGeneration(
-            pid: pid,
-            startTimeSeconds: Int64(startTime.tv_sec),
-            startTimeMicroseconds: Int64(startTime.tv_usec)
+        generationProvider(pid)
+    }
+
+    /// Event-driven full reconciliation. A short one-shot task coalesces ordinary workspace
+    /// notifications; wake/session-resume bypass it because those are the notification-loss boundary.
+    private func requestWorkspaceSweep(force: Bool = false) {
+        guard isStarted else { return }
+        let now = uptimeProvider()
+        if force || lastWorkspaceSweepAt == nil
+            || now - (lastWorkspaceSweepAt ?? now) >= Self.workspaceSweepInterval {
+            pendingWorkspaceSweepTask?.cancel()
+            pendingWorkspaceSweepTask = nil
+            reconcileWithWorkspace()
+            return
+        }
+
+        guard pendingWorkspaceSweepTask == nil, let lastWorkspaceSweepAt else { return }
+        let delay = max(0, Self.workspaceSweepInterval - (now - lastWorkspaceSweepAt))
+        pendingWorkspaceSweepTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard let self, self.isStarted else { return }
+            self.pendingWorkspaceSweepTask = nil
+            self.reconcileWithWorkspace()
+        }
+    }
+
+    /// Internal for deterministic store tests; production callers go through the throttled request path.
+    func reconcileWithWorkspace() {
+        guard isStarted else { return }
+        lastWorkspaceSweepAt = uptimeProvider()
+
+        let liveApplications = workspaceObservationProvider == nil ? workspace.runningApplications : []
+        let observations: [RunningStateSweepDecision.Observation]
+        if let workspaceObservationProvider {
+            observations = workspaceObservationProvider()
+        } else {
+            observations = liveApplications.compactMap { application in
+                let pid = application.processIdentifier
+                guard let bundleID = application.bundleIdentifier, !bundleID.isEmpty,
+                      let generation = processGeneration(pid: pid) else { return nil }
+                return RunningStateSweepDecision.Observation(
+                    generation: generation,
+                    bundleID: bundleID,
+                    isHidden: application.isHidden,
+                    activationPolicy: application.activationPolicy == .regular ? .regular : .nonRegular
+                )
+            }
+        }
+        let observationsByPID = Dictionary(observations.map { ($0.generation.pid, $0) },
+                                           uniquingKeysWith: { first, _ in first })
+        let trackedByPID = processesByPID.mapValues { state in
+            RunningStateSweepDecision.Tracked(
+                generation: state.identity.generation,
+                bundleID: state.bundleID,
+                isHidden: state.isHidden
+            )
+        }
+        // 观测里的代际是刚采过的，**直接复用**；只为「被跟踪但本轮没观测到」的 pid 补采。
+        // 重复采样一遍是几十上百个进程 × 两个系统调用，且这里在主线程、每次切应用都可能跑到。
+        var currentGenerations: [pid_t: ProcessGeneration?] = observationsByPID.mapValues { Optional($0.generation) }
+        for pid in trackedByPID.keys where !currentGenerations.keys.contains(pid) {
+            currentGenerations[pid] = processGeneration(pid: pid)
+        }
+        let plan = RunningStateSweepDecision.plan(
+            trackedByPID: trackedByPID,
+            observationsByPID: observationsByPID,
+            currentGenerationsByPID: currentGenerations
         )
+
+        for removal in plan.removals {
+            guard processesByPID[removal.pid]?.identity.generation == removal.generation else { continue }
+            processesByPID.removeValue(forKey: removal.pid)
+            cancelPolicyRecheck(forPID: removal.pid)
+            cancelTerminationRecheck(forPID: removal.pid)
+        }
+        for observation in plan.regularUpserts {
+            let identity = ProcessIdentity(generation: observation.generation, bundleID: observation.bundleID)
+            evictStaleProcessState(for: identity)
+            cancelPolicyRecheck(forPID: observation.generation.pid)
+            processesByPID[observation.generation.pid] = ProcessState(
+                identity: identity,
+                bundleID: observation.bundleID,
+                isHidden: observation.isHidden
+            )
+        }
+        let applicationsByPID = Dictionary(liveApplications.map { ($0.processIdentifier, $0) },
+                                           uniquingKeysWith: { first, _ in first })
+        for observation in plan.nonRegularConfirmations {
+            guard let application = applicationsByPID[observation.generation.pid] else { continue }
+            schedulePolicyRechecks(
+                for: application,
+                identity: ProcessIdentity(
+                    generation: observation.generation,
+                    bundleID: observation.bundleID
+                ),
+                removeTrackedOnNextNonRegularConfirmation: true
+            )
+        }
+        publishProjection()
+    }
+
+    func confirmNonRegular(pid: pid_t, generation: ProcessGeneration, bundleID: String) {
+        guard let state = processesByPID[pid],
+              state.identity.generation == generation,
+              state.bundleID == bundleID else { return }
+        processesByPID.removeValue(forKey: pid)
+        publishProjection()
     }
 
     private func cancelPolicyRecheck(forPID pid: pid_t, token: UUID? = nil) {

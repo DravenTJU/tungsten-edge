@@ -167,6 +167,183 @@ final class KeptAppPositionTests: XCTestCase {
         XCTAssertEqual(result, ["tabgrp-1-s1", "tabgrp-2-s1"])
     }
 
+    // MARK: - Cross-boot stable kept app blocks
+
+    func testDifferentBootRestoresRunningKeptAppsAsStableBlocks() {
+        let suite = "test-kept-cross-boot-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(["com.b", "com.a"], forKey: "stripKeptAppOrderV1")
+        defaults.set(["tabgrp-old-a", "tabgrp-old-b"], forKey: "stripLiveOrder")
+        defaults.set(1, forKey: "stripLiveOrderBootTime")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { ["com.a", "com.b"] },
+            stableKeptOrderProvider: { ["com.a", "com.b"] },
+            bootTimeProvider: { 2 }
+        )
+        let current = ["tabgrp-new-a", "tabgrp-temp", "tabgrp-new-b1", "tabgrp-new-b2"]
+        let keys = [
+            "tabgrp-new-a": "com.a",
+            "tabgrp-temp": "com.temp",
+            "tabgrp-new-b1": "com.b",
+            "tabgrp-new-b2": "com.b",
+        ]
+
+        XCTAssertEqual(
+            store.reconciled(current: current, appKeyOf: keys),
+            ["tabgrp-new-b1", "tabgrp-new-b2", "tabgrp-new-a", "tabgrp-temp"]
+        )
+        store.sync(current: current, appKeyOf: keys)
+        XCTAssertEqual(store.liveOrder, ["tabgrp-new-b1", "tabgrp-new-b2", "tabgrp-new-a", "tabgrp-temp"])
+    }
+
+    func testColdStartKeepsMessagingPopoutAheadOfStableKeptBlocks() {
+        let suite = "test-kept-message-head-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(["com.kept"], forKey: "stripKeptAppOrderV1")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { ["com.kept", "com.message"] },
+            stableKeptOrderProvider: { ["com.kept"] },
+            bootTimeProvider: { 2 }
+        )
+        let current = ["tabgrp-temp", "tabgrp-kept", "tabgrp-message"]
+        let keys = [
+            "tabgrp-temp": "com.temp",
+            "tabgrp-kept": "com.kept",
+            "tabgrp-message": "com.message",
+        ]
+        XCTAssertEqual(
+            store.reconciled(current: current, appKeyOf: keys, headPreferred: ["com.message"]),
+            ["tabgrp-message", "tabgrp-kept", "tabgrp-temp"]
+        )
+    }
+
+    /// 跨重启排名**不是一次性的冷启动模式**。开机登录时任务条比多数应用先起来（AppTracker 还有
+    /// 0.5/1/2/4 秒四轮补扫），第一次 sync 那刻 `current` 往往只有未运行 kept 应用的占位图标。
+    /// 晚到的窗口必须走同一条排名规则——否则「跨重启保留应用顺序固定」对**开机时已在运行**的
+    /// 应用完全无效（它们会掉到末尾）。这条锁的就是那个时序。
+    func testStableRankStillAppliesToWindowsArrivingAfterTheFirstSync() {
+        let suite = "test-kept-late-arrival-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(["com.a", "com.b"], forKey: "stripKeptAppOrderV1")
+        defaults.set(["tabgrp-old"], forKey: "stripLiveOrder")
+        defaults.set(1, forKey: "stripLiveOrderBootTime")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { ["com.a", "com.b"] },
+            stableKeptOrderProvider: { ["com.a", "com.b"] },
+            bootTimeProvider: { 2 }   // 开机时间变了 = 重启过机器
+        )
+
+        // 第一次 sync：com.b 还没起来，只有 com.a 的占位图标和一个临时窗口。
+        let firstKeys = ["app-com.a": "com.a", "tabgrp-temp": "com.temp"]
+        store.sync(current: ["app-com.a", "tabgrp-temp"], appKeyOf: firstKeys)
+        XCTAssertEqual(store.liveOrder, ["app-com.a", "tabgrp-temp"])
+
+        // 之后 com.b 的窗口才冒出来：按名次落在 com.a 之后、临时窗口之前，而不是甩到末尾。
+        let lateCurrent = ["app-com.a", "tabgrp-temp", "tabgrp-b1"]
+        let lateKeys = firstKeys.merging(["tabgrp-b1": "com.b"]) { _, new in new }
+        XCTAssertEqual(
+            store.reconciled(current: lateCurrent, appKeyOf: lateKeys),
+            ["app-com.a", "tabgrp-b1", "tabgrp-temp"],
+            "渲染路径必须和 sync 同源，否则首帧尾插再被弹回 = 影子滑动"
+        )
+        store.sync(current: lateCurrent, appKeyOf: lateKeys)
+        XCTAssertEqual(store.liveOrder, ["app-com.a", "tabgrp-b1", "tabgrp-temp"])
+    }
+
+    func testSameBootKeepsExactChipOrderInsteadOfRebuildingBlocks() {
+        let suite = "test-kept-same-boot-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(["com.kept"], forKey: "stripKeptAppOrderV1")
+        defaults.set(["tabgrp-temp", "tabgrp-kept"], forKey: "stripLiveOrder")
+        defaults.set(7, forKey: "stripLiveOrderBootTime")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { ["com.kept"] },
+            stableKeptOrderProvider: { ["com.kept"] },
+            bootTimeProvider: { 7 }
+        )
+        XCTAssertEqual(
+            store.reconciled(
+                current: ["tabgrp-kept", "tabgrp-temp"],
+                appKeyOf: ["tabgrp-kept": "com.kept", "tabgrp-temp": "com.temp"]
+            ),
+            ["tabgrp-temp", "tabgrp-kept"]
+        )
+    }
+
+    func testStableOrderMigratesLegacyPlaceholdersAndAppendsKeptStoreOrder() {
+        let suite = "test-kept-migration-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(["tabgrp-old", "app-com.b", "app-com.a"], forKey: "stripLiveOrder")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { ["com.a", "com.b", "com.c"] },
+            stableKeptOrderProvider: { ["com.a", "com.b", "com.c"] },
+            bootTimeProvider: { 2 }
+        )
+        XCTAssertEqual(store.stableKeptAppOrder, ["com.b", "com.a", "com.c"])
+    }
+
+    func testExistingEmptyStableArchiveIsRepairedBeforeFirstColdRender() {
+        let suite = "test-kept-empty-stable-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set([String](), forKey: "stripKeptAppOrderV1")
+        defaults.set(1, forKey: "stripLiveOrderBootTime")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { ["com.a", "com.b"] },
+            stableKeptOrderProvider: { ["com.b", "com.a"] },
+            bootTimeProvider: { 2 }
+        )
+        let current = ["temp", "a", "b"]
+        let keys = ["temp": "com.temp", "a": "com.a", "b": "com.b"]
+        XCTAssertEqual(store.stableKeptAppOrder, ["com.b", "com.a"])
+        XCTAssertEqual(store.reconciled(current: current, appKeyOf: keys), ["b", "a", "temp"])
+    }
+
+    func testStableOrderFollowsDragAndPrunesCancelledKeep() {
+        final class MembershipBox { var order = ["com.a", "com.b"] }
+        let membership = MembershipBox()
+        let suite = "test-kept-stable-drag-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(membership.order, forKey: "stripKeptAppOrderV1")
+        let store = StripOrderStore(
+            defaults: defaults,
+            keptIDsProvider: { Set(membership.order) },
+            stableKeptOrderProvider: { membership.order },
+            bootTimeProvider: { 2 }
+        )
+        let keys = ["tabgrp-a": "com.a", "tabgrp-b": "com.b"]
+        store.sync(current: ["tabgrp-a", "tabgrp-b"], appKeyOf: keys)
+        store.reorder(
+            draggedID: "tabgrp-b",
+            relativeTo: "tabgrp-a",
+            after: false,
+            current: ["tabgrp-a", "tabgrp-b"]
+        )
+        XCTAssertEqual(store.stableKeptAppOrder, ["com.b", "com.a"])
+
+        membership.order = ["com.a"]
+        store.sync(current: ["tabgrp-b", "tabgrp-a"], appKeyOf: keys)
+        XCTAssertEqual(store.stableKeptAppOrder, ["com.a"])
+    }
+
+    func testReconcileTraceReportsActualPlacementBranches() {
+        let result = StripOrdering.reconcileWithTrace(
+            remembered: ["a1"],
+            current: ["a1", "a2", "message", "tail"],
+            appKeyOf: ["a1": "a", "a2": "a", "message": "msg", "tail": "tail"],
+            headPreferredKeys: ["msg"]
+        )
+        XCTAssertEqual(result.order, ["message", "a1", "a2", "tail"])
+        XCTAssertEqual(result.placements.map(\.reason), [.sameAppSibling, .headPreferred, .tail])
+    }
+
     // MARK: - g. pre-sync 首帧一致（影子滑动修复）
     //
     // 关键：DockStripView 首帧先用**旧 liveOrder + 新 current** 渲染（reconciled），`.onChange`

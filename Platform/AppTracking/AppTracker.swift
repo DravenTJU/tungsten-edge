@@ -94,7 +94,11 @@ final class AppTracker: ObservableObject {
     private let reader = AXWindowReader()
     private let windowEligibility = AppTrackerWindowEligibility()
     private let logger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "app-tracker")
-    private let inventoryLog = WindowInventoryAnomalyLog()
+    private let inventoryLog: WindowInventoryAnomalyLog
+
+    init(inventoryLog: WindowInventoryAnomalyLog = WindowInventoryAnomalyLog()) {
+        self.inventoryLog = inventoryLog
+    }
 
     func start() {
         guard workspaceObservers.isEmpty else { return }
@@ -258,6 +262,7 @@ final class AppTracker: ObservableObject {
         // 当前 activeCgID 仍在 AX 里的座位数——幽灵自愈的「兄弟座位在场」门槛（幽灵自己缺席，天然不计入）。
         let axPresentSeatCount = app.windowOrder.filter { eligibleByCgID[$0] != nil }.count
         var healedSeats: [(cgID: CGWindowID, token: String, episodeID: UUID)] = []
+        var releasedSeats: [(seat: WindowEntry, reason: InventorySeatReleasedReason)] = []
         var tearOutCgIDs: Set<CGWindowID> = []
 
         // Pass A：每个老座位尝试延续
@@ -336,6 +341,7 @@ final class AppTracker: ObservableObject {
                         // 的窗口过不了 everSeenVisible 或兄弟门槛，照旧无限期保座位。
                         if evaluation.shouldRelease, let episodeID = seat.absenceEpisodeID {
                             healedSeats.append((X, seat.token, episodeID))
+                            releasedSeats.append((seat, .phantomHealed))
                             if inventoryLog.isEnabled {
                                 heldLogDeduplicator.clear(
                                     pid: pid, seatToken: seat.token, episodeID: episodeID
@@ -374,13 +380,16 @@ final class AppTracker: ObservableObject {
                         }
                     } else if let since = seat.absentSince, now.timeIntervalSince(since) >= Self.closedReapGrace {
                         // 正常窗口却离开 AX 且持续超过 grace → 判定关窗后赖在 CG,删座位（不 place）
+                        releasedSeats.append((seat, .absentBeyondGrace))
                     } else {
                         if seat.absentSince == nil { seat.absentSince = now }
                         seat.isFocused = false
                         place(seat)                       // grace 内暂留(扛 AX 偶发漏读),【不强制标 min】
                     }
+                } else {
+                    // 连 CG 都没了 → 真关闭，丢弃。
+                    releasedSeats.append((seat, .leftCGList))
                 }
-                // else：连 CG 都没了 → 真关闭，丢弃
             }
         }
 
@@ -531,6 +540,17 @@ final class AppTracker: ObservableObject {
             }
         }
 
+        for released in releasedSeats {
+            let snapshot = inventorySeatReleaseSnapshot(app: app, seats: [released.seat])
+            for payload in InventorySeatReleasePlan.payloads(
+                for: snapshot,
+                reason: released.reason,
+                context: reconcileContext
+            ) {
+                inventoryLog.record(.seatReleased(payload))
+            }
+        }
+
         // 影子标签池滚动到下一轮（本轮判定用的是旧池）。健康门槛：AX 一个窗口都没读到而 CG
         // 还有（app 挂死/AX 读失败）→ 本轮不动池子。规则：出 CG（真关闭）→ 出池；以 min=false
         // 现身 AX（活跃标签/真可见窗口/拽出标签）→ 出池；在 CG 却不在 AX 且不是在座 activeCgID
@@ -630,6 +650,35 @@ final class AppTracker: ObservableObject {
         lastReconcileAtByPID.removeValue(forKey: pid)
         shadowPoolDiagnosticsByPID.removeValue(forKey: pid)
         heldLogDeduplicator.removeAll(pid: pid)
+    }
+
+    private func inventorySeatReleaseSnapshot(
+        app: AppEntry,
+        seats: [WindowEntry]? = nil
+    ) -> InventorySeatReleaseSnapshot {
+        let selected = seats ?? app.windowOrder.compactMap { app.windowsByID[$0] }
+        return InventorySeatReleaseSnapshot(
+            pid: app.pid,
+            bundleID: app.bundleIdentifier,
+            appHidden: app.isHidden,
+            seats: selected.map { entry in
+                InventorySeatReleaseSnapshot.Seat(
+                    seatToken: entry.token,
+                    activeCgID: entry.cgWindowID,
+                    isMinimized: entry.isMinimized,
+                    isFocused: entry.isFocused,
+                    everSeenVisible: entry.everSeenVisible,
+                    bounds: entry.bounds
+                )
+            }
+        )
+    }
+
+    private func recordProcessGoneSeats(app: AppEntry) {
+        let snapshot = inventorySeatReleaseSnapshot(app: app)
+        for payload in InventorySeatReleasePlan.processGonePayloads(for: snapshot) {
+            inventoryLog.record(.seatReleased(payload))
+        }
     }
 
     /// 座位集合的轻量指纹（顺序 + token + 标题 + 最小化/焦点），用来判断这次对账有没有实际变化。
@@ -811,6 +860,7 @@ final class AppTracker: ObservableObject {
     private func handleAppTerminated(pid: pid_t) {
         observers[pid]?.stop()
         observers.removeValue(forKey: pid)
+        if let app = apps[pid] { recordProcessGoneSeats(app: app) }
         clearInventoryDiagnostics(pid: pid)
 
         // Finder relaunches immediately via launchd. Keep the entry (no windows) so the chip
@@ -1042,27 +1092,7 @@ final class AppTracker: ObservableObject {
             // 批量删除 AppEntry 前，按 windowOrder 为每个 seat 写一条 seatReleased(.processGone)。
             // 该路径没有本轮 AX/CG 采样，也没有 InventoryReconcileContext——只有内存中已有的座位状态，
             // 绝不伪造未采样字段为 0/false。日志身份用稳定的 pid + seatToken。
-            if let app = apps[pid] {
-                let releaseSnapshot = InventorySeatReleaseSnapshot(
-                    pid: pid,
-                    bundleID: app.bundleIdentifier,
-                    appHidden: app.isHidden,
-                    seats: app.windowOrder.compactMap { wid in
-                        guard let entry = app.windowsByID[wid] else { return nil }
-                        return InventorySeatReleaseSnapshot.Seat(
-                            seatToken: entry.token,
-                            activeCgID: entry.cgWindowID,
-                            isMinimized: entry.isMinimized,
-                            isFocused: entry.isFocused,
-                            everSeenVisible: entry.everSeenVisible,
-                            bounds: entry.bounds
-                        )
-                    }
-                )
-                for payload in InventorySeatReleasePlan.processGonePayloads(for: releaseSnapshot) {
-                    inventoryLog.record(.seatReleased(payload))
-                }
-            }
+            if let app = apps[pid] { recordProcessGoneSeats(app: app) }
             observers[pid]?.stop()
             observers.removeValue(forKey: pid)
             apps.removeValue(forKey: pid)

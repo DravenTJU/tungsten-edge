@@ -17,7 +17,8 @@ import Darwin
 enum ProcessLiveness {
     /// 用 POSIX `kill(pid, 0)` 判定进程是否存活。
     static func isAlive(pid: pid_t) -> Bool {
-        interpret(result: kill(pid, 0), errorCode: errno)
+        guard pid > 0 else { return false }
+        return interpret(result: kill(pid, 0), errorCode: errno)
     }
 
     /// 纯判定函数，供 errno 矩阵单测直接喂入合成值，不发起 syscall：
@@ -39,6 +40,7 @@ enum ProcessLiveness {
     ///
     /// 返回 nil = 进程已不存在（pid 不存在时 sysctl 返回 0 但把 size 置 0，必须查 size）。
     static func startTime(pid: pid_t) -> timeval? {
+        guard pid > 0 else { return nil }
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride

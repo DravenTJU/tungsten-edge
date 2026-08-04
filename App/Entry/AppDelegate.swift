@@ -5,12 +5,19 @@ import os
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private(set) var runtime = AppRuntime()
+    private let inventoryLog = WindowInventoryAnomalyLog()
+    private(set) lazy var runtime = AppRuntime(inventoryLog: inventoryLog)
     let drawerStore = DrawerStore()
     let messagingStore = MessagingAppStore()
     let badgeStore = BadgeStore()
     let keptAppStore = KeptAppStore()
-    lazy var stripOrderStore = StripOrderStore(keptIDsProvider: { [keptAppStore] in Set(keptAppStore.bundleIDs) })
+    lazy var stripOrderStore = StripOrderStore(
+        keptIDsProvider: { [keptAppStore] in Set(keptAppStore.bundleIDs) },
+        stableKeptOrderProvider: { [keptAppStore, messagingStore] in
+            keptAppStore.bundleIDs.filter { !messagingStore.contains($0) }
+        },
+        inventoryLog: inventoryLog
+    )
     let drawerOrderStore = DrawerOrderStore()
     let settingsStore = AppSettingsStore()
     let pinnedFolderStore = PinnedFolderStore()

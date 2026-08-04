@@ -4,6 +4,14 @@ import XCTest
 
 final class ProcessLivenessTests: XCTestCase {
 
+    func testInvalidPIDsAreNeverPassedThroughAsAlive() {
+        XCTAssertFalse(ProcessLiveness.isAlive(pid: 0))
+        XCTAssertFalse(ProcessLiveness.isAlive(pid: -1))
+        XCTAssertFalse(ProcessLiveness.isAlive(pid: -42))
+        XCTAssertNil(ProcessLiveness.startTime(pid: 0))
+        XCTAssertNil(ProcessLiveness.startTime(pid: -1))
+    }
+
     // MARK: - errno 矩阵单测（纯判定函数，不发起 syscall）
 
     func testInterpretSyscallSuccessIsAlive() {

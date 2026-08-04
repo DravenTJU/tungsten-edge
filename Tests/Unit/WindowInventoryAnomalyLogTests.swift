@@ -338,6 +338,77 @@ final class WindowInventoryAnomalyLogTests: XCTestCase {
         XCTAssertEqual(bounds["height"] as? Double, 4.0)
     }
 
+    func testReleasePlanCarriesExplicitReasonAndReconcileContext() throws {
+        let context = InventoryReconcileContext(
+            roundID: 9,
+            appReconcileOrdinal: 2,
+            source: .periodicReconcile,
+            gapMs: 5000,
+            usedPreloadedAX: false,
+            axReadOutcome: .success(count: 1)
+        )
+        let snapshot = InventorySeatReleaseSnapshot(
+            pid: 77,
+            bundleID: "com.example",
+            appHidden: false,
+            seats: [.init(
+                seatToken: "tabgrp-77-s1",
+                activeCgID: 8,
+                isMinimized: false,
+                isFocused: true,
+                everSeenVisible: true,
+                bounds: nil
+            )]
+        )
+        for reason in [
+            InventorySeatReleasedReason.leftCGList,
+            .absentBeyondGrace,
+            .phantomHealed,
+        ] {
+            let payload = try XCTUnwrap(InventorySeatReleasePlan.payloads(
+                for: snapshot,
+                reason: reason,
+                context: context
+            ).first)
+            XCTAssertEqual(payload.reason, reason)
+            XCTAssertEqual(payload.context, context)
+            XCTAssertEqual(payload.seatToken, "tabgrp-77-s1")
+        }
+    }
+
+    func testOrderEventsUseOneSessionAndStrictlyIncreasingSequence() throws {
+        let directory = makeRoot().appendingPathComponent("logs")
+        let log = makeLogger(directory: directory)
+        log.record(.orderProjectionChanged(.init(
+            previousLiveIDs: [],
+            currentLiveIDs: ["chip"],
+            absorbedMessagingMainIDs: [],
+            visibleMessagingBundleIDs: [],
+            drawerBundleIDs: [],
+            appKeyByChipID: ["chip": "com.example"]
+        )))
+        log.record(.orderChipPlaced(.init(
+            chipID: "chip",
+            appKey: "com.example",
+            index: 0,
+            reason: StripOrdering.PlacementReason.tail.rawValue
+        )))
+        log.record(.orderMemoryDropped(.init(
+            chipID: "old",
+            appKey: "com.example",
+            previousIndex: 0,
+            absentForMs: 5001
+        )))
+        log.flush()
+
+        let records = try jsonRecords(at: log.currentFileURL)
+        XCTAssertEqual(records.compactMap { $0["seq"] as? Int }, [1, 2, 3])
+        XCTAssertEqual(Set(records.compactMap { $0["sessionID"] as? String }).count, 1)
+        XCTAssertEqual(records.compactMap { $0["event"] as? String }, [
+            "orderProjectionChanged", "orderChipPlaced", "orderMemoryDropped",
+        ])
+    }
+
     private func makeLogger(
         directory: URL,
         enabled: Bool = true,
