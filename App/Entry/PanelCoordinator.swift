@@ -1649,6 +1649,9 @@ final class PanelCoordinator: NSObject {
     /// print() 能直接读回。AppDelegate 已对 stdout 做行缓冲（`setvbuf(stdout, nil, _IOLBF, 0)`），
     /// 这里不需要额外处理缓冲。
     private static let edgeHoverTraceEnabled = ProcessInfo.processInfo.environment["DOCK_EDGEHOVER_TRACE"] == "1"
+    /// 菜单跟踪深度（子菜单会嵌套），0 = 当前没有菜单在跟踪。
+    private var menuTrackingDepth = 0
+    private static let menuHoverSuspensionEnabled = ProcessInfo.processInfo.environment["DOCK_MENU_HOVER_SUSPEND"] != "0"
     private var hoverLastScreenIndex: Int? = nil
     private var hoverLastInHotZone: Bool? = nil
     private var hoverSwitchTimer: Timer?
@@ -1657,7 +1660,65 @@ final class PanelCoordinator: NSObject {
     private func setupHoverDiagnostics() {
         if Self.hoverVerboseLogging { logScreenMap() }
         installHoverMouseMonitors()
+        observeMenuTrackingForHoverSuspension()
         pollMousePosition()
+    }
+
+    /// **菜单跟踪期间摘掉鼠标移动监视器**（owner 2026-08-04 报「菜单里两个选项之间来回晃有粘滞感」，
+    /// 状态栏菜单 / 任务条右键 / 图标右键三处都一样，而这三者唯一的共同点就是"由钨极弹出"）。
+    ///
+    /// `addGlobalMonitorForEvents` 在系统底层是一个事件拦截器，所有鼠标事件都要先过它。平时主循环
+    /// 在普通模式，它随到随处理，**所以别的应用的菜单不受影响**；但钨极自己弹菜单时主循环切进
+    /// 事件跟踪模式，这个拦截器的处理入口在该模式下不被服务，每个鼠标移动事件都要在拦截器里
+    /// 等到超时才继续送达——菜单高亮因此慢半拍。实测佐证：菜单开着时主线程 93% 阻塞在
+    /// `mach_msg2_trap` 干等事件，我们自己的代码 0 个采样，所以不是"没空处理"，是"事件来得晚"。
+    ///
+    /// 用 `NSMenu` 的应用级跟踪通知，一处覆盖全部菜单（chip 菜单是现搭的，没有别的公共钩子）。
+    /// 子菜单会让通知嵌套，所以按深度计数而不是布尔值。
+    /// 关掉这个优化：`DOCK_MENU_HOVER_SUSPEND=0`。
+    private func observeMenuTrackingForHoverSuspension() {
+        guard Self.menuHoverSuspensionEnabled else { return }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(menuTrackingDidBegin),
+            name: NSMenu.didBeginTrackingNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(menuTrackingDidEnd),
+            name: NSMenu.didEndTrackingNotification,
+            object: nil
+        )
+    }
+
+    @objc private func menuTrackingDidBegin() {
+        menuTrackingDepth += 1
+        guard menuTrackingDepth == 1 else { return }
+        suspendHoverMouseMonitors()
+    }
+
+    @objc private func menuTrackingDidEnd() {
+        menuTrackingDepth = max(0, menuTrackingDepth - 1)
+        guard menuTrackingDepth == 0 else { return }
+        installHoverMouseMonitors()
+        // 摘掉的这段时间里鼠标可能已经跨屏或离开了底边热区，装回来立刻补一次判断，
+        // 否则要等下一次鼠标移动才纠正。
+        pollMousePosition()
+    }
+
+    /// 只摘监视器，**不碰**唤醒/切屏状态——那些由 `removeHoverMouseMonitors` 在真正拆除时负责。
+    /// 菜单开着的这一两秒里把 `cancelEdgeWake()` 一起做掉的话，隐藏状态下打开状态栏菜单
+    /// 会顺手取消掉正在武装的底边唤醒，属于额外的行为改动。
+    private func suspendHoverMouseMonitors() {
+        if let monitor = hoverLocalMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            hoverLocalMouseMonitor = nil
+        }
+        if let monitor = hoverGlobalMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            hoverGlobalMouseMonitor = nil
+        }
     }
 
     private func installHoverMouseMonitors() {

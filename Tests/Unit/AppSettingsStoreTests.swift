@@ -811,20 +811,42 @@ final class AppSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeDockAutohideStateReadRespectsSandboxAndInjectedReader() {
+    func testNativeDockAutohideStateReadRespectsSandboxAndInjectedReader() async {
         let sandboxed = NativeDockPreferencesService(
             sandbox: SandboxEnvironment(isSandboxed: true),
             runner: { _, _ in },
             autohideReader: { NativeDockAutohideState(enabled: true, delay: 0.5) }
         )
-        XCTAssertNil(sandboxed.currentAutohideState(), "沙箱下读不到，返回 nil 让调用方回退存值")
+        let sandboxedState = await sandboxed.currentAutohideState()
+        XCTAssertNil(sandboxedState, "沙箱下读不到，返回 nil 让调用方回退存值")
 
         let readable = NativeDockPreferencesService(
             sandbox: SandboxEnvironment(isSandboxed: false),
             runner: { _, _ in },
             autohideReader: { NativeDockAutohideState(enabled: true, delay: 0.2) }
         )
-        XCTAssertEqual(readable.currentAutohideState(), NativeDockAutohideState(enabled: true, delay: 0.2))
+        let readableState = await readable.currentAutohideState()
+        XCTAssertEqual(readableState, NativeDockAutohideState(enabled: true, delay: 0.2))
+    }
+
+    @MainActor
+    func testSystemTruthReadersRunOffMainThread() async {
+        let launch = LaunchAtLoginService(stateReader: { Thread.isMainThread ? .off : .on })
+        let launchState = await launch.currentState()
+        XCTAssertEqual(launchState, .on)
+
+        let native = NativeDockPreferencesService(
+            sandbox: SandboxEnvironment(isSandboxed: false),
+            runner: { _, _ in },
+            autohideReader: {
+                NativeDockAutohideState(enabled: !Thread.isMainThread, delay: 0.4)
+            }
+        )
+        let nativeState = await native.currentAutohideState()
+        XCTAssertEqual(
+            nativeState,
+            NativeDockAutohideState(enabled: true, delay: 0.4)
+        )
     }
 
     func testOpenSystemDockSettingsUsesDeepLinkFirst() {

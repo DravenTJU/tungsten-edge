@@ -21,7 +21,7 @@ protocol NativeDockPreferencesServicing {
     func apply(delay: Double) throws
     /// 系统 Dock 当前的自动隐藏状态。nil = 读不到（沙箱等），调用方回退本地存值推导。
     /// 必须读系统实际值：用户随时可用 ⌥⌘D / 系统设置改它，本地存值会过期。
-    func currentAutohideState() -> NativeDockAutohideState?
+    func currentAutohideState() async -> NativeDockAutohideState?
     /// 只打开系统设置里的 Dock 页面，不修改偏好，也不受写入路径的沙箱门控。
     func openSystemSettings() -> Bool
 }
@@ -46,12 +46,13 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
 
     private let sandbox: SandboxEnvironment
     private let runner: ShellRunner
-    private let autohideReader: @MainActor () -> NativeDockAutohideState?
+    private let autohideReader: () -> NativeDockAutohideState?
     private let urlOpener: URLOpener
+    private let readerQueue = DispatchQueue(label: "com.caye.macosdockcc.v2.native-dock-reader", qos: .userInitiated)
 
     init(sandbox: SandboxEnvironment = .current,
          runner: @escaping ShellRunner = NativeDockPreferencesService.runProcess,
-         autohideReader: @escaping @MainActor () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem,
+         autohideReader: @escaping () -> NativeDockAutohideState? = NativeDockPreferencesService.readAutohideStateFromSystem,
          urlOpener: @escaping URLOpener = NativeDockPreferencesService.openURL) {
         self.sandbox = sandbox
         self.runner = runner
@@ -61,9 +62,15 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
 
     var isAvailable: Bool { !sandbox.isSandboxed }
 
-    func currentAutohideState() -> NativeDockAutohideState? {
+    func currentAutohideState() async -> NativeDockAutohideState? {
         guard isAvailable else { return nil }
-        return autohideReader()
+        let autohideReader = autohideReader
+        let readerQueue = readerQueue
+        return await withCheckedContinuation { continuation in
+            readerQueue.async {
+                continuation.resume(returning: autohideReader())
+            }
+        }
     }
 
     /// Monterey 使用「程序坞与菜单栏」，Ventura 及以上映射到「桌面与程序坞」。
@@ -80,7 +87,7 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         NSWorkspace.shared.open(url)
     }
 
-    static func readAutohideStateFromSystem() -> NativeDockAutohideState? {
+    nonisolated static func readAutohideStateFromSystem() -> NativeDockAutohideState? {
         let domain = "com.apple.dock" as CFString
         // 外部修改（⌥⌘D / 系统设置 / killall Dock）不会自动进入本进程的 CFPreferences 缓存，
         // 每次读取前必须先同步，否则可能一直拿到旧值。
@@ -93,7 +100,7 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
     }
 
     /// 注入同步与取值动作，既隔离 CFPreferences I/O，也让同步失败等分支可直接单测。
-    static func readAutohideState(
+    nonisolated static func readAutohideState(
         synchronize: () -> Bool,
         valueForKey: (String) -> Any?
     ) -> NativeDockAutohideState? {
@@ -106,7 +113,7 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
 
     /// 纯解码规则：autohide 缺键代表关闭；存在却不是布尔值代表整份快照不可读。
     /// 开启时，delay 缺键代表系统默认，坏类型代表不可读；关闭时 delay 不影响开关真值。
-    static func decodeAutohideState(
+    nonisolated static func decodeAutohideState(
         autohideValue: Any?,
         delayValue: Any?
     ) -> NativeDockAutohideState? {
@@ -174,7 +181,7 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         }
     }
 
-    private static func strictBooleanValue(_ value: Any) -> Bool? {
+    nonisolated private static func strictBooleanValue(_ value: Any) -> Bool? {
         guard CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID(),
               let number = value as? NSNumber else {
             return nil
@@ -182,7 +189,7 @@ final class NativeDockPreferencesService: NativeDockPreferencesServicing {
         return number.boolValue
     }
 
-    private static func finiteNumericValue(_ value: Any) -> Double? {
+    nonisolated private static func finiteNumericValue(_ value: Any) -> Double? {
         guard CFGetTypeID(value as CFTypeRef) != CFBooleanGetTypeID(),
               let number = value as? NSNumber else {
             return nil

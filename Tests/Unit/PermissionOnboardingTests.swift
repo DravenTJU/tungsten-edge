@@ -2,6 +2,22 @@ import XCTest
 
 @MainActor
 final class PermissionOnboardingTests: XCTestCase {
+    func testPermissionWatchdogGateRejectsOverlapAndStoppedGeneration() {
+        var gate = PermissionWatchdogGate()
+        gate.start()
+        guard let oldGeneration = gate.beginProbe() else {
+            return XCTFail("first probe should start")
+        }
+        XCTAssertNil(gate.beginProbe())
+
+        gate.stop()
+        gate.start()
+        guard let currentGeneration = gate.beginProbe() else {
+            return XCTFail("new generation probe should start")
+        }
+        XCTAssertFalse(gate.completeProbe(generation: oldGeneration))
+        XCTAssertTrue(gate.completeProbe(generation: currentGeneration))
+    }
 
     // MARK: - 安装位置
 

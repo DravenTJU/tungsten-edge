@@ -56,6 +56,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     // 闭包注入：注册状态归 AppDelegate 持有的 GlobalHotKeyMonitor，菜单每次刷新时现查。
     private let isToggleHotKeyRegistered: () -> Bool
     private var edgeDelaySubscription: AnyCancellable?
+    private var systemTruthRefreshTask: Task<Void, Never>?
+    private var isMenuOpen = false
+    private var isPreparedForTaskbarPresentation = false
     /// 本次菜单是不是从任务条右键弹出来的。菜单锚在任务条上沿，任务条一缩它就悬空了，
     /// 所以这条路径下**不做实时预览**（owner 2026-08-03）；状态栏图标那条不受影响。
     private var isPresentedFromTaskbar = false
@@ -123,6 +126,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             .sink { [weak self] delay in
                 self?.edgeSliderView.sync(delay: delay)
             }
+        refreshSystemTruth()
     }
 
     private func configureStatusItem() {
@@ -254,28 +258,40 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         // 可视区，所以 `bounds.maxY` 就是任务条上沿；`popUp(positioning:at:in:)` 把菜单
         // **左上角**放在给定点，于是再往上抬一个菜单高度。
         isPresentedFromTaskbar = true
+        prepareMenuForPresentation()
+        isPreparedForTaskbarPresentation = true
         let local = view.convert(event.locationInWindow, from: nil)
         let anchor = NSPoint(x: local.x, y: view.bounds.maxY + menu.size.height)
         menu.popUp(positioning: nil, at: anchor, in: view)
+        isPreparedForTaskbarPresentation = false
     }
 
     func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
         isPresentedFromTaskbar = false
         onMenuVisibilityChanged(false)
+        // 关闭后再预热一次；所有结果只进缓存，供下次展示直接使用。
+        refreshSystemTruth()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
         onMenuVisibilityChanged(true)
+        if !isPreparedForTaskbarPresentation {
+            prepareMenuForPresentation()
+        }
+        isPreparedForTaskbarPresentation = false
+        refreshSystemTruth()
+    }
+
+    /// 只读本地缓存并同步 AppKit 对象，不执行任何系统 I/O。
+    /// 任务条入口会在量 `menu.size` 前先走这里，确保锚点使用本次真实高度。
+    private func prepareMenuForPresentation() {
         let granted = isAccessibilityTrusted()
         permissionWarningItem.isHidden = granted
         permissionWarningSeparator.isHidden = granted
-        // 这里**只用缓存值**把菜单摆好，两个系统真值的读取推迟到菜单已经显示之后
-        // （见 refreshSystemTruthAfterPresenting）。它们加起来实测约 100ms：
-        // 右键任务条 158–176ms vs 右键 chip（菜单现搭、不走本回调）60–78ms。
-        // 从状态栏图标点开还能忍，右键要求菜单立刻跟着鼠标出来，这 100ms 就是「不跟手」。
         refreshCheckmarks()
         refreshUpdateCheckItem()
-        refreshSystemTruthAfterPresenting()
         // 没点确认就关菜单 = 作废：什么都不写，下次打开一切从系统真值重新起步。
         // （否则「随手拨一下看看」也会招来一次 killall Dock——关个菜单屏幕突然闪一下，
         // 正是这次要消除的怪异感。）
@@ -292,22 +308,26 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         refreshEdgeSectionTitle()
     }
 
-    /// 菜单已经显示出来之后再补读系统真值，读完就地更新。
-    ///
-    /// **必须挂 `.common`**：菜单跟踪跑的是嵌套 run loop，普通 `DispatchQueue.main.async`
-    /// 要等菜单关掉才执行（同仓库既有那条「拖动期间的定时器必须挂 `.common`」）。
-    ///
-    /// 晚这一下**不会导致写错档位**：`SettingsCoordinator.applyNativeDock(target:)` 在写系统之前
-    /// 自己会重读一次真值，镜像临时落后于系统不影响写入结果。
-    private func refreshSystemTruthAfterPresenting() {
-        RunLoop.main.perform(inModes: [.common]) { [weak self] in
-            guard let self else { return }
-            self.settingsCoordinator.refreshLaunchAtLoginState()
-            self.settingsCoordinator.reconcileNativeDockMirror()
-            self.refreshCheckmarks()
+    /// 系统读取在服务专用队列执行。任务条菜单按左上角定位，显示后改高度会让底边漂移，
+    /// 所以那条路径只更新缓存；状态栏菜单没有这个锚点约束，可以就地吸收新真值。
+    private func refreshSystemTruth() {
+        systemTruthRefreshTask?.cancel()
+        let settingsCoordinator = settingsCoordinator
+        systemTruthRefreshTask = Task { @MainActor [weak self] in
+            async let launchAccepted = settingsCoordinator.refreshLaunchAtLoginState()
+            async let nativeDockAccepted = settingsCoordinator.reconcileNativeDockMirror()
+            let accepted = await (launchAccepted, nativeDockAccepted)
+            guard let self,
+                  !Task.isCancelled,
+                  self.isMenuOpen,
+                  !self.isPresentedFromTaskbar else { return }
+            if accepted.0 {
+                self.refreshCheckmarks(allowsLayoutChange: false)
+            }
             // 滑块只在用户还没开始拖的时候才跟着真值走——正在拖的手不能被跳一下。
-            guard !self.nativeDockSliderView.hasDraft else { return }
-            self.nativeDockSliderView.sync(delay: self.store.nativeDockAutoHideDelay)
+            if accepted.1, !self.nativeDockSliderView.hasDraft {
+                self.nativeDockSliderView.sync(delay: self.store.nativeDockAutoHideDelay)
+            }
         }
     }
 
@@ -349,15 +369,22 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func refreshCheckmarks() {
-        refreshLaunchAtLoginState()
+    /// `allowsLayoutChange` = 本次刷新可不可以增删菜单行。展示前（`prepareMenuForPresentation`）
+    /// 可以，异步真值回来时**不可以**——理由见 `refreshLaunchAtLoginState`。
+    private func refreshCheckmarks(allowsLayoutChange: Bool = true) {
+        refreshLaunchAtLoginState(allowsLayoutChange: allowsLayoutChange)
     }
 
-    private func refreshLaunchAtLoginState() {
+    private func refreshLaunchAtLoginState(allowsLayoutChange: Bool) {
         let presentation = LaunchAtLoginMenuPresentation(state: settingsCoordinator.launchAtLoginState)
         launchAtLoginItem.title = presentation.title
         launchAtLoginItem.state = presentation.isChecked ? .on : .off
         launchAtLoginItem.isEnabled = presentation.isEnabled
+        // 菜单已经在屏幕上时**只改文字与勾选，绝不增删行**。登录项处于 `.requiresApproval`
+        //（刚注册、等系统设置里批准）时这一行会冒出来，异步真值回来得晚，行一多菜单高度就变——
+        // 用户看到的是"内容自己跳了一下"，而任务条那条路径按左上角定位，高度一变底边还会漂。
+        // 迟一轮不要紧：下次 `prepareMenuForPresentation` 在菜单显示**之前**会补上。
+        guard allowsLayoutChange else { return }
         openLoginItemsSettingsItem.isHidden = !presentation.showsSettingsItem
     }
 
@@ -426,9 +453,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     /// 菜单不该在系统 Dock 重启时还开着；下一轮再执行。
     private func scheduleNativeDockWrite(target: Double) {
         menu.cancelTrackingWithoutAnimation()
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             guard let self else { return }
-            let outcome = self.settingsCoordinator.applyNativeDock(target: target)
+            let outcome = await self.settingsCoordinator.applyNativeDock(target: target)
             self.nativeDockSliderView.sync(delay: outcome.resolvedDelay)
             self.nativeDockApplyItem.isHidden = true
             if let error = outcome.error {

@@ -53,12 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var installLocation: AppInstallLocation = .other
     private var permissionCoordinator: PermissionRecoveryCoordinator?
     private var permissionWatchdogTimer: Timer?
+    private var permissionWatchdogGate = PermissionWatchdogGate()
+    private let permissionProbeQueue = DispatchQueue(label: "com.caye.macosdockcc.v2.permission-probe", qos: .utility)
+    private var cachedAccessibilityTrusted = false
     private var hasStartedApp = false
     private let permissionLogger = Logger(subsystem: "com.caye.macosdockcc.v2", category: "permissions")
     private lazy var statusMenuController = StatusMenuController(
         store: settingsStore,
         settingsCoordinator: settingsCoordinator,
-        isAccessibilityTrusted: { [permissionService] in permissionService.hasRequiredPermissions() },
+        isAccessibilityTrusted: { [weak self] in self?.cachedAccessibilityTrusted ?? false },
         onShowDebugConsole: { [weak self] in self?.showDebugConsole() },
         onExportDebugSnapshot: { [weak self] in self?.exportDebugSnapshot() },
         onShowSettings: { [weak self] in self?.openSettings(nil) },
@@ -85,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         installLocation = location
         let trusted = permissionService.hasRequiredPermissions()
+        cachedAccessibilityTrusted = trusted
         logPermissionLaunch(installLocation: location, isTrusted: trusted)
 
         if !location.isTransient {
@@ -118,7 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 用户从系统设置切回来时立刻复检，不用等下一次轮询。
         permissionCoordinator?.applicationDidBecomeActive()
         if !installLocation.isTransient {
-            settingsCoordinator.refreshLaunchAtLoginState()
+            Task { @MainActor [weak self] in
+                _ = await self?.settingsCoordinator.refreshLaunchAtLoginState()
+            }
         }
     }
 
@@ -437,10 +443,10 @@ extension AppDelegate: PermissionEffectHandler {
     /// 自己在 0.2 秒的轮询里自检，否则这 5 秒的空窗足够丢掉还原数据。
     func startWatchdog() {
         stopWatchdog()
+        permissionWatchdogGate.start()
         let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.permissionCoordinator?.sampleTrust(self.permissionService.hasRequiredPermissions())
+                self?.schedulePermissionProbe()
             }
         }
         timer.tolerance = 1
@@ -451,6 +457,21 @@ extension AppDelegate: PermissionEffectHandler {
     func stopWatchdog() {
         permissionWatchdogTimer?.invalidate()
         permissionWatchdogTimer = nil
+        permissionWatchdogGate.stop()
+    }
+
+    private func schedulePermissionProbe() {
+        guard let generation = permissionWatchdogGate.beginProbe() else { return }
+        let permissionService = permissionService
+        permissionProbeQueue.async { [weak self] in
+            let trusted = permissionService.hasRequiredPermissions()
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.permissionWatchdogGate.completeProbe(generation: generation) else { return }
+                self.cachedAccessibilityTrusted = trusted
+                self.permissionCoordinator?.sampleTrust(trusted)
+            }
+        }
     }
 
     func freezeLiftSnapshots() {

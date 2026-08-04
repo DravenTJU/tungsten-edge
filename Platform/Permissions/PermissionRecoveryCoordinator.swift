@@ -1,6 +1,42 @@
 import Combine
 import Foundation
 
+/// 后台权限探针的代次与单次在飞门控。`stop()` 会让已经发出的结果永久失效；
+/// 下一次 `start()` 即使先发出新探针，也不会被旧回调清掉在飞状态。
+///
+/// **已知代价**：`beginProbe()` 在上一次探针还没回来时返回 nil，这一拍的采样**被整个丢弃**。
+/// `AXIsProcessTrusted()` 改到后台队列执行之后，5 秒一次的采样不再保证每拍都有结果。
+/// `PermissionLossDetector` 按单调时间判「连续两次 false ≥ 5s」，丢样本**不会导致误判**
+/// （不会把还有权限判成丢失），但会**推迟**权限丢失的发现。这是刻意接受的：
+/// 采样本身若拖住主线程，代价是每次菜单/交互都被顶一下，比晚几秒发现权限丢失更糟。
+/// 真正保护已托举窗口的不是这条看门狗，是 `WindowLiftAvoidanceController` 自己 0.2 秒的自检。
+struct PermissionWatchdogGate {
+    private var generation: UInt64 = 0
+    private var isProbeInFlight = false
+
+    mutating func start() {
+        generation &+= 1
+        isProbeInFlight = false
+    }
+
+    mutating func stop() {
+        generation &+= 1
+        isProbeInFlight = false
+    }
+
+    mutating func beginProbe() -> UInt64? {
+        guard !isProbeInFlight else { return nil }
+        isProbeInFlight = true
+        return generation
+    }
+
+    mutating func completeProbe(generation completedGeneration: UInt64) -> Bool {
+        guard completedGeneration == generation, isProbeInFlight else { return false }
+        isProbeInFlight = false
+        return true
+    }
+}
+
 /// 状态机声明出来的副作用由谁去做。全部走协议，好让状态机的副作用序列可以单测。
 ///
 /// 「起/停一次授权过程」「重新检测」「取消恢复任务」不在这里——那几件事是协调器

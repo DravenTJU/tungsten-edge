@@ -62,14 +62,31 @@ enum LaunchAtLoginMenuModel {
 
 @MainActor
 protocol LaunchAtLoginServicing {
-    var state: LaunchAtLoginState { get }
+    func currentState() async -> LaunchAtLoginState
     func setEnabled(_ enabled: Bool) throws
     func openSystemSettings()
 }
 
 @MainActor
 final class LaunchAtLoginService: LaunchAtLoginServicing {
-    var state: LaunchAtLoginState {
+    private let stateReader: () -> LaunchAtLoginState
+    private let readerQueue = DispatchQueue(label: "com.caye.macosdockcc.v2.launch-at-login-reader", qos: .userInitiated)
+
+    init(stateReader: @escaping () -> LaunchAtLoginState = LaunchAtLoginService.readStateFromSystem) {
+        self.stateReader = stateReader
+    }
+
+    func currentState() async -> LaunchAtLoginState {
+        let stateReader = stateReader
+        let readerQueue = readerQueue
+        return await withCheckedContinuation { continuation in
+            readerQueue.async {
+                continuation.resume(returning: stateReader())
+            }
+        }
+    }
+
+    nonisolated static func readStateFromSystem() -> LaunchAtLoginState {
         guard #available(macOS 13.0, *) else { return .unsupported }
         return Self.mapStatus(SMAppService.mainApp.status)
     }
@@ -89,7 +106,7 @@ final class LaunchAtLoginService: LaunchAtLoginServicing {
     }
 
     @available(macOS 13.0, *)
-    private static func mapStatus(_ status: SMAppService.Status) -> LaunchAtLoginState {
+    nonisolated private static func mapStatus(_ status: SMAppService.Status) -> LaunchAtLoginState {
         switch status {
         case .enabled:
             return .on

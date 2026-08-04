@@ -18,7 +18,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     func present() {
-        coordinator.refreshLaunchAtLoginState()
+        Task { @MainActor [weak coordinator] in
+            _ = await coordinator?.refreshLaunchAtLoginState()
+        }
 
         let window = window ?? makeWindow()
         if let closedFrame {

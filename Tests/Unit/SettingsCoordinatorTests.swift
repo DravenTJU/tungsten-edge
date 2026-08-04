@@ -2,15 +2,19 @@ import XCTest
 
 @MainActor
 final class SettingsCoordinatorTests: XCTestCase {
-    func testLaunchStateAlwaysComesFromService() {
+    func testLaunchStateStartsFromCacheThenRefreshesFromService() async {
         let store = makeStore(launchAtLogin: true)
         let launch = LaunchServiceStub(state: .off)
         let coordinator = makeCoordinator(store: store, launch: launch)
 
+        XCTAssertEqual(coordinator.launchAtLoginState, .on)
+        let firstRefreshAccepted = await coordinator.refreshLaunchAtLoginState()
+        XCTAssertTrue(firstRefreshAccepted)
         XCTAssertEqual(coordinator.launchAtLoginState, .off)
 
         launch.state = .requiresApproval
-        coordinator.refreshLaunchAtLoginState()
+        let secondRefreshAccepted = await coordinator.refreshLaunchAtLoginState()
+        XCTAssertTrue(secondRefreshAccepted)
         XCTAssertEqual(coordinator.launchAtLoginState, .requiresApproval)
     }
 
@@ -40,7 +44,7 @@ final class SettingsCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.launchAtLoginState, .on)
     }
 
-    func testNativeApplyReadsLivePreviousAndPublishesReadback() {
+    func testNativeApplyReadsLivePreviousAndPublishesReadback() async {
         let store = makeStore(nativeDelay: AppSettingsStore.neverHideDelay)
         let native = NativeDockServiceStub(states: [
             NativeDockAutohideState(enabled: true, delay: 0.4),
@@ -48,7 +52,7 @@ final class SettingsCoordinatorTests: XCTestCase {
         ])
         let coordinator = makeCoordinator(store: store, native: native)
 
-        let outcome = coordinator.applyNativeDock(target: 1.0)
+        let outcome = await coordinator.applyNativeDock(target: 1.0)
 
         XCTAssertEqual(native.appliedDelays, [1.0])
         XCTAssertEqual(outcome.resolvedDelay, 0.7)
@@ -56,18 +60,18 @@ final class SettingsCoordinatorTests: XCTestCase {
         XCTAssertEqual(store.nativeDockAutoHideDelay, 0.7)
     }
 
-    func testNativeApplyFallsBackToMirrorWhenBothReadsFail() {
+    func testNativeApplyFallsBackToMirrorWhenBothReadsFail() async {
         let store = makeStore(nativeDelay: 0.3)
         let native = NativeDockServiceStub(states: [nil, nil])
         let coordinator = makeCoordinator(store: store, native: native)
 
-        let outcome = coordinator.applyNativeDock(target: 1.0)
+        let outcome = await coordinator.applyNativeDock(target: 1.0)
 
         XCTAssertEqual(outcome.resolvedDelay, 1.0)
         XCTAssertEqual(store.nativeDockAutoHideDelay, 1.0)
     }
 
-    func testNativeFailureAndUnreadableReadbackKeepsLivePrevious() {
+    func testNativeFailureAndUnreadableReadbackKeepsLivePrevious() async {
         let store = makeStore(nativeDelay: 0.2)
         let native = NativeDockServiceStub(states: [
             NativeDockAutohideState(enabled: true, delay: 0.6),
@@ -76,14 +80,14 @@ final class SettingsCoordinatorTests: XCTestCase {
         native.applyError = TestError.failed
         let coordinator = makeCoordinator(store: store, native: native)
 
-        let outcome = coordinator.applyNativeDock(target: 1.0)
+        let outcome = await coordinator.applyNativeDock(target: 1.0)
 
         XCTAssertNotNil(outcome.error)
         XCTAssertEqual(outcome.resolvedDelay, 0.6)
         XCTAssertEqual(store.nativeDockAutoHideDelay, 0.6)
     }
 
-    func testNativeFailureStillUsesReadablePartialResult() {
+    func testNativeFailureStillUsesReadablePartialResult() async {
         let store = makeStore(nativeDelay: 0.2)
         let native = NativeDockServiceStub(states: [
             NativeDockAutohideState(enabled: true, delay: 0.6),
@@ -92,24 +96,77 @@ final class SettingsCoordinatorTests: XCTestCase {
         native.applyError = TestError.failed
         let coordinator = makeCoordinator(store: store, native: native)
 
-        let outcome = coordinator.applyNativeDock(target: 1.0)
+        let outcome = await coordinator.applyNativeDock(target: 1.0)
 
         XCTAssertNotNil(outcome.error)
         XCTAssertEqual(outcome.resolvedDelay, 0.8)
         XCTAssertEqual(store.nativeDockAutoHideDelay, 0.8)
     }
 
-    func testSandboxUnavailableDoesNotWriteOrChangeMirror() {
+    func testSandboxUnavailableDoesNotWriteOrChangeMirror() async {
         let store = makeStore(nativeDelay: 0.5)
         let native = NativeDockServiceStub(isAvailable: false)
         let coordinator = makeCoordinator(store: store, native: native)
 
-        let outcome = coordinator.applyNativeDock(target: 1.0)
+        let outcome = await coordinator.applyNativeDock(target: 1.0)
 
         XCTAssertNotNil(outcome.error)
         XCTAssertEqual(outcome.resolvedDelay, 0.5)
         XCTAssertTrue(native.appliedDelays.isEmpty)
         XCTAssertEqual(store.nativeDockAutoHideDelay, 0.5)
+    }
+
+    func testOlderLaunchRefreshCannotOverwriteNewerResult() async {
+        let reader = ControlledLaunchStateReader()
+        let launch = ControlledLaunchService(reader: reader)
+        let coordinator = SettingsCoordinator(
+            store: makeStore(),
+            launchAtLoginService: launch,
+            nativeDockPreferencesService: NativeDockServiceStub(),
+            updateChecker: UpdateCheckerStub()
+        )
+
+        let older = Task { await coordinator.refreshLaunchAtLoginState() }
+        await reader.waitForReadCount(1)
+        let newer = Task { await coordinator.refreshLaunchAtLoginState() }
+        await reader.waitForReadCount(2)
+
+        await reader.resume(id: 1, state: .on)
+        let newerAccepted = await newer.value
+        XCTAssertTrue(newerAccepted)
+        await reader.resume(id: 0, state: .off)
+        let olderAccepted = await older.value
+        XCTAssertFalse(olderAccepted)
+        XCTAssertEqual(coordinator.launchAtLoginState, .on)
+    }
+
+    func testPrewarmReadCannotOverwriteNativeDockWrite() async {
+        let reader = ControlledNativeDockStateReader()
+        let native = ControlledNativeDockService(reader: reader)
+        let store = makeStore(nativeDelay: 0.1)
+        let coordinator = SettingsCoordinator(
+            store: store,
+            launchAtLoginService: LaunchServiceStub(state: .off),
+            nativeDockPreferencesService: native,
+            updateChecker: UpdateCheckerStub()
+        )
+
+        let prewarm = Task { await coordinator.reconcileNativeDockMirror() }
+        await reader.waitForReadCount(1)
+        let write = Task { await coordinator.applyNativeDock(target: 0.9) }
+        await reader.waitForReadCount(2)
+
+        await reader.resume(id: 0, state: NativeDockAutohideState(enabled: true, delay: 0.2))
+        let prewarmAccepted = await prewarm.value
+        XCTAssertFalse(prewarmAccepted)
+        await reader.resume(id: 1, state: NativeDockAutohideState(enabled: true, delay: 0.3))
+        await reader.waitForReadCount(3)
+        await reader.resume(id: 2, state: NativeDockAutohideState(enabled: true, delay: 0.9))
+
+        let outcome = await write.value
+        XCTAssertEqual(native.appliedDelays, [0.9])
+        XCTAssertEqual(outcome.resolvedDelay, 0.9)
+        XCTAssertEqual(store.nativeDockAutoHideDelay, 0.9)
     }
 
     /// 在飞守卫是**共享**的：菜单和设置窗口各有一个「检查更新」入口，
@@ -173,6 +230,8 @@ private final class LaunchServiceStub: LaunchAtLoginServicing {
         self.state = state
     }
 
+    func currentState() async -> LaunchAtLoginState { state }
+
     func setEnabled(_ enabled: Bool) throws {
         if let setError { throw setError }
         state = stateAfterSet ?? (enabled ? .on : .off)
@@ -198,10 +257,76 @@ private final class NativeDockServiceStub: NativeDockPreferencesServicing {
         if let applyError { throw applyError }
     }
 
-    func currentAutohideState() -> NativeDockAutohideState? {
+    func currentAutohideState() async -> NativeDockAutohideState? {
         states.isEmpty ? nil : states.removeFirst()
     }
 
+    func openSystemSettings() -> Bool { true }
+}
+
+private actor ControlledLaunchStateReader {
+    private var nextID = 0
+    private var continuations: [Int: CheckedContinuation<LaunchAtLoginState, Never>] = [:]
+
+    func read() async -> LaunchAtLoginState {
+        let id = nextID
+        nextID += 1
+        return await withCheckedContinuation { continuations[id] = $0 }
+    }
+
+    func waitForReadCount(_ count: Int) async {
+        while nextID < count { await Task.yield() }
+    }
+
+    func resume(id: Int, state: LaunchAtLoginState) {
+        continuations.removeValue(forKey: id)?.resume(returning: state)
+    }
+}
+
+@MainActor
+private final class ControlledLaunchService: LaunchAtLoginServicing {
+    private let reader: ControlledLaunchStateReader
+
+    init(reader: ControlledLaunchStateReader) {
+        self.reader = reader
+    }
+
+    func currentState() async -> LaunchAtLoginState { await reader.read() }
+    func setEnabled(_ enabled: Bool) throws {}
+    func openSystemSettings() {}
+}
+
+private actor ControlledNativeDockStateReader {
+    private var nextID = 0
+    private var continuations: [Int: CheckedContinuation<NativeDockAutohideState?, Never>] = [:]
+
+    func read() async -> NativeDockAutohideState? {
+        let id = nextID
+        nextID += 1
+        return await withCheckedContinuation { continuations[id] = $0 }
+    }
+
+    func waitForReadCount(_ count: Int) async {
+        while nextID < count { await Task.yield() }
+    }
+
+    func resume(id: Int, state: NativeDockAutohideState?) {
+        continuations.removeValue(forKey: id)?.resume(returning: state)
+    }
+}
+
+@MainActor
+private final class ControlledNativeDockService: NativeDockPreferencesServicing {
+    let isAvailable = true
+    private let reader: ControlledNativeDockStateReader
+    private(set) var appliedDelays: [Double] = []
+
+    init(reader: ControlledNativeDockStateReader) {
+        self.reader = reader
+    }
+
+    func apply(delay: Double) throws { appliedDelays.append(delay) }
+    func currentAutohideState() async -> NativeDockAutohideState? { await reader.read() }
     func openSystemSettings() -> Bool { true }
 }
 

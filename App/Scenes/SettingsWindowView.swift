@@ -14,7 +14,9 @@ struct SettingsWindowView: View {
         .frame(width: Self.contentWidth)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             // 用户去系统设置勾完登录项再切回来，状态得跟着变。
-            coordinator.refreshLaunchAtLoginState()
+            Task { @MainActor in
+                _ = await coordinator.refreshLaunchAtLoginState()
+            }
         }
     }
 }
