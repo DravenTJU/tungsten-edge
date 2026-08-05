@@ -51,6 +51,8 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 2026-08-01 发布 `v0.7.3@418233b`（**附注标签**）。内容 = v0.7.2 之后两项：启动弹跳提前停在最高点（`a645590`，动画作用域 + 启动会话双修）、剪映点不开 + 系统设置弹跳 20 秒（`6414f9d`，启动目标包解析 + 空标题标准窗口准入）。发布提交同样直接打在 `master`，版本号 `0.7.3 (15)`。**本版无用户可见的行为反转**，三项都是修复，交互与设置一律不变。Homebrew cask 已同步至 `0.7.3`（`moonbai-studio/homebrew-tungsten-edge@0ad7cac`）。发布后 `master` 未再 bump，**开发构建与已发布包同为 `0.7.3 (15)`**，排查问题先比对提交。发版前全表复检结果见上方 2026-08-01 那条（46 条 / 6 条仍可单点撤销 / 唯一新增衰减 `a645590`）。
 
+2026-08-05 发布 `v0.7.6@693bab8`（**附注标签**）。内容 = v0.7.5 之后三项，全部来自用户 Phoebus 的反馈：跨机器重启保持普通 kept 应用的图标次序 + 运行态 POSIX 兜底对账（`7bd9910`）、多进程应用重复兜底卡（`84157c9`，WPS 两个窗口显示三张卡）、窗口收编逐进程诊断（`6bbe3fe`，默认关）。发布提交直接打在 `master`，版本号 `0.7.6 (18)`。**本版无用户可见的行为反转**——三项都是修复，没有拿掉任何用户选过的东西；但「重启后保留应用的图标顺序会保持」是**用户能直接看出来的新行为**，且版本号是 patch 不会暗示有变动，因此仍按 runbook 放在发布说明最前面，并写明「窗口卡片的顺序依旧不跨重启保留」这个刻意的边界。Homebrew cask 已同步至 `0.7.6`（`moonbai-studio/homebrew-tungsten-edge@04a41d4`）。发布后 `master` 未再 bump，**开发构建与已发布包同为 `0.7.6 (18)`**，排查问题先比对提交。发版前全表复检见下方 2026-08-05 那条（表内 99 条 / 7 条仍可单点撤销 / 唯一新增衰减 `8af961c`）。**本轮唯一未解决的用户反馈**：锁屏恢复后消息应用的聊天窗跑回窗口区最左，诊断已随包发出（默认关），等复现。
+
 2026-08-04 发布 `v0.7.5@ce7b4cd`（**附注标签**）。内容 = v0.7.4 之后两项：一页式设置窗口 + 右键任务条弹菜单 + 修掉空白「设置」死入口（`f3b43a1`）、菜单粘滞修复 + 设置面系统读取移出主线程（`aad9ce3`）。发布提交直接打在 `master`，版本号 `0.7.5 (17)`。⚠️ **本版有一条用户可见的行为反转**：菜单里可点的「显示/隐藏 Tungsten Edge 钨极」命令删除，外观四项（显示中转站 / 鼠标悬停显示应用名 / 最大化窗口避开任务条 / 任务条大小）搬进新的设置窗口；**版本号是 patch，不会向用户暗示行为变更**，因此放在发布说明最前面。Homebrew cask 已同步至 `0.7.5`（`moonbai-studio/homebrew-tungsten-edge@810ea70`）。发布后 `master` 未再 bump，**开发构建与已发布包同为 `0.7.5 (17)`**，排查问题先比对提交。发版前全表复检见上方 2026-08-04 那条（24 条 / 2 条仍可单点撤销 / 零意外衰减）。
 
 ⚠️ **本次发版是接力完成的，两处教训值得记**（2026-08-04）：（一）打包脚本**中途断在 `hdiutil` 那一步**，`dist/` 里只有 zip、没有 DMG，而 zip 看上去是好的——半成品的 `dist/` 是错哈希最可能的来源。收尾时**重跑了整个 `package_release.sh`**（它开头就 `rm -rf dist`），让两个产物出自同一次完整运行，别在半成品上续。（二）发布说明初稿写着「或按 ⌘, 打开设置窗口」，而 **⌘, 在正常运行时根本打不开钨极的设置**（`.accessory` 应用没有菜单栏，快捷键无处挂载，只在权限引导态管用；`AGENTS.md` 有这条护栏）。这条错误发出去会让用户按了没反应、再次得出「根本设置不了」——正是本版要解决的那个抱怨。已在 `089cc92` 订正为「菜单栏图标 / 右键任务条」两条真实入口。**runbook 里「写完先让 owner 扫一眼再发」那道闸就是为这个存在的，不要跳。**
@@ -59,6 +61,8 @@ Owner 于 2026-07-25 决定本轮稳定重建停在 4.5；4.6 与后续一日回
 
 安装回退：若需恢复上一稳定安装版 4.4，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-25-stage4/4.5-process-liveness/rollback/Tungsten Edge.app`；若需恢复 4.3，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.4-messaging-admission/rollback/Tungsten Edge.app`；若需恢复 4.2，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.3-quit-last/rollback/Tungsten Edge.app`；若需恢复 4.1，使用备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-24-stage4/4.2-open-gray/rollback/Tungsten Edge.app`；若需恢复到 v0.6.5 原始安装，使用官方备份 `/Users/caye/Projects/tungsten-edge-rebuild-artifacts/2026-07-23-stage4/4.1-f2-first-frame-position/rollback/official-v065-20260723-221811/Tungsten Edge.app`（executable 名均为 `macos-dock-cc-v2`）。
 
+- GitHub `v0.7.6` DMG hash: `97f6a47336137f65c29d80c7aca3aab68613a640f2d96f0f33339f5f7b88c48a`
+- GitHub `v0.7.6` ZIP hash: `86fd1e96e7c5a1308b47733f4ecd96ad5d023baa837aeceeb6c7592e2e3a0f33`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@04a41d4` 引用此值；**推 cask 之前**已从 GitHub 下回已发布的 zip 实测比对，cask / 已发布包 / 本地产物三方一致）
 - GitHub `v0.7.5` DMG hash: `f93892cbd8f7de2e22253d0b114e43e0957d606e90e1fcc58ff20cafd3a7f489`
 - GitHub `v0.7.5` ZIP hash: `456893e18c3118ca26e7c81ee875227d386123546a373e52bb0a42e677ffc6d3`（Homebrew cask `moonbai-studio/homebrew-tungsten-edge@810ea70` 引用此值；**推 cask 之前**已从 GitHub 下回已发布的 zip 实测比对，cask / 已发布包 / 本地产物三方一致）
 - GitHub `v0.7.4` DMG hash: `ba3261f6e4705a292b242bad5164f2c283ab12e1bc498baf9ace9b3496a9b31e`
@@ -116,7 +120,9 @@ git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^
 
 注意别用 `git show <提交> | git apply --check --reverse -` 代替：`git apply` 要求上下文严格对齐，而 `git revert` 走三方合并，前者会给出大量假阳性（2026-07-29 首次复检就被误导过一次）。二进制文件在 `git apply` 下也必然假阳性。
 
-**最近一次全表复检：2026-08-04（v0.7.5 发版前，HEAD=`bb8ff79`，表内 24 条逐条实跑 `git merge-tree --merge-base=<提交> HEAD <提交>^`）**——仍可单点撤销的只有 `aad9ce3` 与 `8af961c` 两条（v0.7.4 时还干净的 `62e212e` 已掉队：被 `f3b43a1`/`aad9ce3` 这两个同改 `StatusMenuController.swift` + `AppDelegate.swift` 的提交压死，它自己登记时就预告过这一点）；`f3b43a1` 已衰减（被 `aad9ce3` 压死，下方该条已登记）；其余条目的 ⚠️ 说明依旧成立（`bcef0ed` 是 ⛔ 退役，不参与）。本轮没有出现「记录说 ✅、实跑是冲突」的意外行——`62e212e` 的衰减发生在 v0.7.4 发版之后的两个功能提交里，属预期。
+**最近一次全表复检：2026-08-05（v0.7.6 发版前，HEAD=`38aba0f`，表内出现的提交号 99 条逐条实跑 `git merge-tree --write-tree --merge-base=<提交> HEAD <提交>^`）**——仍可单点撤销 7 条：`683f1fc`、`6bbe3fe`、`84157c9`、`aad9ce3`、`b2b6a38`、`c9cb5a4`、`edf9b64`；**唯一新增衰减是 `8af961c`**（启停首帧影子滑动），被本轮的跨重启 kept 排名改动压死——两者同改 `App/Composition/StripOrderStore.swift` 与 `AGENTS.md`，属预期而非意外。⚠️ **口径提醒：本轮的 99 条与历史那几行的 24 / 21 / 48 不可直接相减**——历史几轮数的是主表的行数，本轮数的是「表格行里出现过的全部提交号」（含各行「当前实证」正文里引用的提交），是个超集。所以本轮多出来的 `683f1fc` / `b2b6a38` / `c9cb5a4` / `edf9b64` 不是「起死回生」，是上几轮压根没纳入统计。**以后要跟本轮比，就沿用本轮口径**。另：`git merge-tree` 带不带 `--write-tree` 实测结果一致，runbook 里那段命令没问题。
+
+**上一次全表复检：2026-08-04（v0.7.5 发版前，HEAD=`bb8ff79`，表内 24 条逐条实跑 `git merge-tree --merge-base=<提交> HEAD <提交>^`）**——仍可单点撤销的只有 `aad9ce3` 与 `8af961c` 两条（v0.7.4 时还干净的 `62e212e` 已掉队：被 `f3b43a1`/`aad9ce3` 这两个同改 `StatusMenuController.swift` + `AppDelegate.swift` 的提交压死，它自己登记时就预告过这一点）；`f3b43a1` 已衰减（被 `aad9ce3` 压死，下方该条已登记）；其余条目的 ⚠️ 说明依旧成立（`bcef0ed` 是 ⛔ 退役，不参与）。本轮没有出现「记录说 ✅、实跑是冲突」的意外行——`62e212e` 的衰减发生在 v0.7.4 发版之后的两个功能提交里，属预期。
 
 **上一次全表复检：2026-08-03（v0.7.4 发版前，表内 21 条逐条实跑 `git merge-tree`，零新增衰减）**——结果与表内已记状态**逐条一致**：仍可单点撤销的只有 `62e212e` 与 `8af961c` 两条，其余 19 条的 ⚠️ 说明依旧成立（`bcef0ed` 是 ⛔ 退役，不参与）。本轮没有出现「记录说 ✅、实跑是冲突」的行。同期把 `62e212e` / `0482a77` / `97dacd5` 三条的验收状态从「待完成」改为 owner 实机验收通过。
 
