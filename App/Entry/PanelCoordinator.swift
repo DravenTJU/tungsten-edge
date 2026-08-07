@@ -1963,7 +1963,7 @@ final class PanelCoordinator: NSObject {
     /// 悬停停留 0.35s 把整条栏搬到另一块屏的那套机制（`commitHoverSwitch` /
     /// `hoverSwitchTimer` / `hoverSwitchTargetScreen`）**已整段删除**——每块屏现在都常驻
     /// 一条自己的栏，没有可搬的东西了。不要重新引入，也不要重新引入多显示器策略菜单。
-    /// 见 ADR `Docs/23-per-display-taskbar.md`。
+    /// 见 ADR `Docs/30-per-display-taskbar.md`。
     private func updateEdgeWakeFromMouse(screen: NSScreen?, inHotZone: Bool) {
         guard let screen else {
             cancelEdgeWake()
