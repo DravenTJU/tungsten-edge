@@ -1355,13 +1355,13 @@ final class PanelCoordinator: NSObject {
 
     /// 两个常驻面板先在隐藏态完成 SwiftUI 布局和目标 frame 提交，再一起显示。
     /// 这样首个可见 frame 已经是业务几何，不给 HostingView 的自然尺寸留下窗口级中间态。
+    /// 每屏一条（2026-07-27）：首帧要把**所有** bar 都排好并显示，
+    /// 不能只认主屏那条 —— 那正是副屏任务条不出现的根因（2026-08-10 修）。
     private func presentInitialPanels() {
-        guard let dock = dockPanel, let capsule = capsulePanel else { return }
-        dock.layoutIfNeeded()
-        capsule.layoutIfNeeded()
+        guard !bars.isEmpty else { return }
+        for bar in bars { bar.prepareForInitialLayout() }
         relayout(animated: false)
-        dock.orderFrontRegardless()
-        capsule.orderFrontRegardless()
+        for bar in bars { bar.setOrderedIn(true) }
     }
 
     // MARK: - Content Width via fittingSize
@@ -1595,9 +1595,11 @@ final class PanelCoordinator: NSObject {
             guard let screen = screenByID[id] else { continue }
             let (dock, dockHost) = makeDockPanel(on: screen, screenID: id)
             let (capsule, capsuleHost) = makeCapsulePanel(screenID: id)
-            bars.append(ScreenBar(id: id, screen: screen,
-                                  dockPanel: dock, dockContentHost: dockHost,
-                                  capsulePanel: capsule, capsuleContentHost: capsuleHost))
+            let bar = ScreenBar(id: id, screen: screen,
+                                dockPanel: dock, dockContentHost: dockHost,
+                                capsulePanel: capsule, capsuleContentHost: capsuleHost)
+            bar.prepareForInitialLayout()
+            bars.append(bar)
         }
 
         // 兜底：拓扑读不出任何屏时至少保住一条，否则用户会完全失去任务条。

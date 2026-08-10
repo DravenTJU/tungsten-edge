@@ -47,7 +47,10 @@ final class ScreenBar {
     var isFullscreenHidden = false
 
     private var didInitialLayout = false
-    private var isOrderedIn = true
+    /// 初值必须是 **false**：面板刚建好时还没 orderFront，若初值为 true，
+    /// `setOrderedIn(true)` 会被自身的去重 guard 吃掉，这条 bar 就永远不显示
+    /// （副屏任务条不出现的根因，2026-08-10）。
+    private var isOrderedIn = false
 
     init(id: ScreenID, screen: NSScreen,
          dockPanel: NSPanel, dockContentHost: ManualPanelHost,
@@ -61,6 +64,12 @@ final class ScreenBar {
     }
 
     // MARK: - 几何
+
+    /// 首次布局前让 SwiftUI 完成一轮排版，`fittingSize` 才是真值。
+    func prepareForInitialLayout() {
+        dockPanel.layoutIfNeeded()
+        capsulePanel.layoutIfNeeded()
+    }
 
     var geometry: PanelScreenGeometry {
         PanelScreenGeometry(frame: screen.frame, visibleFrame: screen.visibleFrame,
@@ -101,6 +110,7 @@ final class ScreenBar {
 
     // MARK: - 显隐与拆除
 
+    /// 首帧显示与热插拔新增显示器都走这里；别再给面板各自散落 `orderFrontRegardless()`。
     func setOrderedIn(_ on: Bool) {
         guard on != isOrderedIn else { return }
         isOrderedIn = on
