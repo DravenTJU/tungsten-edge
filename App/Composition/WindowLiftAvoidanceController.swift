@@ -536,14 +536,45 @@ final class WindowLiftAvoidanceController {
             pruneDeadWindowStates(liveWindowKeys: liveKeys, observationGeneration: observationGeneration)
         }
 
-        for (context, result) in results {
-            handleScanResult(
-                result,
-                context: context,
-                scanGeneration: scanGeneration,
-                observationGeneration: observationGeneration
-            )
+        // 被跟踪窗口的对账整轮只做一次：`capture()` 给的 onScreenFrames 是**全局**的
+        // （不按屏过滤），逐屏各对账一遍会让副屏窗口被主屏几何判成「没铺满」而清掉会话。
+        var frames: [WindowLiftAvoidance.WindowKey: CGRect] = [:]
+        for (_, result) in results {
+            frames.merge(result.onScreenFrames) { existing, _ in existing }
         }
+        var handled = reconcileTrackedFramesByOwnScreen(
+            frames,
+            observationGeneration: observationGeneration
+        )
+
+        // 候选窗口同样按自己的坐标定屏；按 key 去重，避免跨屏窗口被两块屏各处理一次。
+        for (_, result) in results {
+            guard let candidate = result.candidate, !handled.contains(candidate.key) else { continue }
+            handled.insert(candidate.key)
+            handleScanCandidate(candidate, observationGeneration: observationGeneration)
+        }
+    }
+
+    /// 每个被跟踪窗口都用**它自己所在那块屏**的几何对账。
+    /// 返回本轮已处理的窗口集合（候选阶段据此跳过）。
+    private func reconcileTrackedFramesByOwnScreen(
+        _ quartzFrames: [WindowLiftAvoidance.WindowKey: CGRect],
+        observationGeneration: UInt64
+    ) -> Set<WindowLiftAvoidance.WindowKey> {
+        var reconciled: Set<WindowLiftAvoidance.WindowKey> = []
+        for key in Array(states.keys) {
+            guard let quartzFrame = quartzFrames[key],
+                  let context = host?.windowLiftAvoidanceContext(forQuartzFrame: quartzFrame) else { continue }
+            if handleTrackedObservation(
+                quartzFrame,
+                for: key,
+                context: context,
+                observationGeneration: observationGeneration
+            ) {
+                reconciled.insert(key)
+            }
+        }
+        return reconciled
     }
 
     private func updateTrackedProbeLifecycle() {
@@ -711,32 +742,16 @@ final class WindowLiftAvoidanceController {
         lastContexts = contexts
     }
 
-    private func handleScanResult(
-        _ result: WindowLiftCGScanResult,
-        context: WindowLiftAvoidanceContext,
-        scanGeneration: UInt64,
+    /// 处理一个「疑似铺满」的候选窗口。几何按**候选自己的坐标**反查，
+    /// 而不是按发现它的那块屏 —— 两者在正常情况下一致，跨屏窗口时按面积多数更正确。
+    private func handleScanCandidate(
+        _ candidate: WindowLiftCGCandidate,
         observationGeneration: UInt64
     ) {
-        guard scanGeneration == self.scanGeneration else { return }
         // 已经排队的扫描回调也要过闸门：光给几个清理函数加 guard 挡不住在飞的工作。
         guard canMutateSessions() else { return }
-        guard host?.windowLiftAvoidanceContext(on: context.screenID) == context else { return }
-
-        // 死窗口清理已在 handleScanResults 用所有屏的并集做过，这里不能再按单屏做。
-        let reconciledKeys = reconcileTrackedFrames(
-            result.onScreenFrames,
-            context: context,
-            observationGeneration: observationGeneration
-        )
-
-        guard let candidate = result.candidate,
-              !reconciledKeys.contains(candidate.key),
-              acceptObservation(
-                  for: candidate.key,
-                  generation: observationGeneration
-              ) else {
-            return
-        }
+        guard let context = host?.windowLiftAvoidanceContext(forQuartzFrame: candidate.quartzFrame) else { return }
+        guard acceptObservation(for: candidate.key, generation: observationGeneration) else { return }
         let appKitFrame = WindowLiftAvoidance.appKitFrame(
             fromQuartz: candidate.quartzFrame,
             primaryScreenHeight: context.primaryScreenHeight
@@ -781,26 +796,6 @@ final class WindowLiftAvoidanceController {
             context: context,
             operationGeneration: operationGeneration
         )
-    }
-
-    private func reconcileTrackedFrames(
-        _ quartzFrames: [WindowLiftAvoidance.WindowKey: CGRect],
-        context: WindowLiftAvoidanceContext,
-        observationGeneration: UInt64
-    ) -> Set<WindowLiftAvoidance.WindowKey> {
-        var reconciled: Set<WindowLiftAvoidance.WindowKey> = []
-        for key in Array(states.keys) {
-            guard let quartzFrame = quartzFrames[key] else { continue }
-            if handleTrackedObservation(
-                quartzFrame,
-                for: key,
-                context: context,
-                observationGeneration: observationGeneration
-            ) {
-                reconciled.insert(key)
-            }
-        }
-        return reconciled
     }
 
     private func acceptObservation(
