@@ -382,20 +382,46 @@ final class PanelCoordinator: NSObject {
         windowTitleTooltipPanel = nil
     }
 
-    /// 最大化避让只在钨极常驻且真正可见时取得上下文；一次性返回完整几何，避免切屏时撕裂读取。
-    func windowLiftAvoidanceContext() -> WindowLiftAvoidanceContext? {
-        guard !settingsStore.edgeAutoHideEnabled,
-              visibilityState.isVisible,
-              panelsAreVisible,
-              let panel = dockPanel else {
+    /// 最大化避让的几何上下文——**按屏**（每屏常驻任务条，2026-08-10）。
+    /// 每块屏都有自己的任务条，所以每块屏都有自己的 `taskbarTop` 和扫描区域。
+    ///
+    /// 返回 nil = 这块屏当前不该避让：自动隐藏开着、栏整体不可见、这块屏在全屏、或没有这条 bar。
+    func windowLiftAvoidanceContext(on screenID: ScreenID) -> WindowLiftAvoidanceContext? {
+        guard liftAvoidanceGloballyEnabled,
+              let bar = bar(with: screenID),
+              !bar.isFullscreenHidden else {
             return nil
         }
-        // ⚠️ 已知缺口（每屏常驻任务条移植，2026-08-07）：这里仍然只认**主屏**那条栏，
-        // 所以副屏上的最大化窗口不会避让副屏的任务条。上游把本函数的返回值当作
-        // 相等性快照用（6 处 `host?.windowLiftAvoidanceContext() == context` 判断
-        // 「任务条几何变了就放弃本次抬升」），改成按窗口取上下文要动上游逻辑本身，
-        // 不属于机械移植，单独排期。
-        let screen = panelCurrentScreen(panel: panel)
+        return liftAvoidanceContext(for: bar)
+    }
+
+    /// 当前所有该参与避让的屏。5 Hz 扫描按这个列表逐屏取窗口。
+    func windowLiftAvoidanceContexts() -> [WindowLiftAvoidanceContext] {
+        guard liftAvoidanceGloballyEnabled else { return [] }
+        return bars.filter { !$0.isFullscreenHidden }.map(liftAvoidanceContext(for:))
+    }
+
+    /// 按窗口的 Quartz 矩形反查它该用哪块屏的几何（面积多数，复用 `ScreenAttribution`）。
+    /// 跟踪中的窗口被拖到另一块屏时，靠这条自动切换到新屏的 `taskbarTop`。
+    func windowLiftAvoidanceContext(forQuartzFrame frame: CGRect) -> WindowLiftAvoidanceContext? {
+        guard liftAvoidanceGloballyEnabled else { return nil }
+        let displays = bars.map {
+            ScreenAttribution.ScreenGeometry(id: $0.id, quartzFrame: $0.quartzFrame,
+                                             isPrimary: $0.id == primaryBar?.id)
+        }
+        guard case .resolved(let id) = ScreenAttribution.attribute(quartzFrame: frame, screens: displays) else {
+            return nil
+        }
+        return windowLiftAvoidanceContext(on: id)
+    }
+
+    /// 与屏幕无关的总开关部分：常驻（非自动隐藏）且栏当前可见。
+    private var liftAvoidanceGloballyEnabled: Bool {
+        !settingsStore.edgeAutoHideEnabled && visibilityState.isVisible && panelsAreVisible
+    }
+
+    private func liftAvoidanceContext(for bar: ScreenBar) -> WindowLiftAvoidanceContext {
+        let screen = bar.screen
         let primaryScreenHeight = Self.quartzPrimaryScreenHeight
         let geometry = WindowLiftAvoidance.Geometry(
             screenFrame: screen.frame,
@@ -405,6 +431,7 @@ final class PanelCoordinator: NSObject {
                 + layoutMetrics.panelHeight
         )
         return WindowLiftAvoidanceContext(
+            screenID: bar.id,
             geometry: geometry,
             screenCGFrame: Self.toCGRect(screen),
             visibleCGFrame: WindowLiftAvoidance.quartzFrame(

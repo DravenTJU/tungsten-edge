@@ -3,6 +3,12 @@ import Darwin
 import Foundation
 
 struct WindowLiftAvoidanceContext: Equatable {
+    /// 这份几何属于哪块显示器（每屏常驻任务条，2026-08-10）。
+    ///
+    /// 参与 `Equatable`是刻意的：上游用 `host?.windowLiftAvoidanceContext(...) == context`
+    /// 判断「任务条几何变了就放弃本次抬升」，带上 screenID 之后这条语义天然变成按屏比，
+    /// 不同屏的上下文永远不相等，不会互相误判。
+    let screenID: ScreenID
     /// AppKit global geometry used to calculate the lifted target frame.
     let geometry: WindowLiftAvoidance.Geometry
     /// CG/Quartz global geometry used by the front-to-back window scan.

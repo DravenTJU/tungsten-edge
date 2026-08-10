@@ -225,7 +225,10 @@ final class WindowLiftAvoidanceController {
     private var lastTraceClassifications: [
         WindowLiftAvoidance.WindowKey: WindowLiftAvoidance.FrameClassification
     ] = [:]
-    private var lastContext: WindowLiftAvoidanceContext?
+    /// 每块屏一份几何上下文（每屏常驻任务条，2026-08-10）。
+    /// 内容只随分辨率/排列、dock 尺寸档位、自动隐藏开关变化——**不含任务条宽度**，
+    /// 所以变动是低频的，`reconcileContexts` 沿用「一变就全量还原」的保守语义是安全的。
+    private var lastContexts: [ScreenID: WindowLiftAvoidanceContext] = [:]
     private var nextGeneration: UInt64 = 0
     private var scanGeneration: UInt64 = 0
     private var trackedProbeGeneration: UInt64 = 0
@@ -435,7 +438,7 @@ final class WindowLiftAvoidanceController {
         }
         workspaceObservers.removeAll()
         restoreSettledWindowsAndClearSessions()
-        lastContext = nil
+        lastContexts.removeAll()
     }
 
     func stopAndRestore() async {
@@ -472,9 +475,9 @@ final class WindowLiftAvoidanceController {
 
     private func poll() {
         guard isEnabled, ensureTrustedOrFreeze() else { return }
-        let context = host?.windowLiftAvoidanceContext()
-        reconcileContext(context)
-        guard let context, !scanInFlight, restoreTask == nil else { return }
+        let contexts = host?.windowLiftAvoidanceContexts() ?? []
+        reconcileContexts(Dictionary(contexts.map { ($0.screenID, $0) }, uniquingKeysWith: { a, _ in a }))
+        guard !contexts.isEmpty, !scanInFlight, restoreTask == nil else { return }
 
         scanInFlight = true
         scanGeneration &+= 1
@@ -484,20 +487,62 @@ final class WindowLiftAvoidanceController {
         let tracked = !states.isEmpty || !suppressedFrames.isEmpty
         let selfPID = pid_t(ProcessInfo.processInfo.processIdentifier)
         scanTask = Task.detached { [weak self] in
-            let result = WindowLiftCGWindowProbe.capture(
-                on: context.screenCGFrame,
-                excludingPID: selfPID,
-                includeLiveWindowKeys: tracked
-            )
+            // 每块屏各扫一次，但整轮仍然只占一个 scanInFlight 和一个 scanGeneration：
+            // 节奏、单飞门、代次校验都与改造前一致。
+            var results: [(WindowLiftAvoidanceContext, WindowLiftCGScanResult)] = []
+            for context in contexts {
+                guard !Task.isCancelled else { return }
+                results.append((context, WindowLiftCGWindowProbe.capture(
+                    on: context.screenCGFrame,
+                    excludingPID: selfPID,
+                    includeLiveWindowKeys: tracked
+                )))
+            }
             guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
-                self?.handleScanResult(
-                    result,
-                    context: context,
+                self?.handleScanResults(
+                    results,
                     scanGeneration: generation,
                     observationGeneration: observationGeneration
                 )
             }
+        }
+    }
+
+    /// 逐屏结果的汇总入口。
+    ///
+    /// ⚠️ 死窗口清理**必须用所有屏的并集调用一次**：`pruneDeadWindowStates` 拿
+    /// 「本轮活窗口」与全部被跟踪窗口做差集，若按屏分别调用，A 屏那轮会把 B 屏上的
+    /// 窗口当成已消失而清掉会话（进而把它还原回去）。
+    private func handleScanResults(
+        _ results: [(WindowLiftAvoidanceContext, WindowLiftCGScanResult)],
+        scanGeneration: UInt64,
+        observationGeneration: UInt64
+    ) {
+        guard scanGeneration == self.scanGeneration else { return }
+        scanTask = nil
+        scanInFlight = false
+        guard canMutateSessions() else { return }
+
+        var liveKeys: Set<WindowLiftAvoidance.WindowKey> = []
+        var sawLiveKeys = false
+        for (_, result) in results {
+            if let keys = result.liveWindowKeys {
+                sawLiveKeys = true
+                liveKeys.formUnion(keys)
+            }
+        }
+        if sawLiveKeys {
+            pruneDeadWindowStates(liveWindowKeys: liveKeys, observationGeneration: observationGeneration)
+        }
+
+        for (context, result) in results {
+            handleScanResult(
+                result,
+                context: context,
+                scanGeneration: scanGeneration,
+                observationGeneration: observationGeneration
+            )
         }
     }
 
@@ -527,11 +572,14 @@ final class WindowLiftAvoidanceController {
         guard isEnabled,
               restoreTask == nil,
               trackedProbeTask == nil,
-              let context = lastContext else {
+              !lastContexts.isEmpty else {
             updateTrackedProbeLifecycle()
             return
         }
-        guard host?.windowLiftAvoidanceContext() == context else {
+        // 几何变了就停：与改造前同义，只是按屏比。
+        let current = Dictionary((host?.windowLiftAvoidanceContexts() ?? []).map { ($0.screenID, $0) },
+                                 uniquingKeysWith: { a, _ in a })
+        guard current == lastContexts else {
             stopTrackedProbe()
             return
         }
@@ -552,7 +600,6 @@ final class WindowLiftAvoidanceController {
             await MainActor.run { [weak self] in
                 self?.handleTrackedProbeResult(
                     frames,
-                    context: context,
                     probeGeneration: generation,
                     observationGeneration: observationGeneration
                 )
@@ -562,18 +609,16 @@ final class WindowLiftAvoidanceController {
 
     private func handleTrackedProbeResult(
         _ quartzFrames: [WindowLiftAvoidance.WindowKey: CGRect],
-        context: WindowLiftAvoidanceContext,
         probeGeneration: UInt64,
         observationGeneration: UInt64
     ) {
         guard probeGeneration == trackedProbeGeneration else { return }
         trackedProbeTask = nil
-        guard host?.windowLiftAvoidanceContext() == context else {
-            stopTrackedProbe()
-            return
-        }
 
+        // 每个窗口按它**当前**坐标反查所属屏，而不是共用一份上下文——
+        // 这样把已抬升的窗口拖到另一块屏，会自动改用那块屏的 taskbarTop。
         for (key, quartzFrame) in quartzFrames {
+            guard let context = host?.windowLiftAvoidanceContext(forQuartzFrame: quartzFrame) else { continue }
             _ = handleTrackedObservation(
                 quartzFrame,
                 for: key,
@@ -615,7 +660,7 @@ final class WindowLiftAvoidanceController {
 
         if case .lifted = state, classification == .native {
             guard NSRunningApplication(processIdentifier: key.pid)?.isActive == true,
-                  host?.windowLiftAvoidanceContext() == context else {
+                  host?.windowLiftAvoidanceContext(on: context.screenID) == context else {
                 return true
             }
         }
@@ -644,9 +689,15 @@ final class WindowLiftAvoidanceController {
         return true
     }
 
-    private func reconcileContext(_ context: WindowLiftAvoidanceContext?) {
+    /// 任一块屏的几何变了（含插拔显示器）→ 全量还原并清空会话。
+    ///
+    /// 刻意**不**做「只还原那块屏的窗口」的精细化：上下文变动本身是低频事件
+    /// （改分辨率/排列、改 dock 尺寸、切自动隐藏），而按屏精细化需要给每个会话
+    /// 额外维护「属于哪块屏」的生命周期，收益不抵风险——保守全量还原与改造前的
+    /// 单屏语义完全一致。
+    private func reconcileContexts(_ contexts: [ScreenID: WindowLiftAvoidanceContext]) {
         guard canMutateSessions() else { return }
-        guard context != lastContext else { return }
+        guard contexts != lastContexts else { return }
         observationWatermarks.removeAll()
         suppressedFrames.removeAll()
         scanGeneration &+= 1
@@ -654,10 +705,10 @@ final class WindowLiftAvoidanceController {
         scanTask = nil
         scanInFlight = false
 
-        if lastContext != nil {
+        if !lastContexts.isEmpty {
             restoreSettledWindowsAndClearSessions()
         }
-        lastContext = context
+        lastContexts = contexts
     }
 
     private func handleScanResult(
@@ -667,18 +718,11 @@ final class WindowLiftAvoidanceController {
         observationGeneration: UInt64
     ) {
         guard scanGeneration == self.scanGeneration else { return }
-        scanTask = nil
-        scanInFlight = false
         // 已经排队的扫描回调也要过闸门：光给几个清理函数加 guard 挡不住在飞的工作。
         guard canMutateSessions() else { return }
-        guard host?.windowLiftAvoidanceContext() == context else { return }
+        guard host?.windowLiftAvoidanceContext(on: context.screenID) == context else { return }
 
-        if let liveWindowKeys = result.liveWindowKeys {
-            pruneDeadWindowStates(
-                liveWindowKeys: liveWindowKeys,
-                observationGeneration: observationGeneration
-            )
-        }
+        // 死窗口清理已在 handleScanResults 用所有屏的并集做过，这里不能再按单屏做。
         let reconciledKeys = reconcileTrackedFrames(
             result.onScreenFrames,
             context: context,
@@ -1679,7 +1723,7 @@ final class WindowLiftAvoidanceController {
         generation: UInt64,
         context: WindowLiftAvoidanceContext
     ) -> Bool {
-        guard host?.windowLiftAvoidanceContext() == context,
+        guard host?.windowLiftAvoidanceContext(on: context.screenID) == context,
               NSRunningApplication(processIdentifier: key.pid)?.isActive == true,
               case let .writing(attempt) = states[key],
               attempt.generation == generation else {
