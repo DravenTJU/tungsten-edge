@@ -610,6 +610,8 @@ final class WindowLiftAvoidanceController {
             }
         }
         return reconciled
+    }
+
     private func updatePollTimerLifecycle() {
         guard isEnabled else {
             pollTimer?.invalidate()
