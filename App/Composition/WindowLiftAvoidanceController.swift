@@ -150,6 +150,9 @@ enum WindowLiftCGWindowProbe {
 @MainActor
 final class WindowLiftAvoidanceController {
     private struct ManagedFrames {
+        /// 这组尺寸是在哪块屏上记录的。窗口换屏后它们全部作废——
+        /// 原始/目标尺寸是那块屏的几何算出来的，在新屏上永远匹配不上。
+        let screenID: ScreenID
         let nativeAppKit: CGRect
         let targetAppKit: CGRect
         let nativeQuartz: CGRect
@@ -757,18 +760,30 @@ final class WindowLiftAvoidanceController {
             primaryScreenHeight: context.primaryScreenHeight
         )
         if let suppressed = suppressedFrames[candidate.key] {
-            let classification = WindowLiftAvoidance.frameClassification(
-                of: appKitFrame,
-                nativeFrame: suppressed.nativeAppKit,
-                targetFrame: suppressed.targetAppKit
-            )
-            traceClassification(classification, for: candidate.key)
-            guard classification == .native else { return }
-            suppressedFrames.removeValue(forKey: candidate.key)
-            if traceEnabled {
-                logger.info(
-                    "lift trace suppression cleared pid=\(candidate.key.pid, privacy: .public) wid=\(candidate.key.cgWindowID, privacy: .public)"
+            if suppressed.screenID != context.screenID {
+                // 窗口换屏了：抑制记录里的原始/目标尺寸属于旧屏，在新屏上永远匹配不上
+                // `.native`，留着它等于把这个窗口永久挡在避让之外（把已铺满的窗口拖到
+                // 另一块屏后避让失效的根因，2026-08-10）。直接作废，当新窗口重新处理。
+                suppressedFrames.removeValue(forKey: candidate.key)
+                if traceEnabled {
+                    logger.info(
+                        "lift trace suppression dropped on screen change pid=\(candidate.key.pid, privacy: .public) wid=\(candidate.key.cgWindowID, privacy: .public) from=\(suppressed.screenID.rawValue, privacy: .public) to=\(context.screenID.rawValue, privacy: .public)"
+                    )
+                }
+            } else {
+                let classification = WindowLiftAvoidance.frameClassification(
+                    of: appKitFrame,
+                    nativeFrame: suppressed.nativeAppKit,
+                    targetFrame: suppressed.targetAppKit
                 )
+                traceClassification(classification, for: candidate.key)
+                guard classification == .native else { return }
+                suppressedFrames.removeValue(forKey: candidate.key)
+                if traceEnabled {
+                    logger.info(
+                        "lift trace suppression cleared pid=\(candidate.key.pid, privacy: .public) wid=\(candidate.key.cgWindowID, privacy: .public)"
+                    )
+                }
             }
         }
         guard context.geometry.fillsVisibleFrame(appKitFrame),
@@ -867,6 +882,7 @@ final class WindowLiftAvoidanceController {
             primaryScreenHeight: context.primaryScreenHeight
         )
         managedFrames[key] = ManagedFrames(
+            screenID: context.screenID,
             nativeAppKit: nativeFrame,
             targetAppKit: targetFrame,
             nativeQuartz: nativeQuartz,
