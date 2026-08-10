@@ -343,7 +343,9 @@ final class AppTracker: ObservableObject {
         // 继承）；本次以 min=false 现身也算——幽灵座位永远凑不齐这个标记（自愈判定的头号门槛）。
         // previousScreen = 座位延续时继承的上一次显示器归属。最小化 / 应用隐藏时它压过本轮
         // 新算出来的值（不少应用在最小化期间报垃圾坐标），拔屏后失效值由 resolve 丢弃。
-        func make(token: String, _ s: AXWindowSnapshot, history: Set<CGWindowID> = [],
+        // previousTitle = 标题读取失败（`.unread`）时沿用的旧标题，避免"读不到"被当成"空标题"。
+        func make(token: String, _ s: AXWindowSnapshot, previousTitle: String? = nil,
+                  history: Set<CGWindowID> = [],
                   wasEverVisible: Bool = false, previousScreen: ScreenID? = nil) -> WindowEntry {
             let fresh = ScreenAttribution.attribute(quartzFrame: s.bounds, screens: screens)
             let screen = ScreenAttribution.resolve(
@@ -352,7 +354,8 @@ final class AppTracker: ObservableObject {
             logScreenAnomalies(token: token, pid: pid, cgID: s.cgWindowID,
                                bounds: s.bounds, fresh: fresh, resolved: screen,
                                isPinned: s.isMinimized || app.isHidden)
-            return WindowEntry(cgWindowID: s.cgWindowID!, token: token, title: s.title ?? "",
+            return WindowEntry(cgWindowID: s.cgWindowID!, token: token,
+                               title: s.titleRead.resolvedTitle(previousTitle: previousTitle),
                                bounds: s.bounds, isMinimized: s.isMinimized, isFocused: s.isFocusedWindow,
                                everSeenVisible: wasEverVisible || !s.isMinimized,
                                formerCgIDs: history.subtracting([s.cgWindowID!]).intersection(cgIDs),
@@ -396,7 +399,18 @@ final class AppTracker: ObservableObject {
                     // X 不标 used → 落到 Pass B 成新座位（被赶出去的当前标签）
                 } else {
                     // 普通：跟着 X（frame 可移动，跨屏也在这里被重新归属）
-                    place(make(token: seat.token, snapX, history: seat.formerCgIDs,
+                    if case .unread(let error) = snapX.titleRead, let reconcileContext {
+                        inventoryLog.record(.titleHeld(InventoryTitleHeldPayload(
+                            context: reconcileContext,
+                            pid: pid,
+                            bundleID: app.bundleIdentifier,
+                            seatToken: seat.token,
+                            activeCgID: X,
+                            errorCode: error.rawValue
+                        )))
+                    }
+                    place(make(token: seat.token, snapX, previousTitle: seat.title,
+                               history: seat.formerCgIDs,
                                wasEverVisible: seat.everSeenVisible, previousScreen: seat.screenID))
                     usedEligible.insert(X)
                 }
