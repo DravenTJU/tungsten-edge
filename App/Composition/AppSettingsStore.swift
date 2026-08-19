@@ -64,6 +64,9 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var launchAtLogin: Bool
     /// 中转格是否显示在固定文件夹区头位。关掉后它不再渲染，暂存的文件不受影响。
     @Published private(set) var showShelf: Bool
+    /// 鼠标悬停胶囊即自动展开抽屉（owner 2026-08-19）。**默认开**——这条是 owner 主动要的。
+    /// 只自动收起「悬停开出来的」抽屉；点击开的仍保持点击语义。判定见 `DrawerHoverPlan`。
+    @Published private(set) var drawerHoverOpenEnabled: Bool
     /// 任务条尺寸档位。面板几何与条内所有 chip 尺寸都由它派生。
     @Published private(set) var dockSize: DockSize
     /// 悬停效果档位。只影响条内 chip 的悬停视觉，静息布局逐像素不变（因此无需 relayout）。
@@ -103,12 +106,14 @@ final class AppSettingsStore: ObservableObject {
         defaults.register(defaults: [
             Keys.launchAtLogin: false,
             Keys.showShelf: true,
+            Keys.drawerHoverOpenEnabled: true,
             Keys.nativeDockAutoHideDelay: Self.defaultNativeDockAutoHideDelay,
             Keys.edgeAutoHideDelay: Self.defaultEdgeAutoHideDelay,
         ])
 
         launchAtLogin = defaults.bool(forKey: Keys.launchAtLogin)
         showShelf = defaults.bool(forKey: Keys.showShelf)
+        drawerHoverOpenEnabled = defaults.bool(forKey: Keys.drawerHoverOpenEnabled)
         // 有意**不**进上面的 register：缺键即 false 正好是我们要的默认关。
         // 注册一个 false 只会让人误以为它跟 showShelf 一样是「默认开」。
         windowLiftEnabled = defaults.bool(forKey: Keys.windowLiftEnabled)
@@ -174,6 +179,12 @@ final class AppSettingsStore: ObservableObject {
         guard showShelf != value else { return }
         showShelf = value
         defaults.set(value, forKey: Keys.showShelf)
+    }
+
+    func setDrawerHoverOpenEnabled(_ value: Bool) {
+        guard drawerHoverOpenEnabled != value else { return }
+        drawerHoverOpenEnabled = value
+        defaults.set(value, forKey: Keys.drawerHoverOpenEnabled)
     }
 
     func setWindowLiftEnabled(_ value: Bool) {
@@ -299,6 +310,7 @@ final class AppSettingsStore: ObservableObject {
 private enum Keys {
     static let launchAtLogin = "com.tungsten.edge.launchAtLogin"
     static let showShelf = "com.tungsten.edge.showShelf"
+    static let drawerHoverOpenEnabled = "com.tungsten.edge.drawerHoverOpenEnabled"
     static let dockSize = "com.tungsten.edge.dockSize"
     static let hoverStyle = "com.tungsten.edge.hoverStyle"
     static let appearanceMode = "com.tungsten.edge.appearanceMode"

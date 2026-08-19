@@ -24,6 +24,8 @@ struct DrawerView: View {
     /// 抽屉当前挂在哪块屏（全桌面单例，PanelCoordinator 每次开抽屉时注入）。
     /// 起拖时钉进 DragController，让投放判定锁在这块屏上。
     var screenID: ScreenID?
+    /// 指针进出抽屉体。悬停开出来的抽屉靠它判断「还在里面就别收」（见 `DrawerHoverPlan`）。
+    var onHoverChanged: (Bool) -> Void = { _ in }
 
     @EnvironmentObject var runtime: AppRuntime
     @EnvironmentObject var drawerStore: DrawerStore
@@ -134,6 +136,10 @@ struct DrawerView: View {
         // 阴影延伸(radius+|y|)必须 ≤ shadowPadding(20),否则底部在透明边处被硬切（同弹窗）。
         // 数值见 DockThemeTokens.popupShadow（浅/深各一套）。
         .dockShadow(theme.popupShadow)
+        // 悬停命中挂在**阴影内边**（padding 之后的可见内容层），别挂到 shadowPadding 外面——
+        // 那 20pt 透明阴影区不是抽屉的可见范围，算进来会让指针明显还在抽屉外时也判成"在里面"。
+        .contentShape(Rectangle())
+        .onHover { onHoverChanged($0) }
         .padding(PanelCoordinator.shadowPadding)
         // 入场用弹窗同款快出缓停参数（PopoverAnimation）;网格重排等内容动画仍用 DrawerAnimation.duration。
         .onAppear { withAnimation(.easeOut(duration: PopoverAnimation.openDuration)) { isPresented = true } }

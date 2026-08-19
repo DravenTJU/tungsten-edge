@@ -1618,6 +1618,8 @@ struct DrawerCapsuleButton: View {
     var onRequestTaskbarMenu: (NSEvent, NSView) -> Void = { _, _ in }
     /// 这颗胶囊属于哪块屏（每屏一颗）。nil = 单面板/测试路径。
     var screenID: ScreenID?
+    /// 悬停进出胶囊。`PanelCoordinator` 据此起「悬停自动展开抽屉」的定时器（判定见 `DrawerHoverPlan`）。
+    var onHoverChanged: (Bool) -> Void = { _ in }
     let action: () -> Void
 
     /// 投放反馈只在**发起屏**那颗胶囊上给，否则 N 颗一起放大发光。
@@ -1700,7 +1702,10 @@ struct DrawerCapsuleButton: View {
         // 反馈仅作用于内层预览内容（见上方 Group）；这里与面板同高的可见层只负责 hover 命中——
         // 鼠标移到胶囊任意处都触发，动的是里面的九宫格，外框保持静止。
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            isHovering = hovering
+            onHoverChanged(hovering)
+        }
         // 拖卡悬到胶囊上：**微微发光 + 极轻微放大**（去掉原来生硬的白圈描边,owner 2026-06-21）。
         .scaleEffect(showsStashFeedback ? 1.04 : 1.0)
         .dockGlow(theme.capsuleStashGlow, radius: 5, active: showsStashFeedback)

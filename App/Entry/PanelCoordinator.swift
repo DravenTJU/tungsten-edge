@@ -194,6 +194,17 @@ final class PanelCoordinator: NSObject {
     private var drawerSpringOpened = false
     /// 正在拖的 strip 卡 bundleID,松手时用它判断有没有收进抽屉。
     private var springDragBundleID: String?
+    /// 悬停展开（无拖动）用的两个定时器。与弹簧那两个**刻意分开**：触发条件、归属权、
+    /// 关闭条件都不同，共用一组会出现「拖动中被悬停逻辑抢开 / 抢关」。判定在 `DrawerHoverPlan`。
+    private var hoverOpenTimer: Timer?
+    private var hoverCloseTimer: Timer?
+    /// 这次抽屉是不是**悬停**打开的。只有它为真时，鼠标离开才自动收起——
+    /// 点击开的抽屉保持点击语义（owner 2026-08-19）。与 `drawerSpringOpened` 同构。
+    private var drawerHoverOpened = false
+    /// 指针当前悬在哪颗胶囊上（每屏一颗）。nil = 不在任何胶囊上。
+    private var hoveredCapsuleScreenID: ScreenID?
+    /// 指针当前在抽屉体内（由 `DrawerView` 的 onHover 报上来）。
+    private var pointerInsideDrawer = false
     private var lastDrawerSize: CGSize = CGSize(width: 210, height: 60)
     /// 抽屉是全桌面单例，它的目标矩形留在顶层；任务条/胶囊的目标矩形下放到各自的 `ScreenBar`。
     private var lastDrawerTargetFrame: NSRect = .zero
@@ -318,6 +329,8 @@ final class PanelCoordinator: NSObject {
         edgeWakeTimer?.invalidate()
         springOpenTimer?.invalidate()
         springCloseTimer?.invalidate()
+        hoverOpenTimer?.invalidate()
+        hoverCloseTimer?.invalidate()
         folderPopupFrameTimer?.invalidate()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
         NotificationCenter.default.removeObserver(self)
@@ -448,6 +461,7 @@ final class PanelCoordinator: NSObject {
         drawerWantsOpen = true
         setAutoHideInhibitor(.drawerOpen, active: true)
         drawerSpringOpened = false   // 默认手动开；弹簧路径在 springOpenDrawer 里再置 true
+        drawerHoverOpened = false    // 同上：悬停路径在 hoverOpenDrawer 里再置 true
 
         if drawerPanel == nil {
             let panel = NonConstrainingPanel(
@@ -481,7 +495,8 @@ final class PanelCoordinator: NSObject {
         // 每次打开都换一份新内容视图 → DrawerView 的 onAppear 重新触发淡入缩放,并拿到当前 maxContentHeight。
         let hosting = NSHostingView(rootView: DrawerView(maxContentHeight: maxContentHeight,
                                                          onPrimaryAction: { [weak self] in self?.closeDrawerAfterAction() },
-                                                         screenID: host.id)
+                                                         screenID: host.id,
+                                                         onHoverChanged: { [weak self] in self?.drawerHoverChanged($0) })
             .environmentObject(runtime).environmentObject(drawerStore).environmentObject(messagingStore)
             .environmentObject(drawerOrderStore).environmentObject(dragController)
             .environmentObject(keptAppStore).environmentObject(runningApplicationStore)
@@ -556,6 +571,8 @@ final class PanelCoordinator: NSObject {
         drawerWantsOpen = false
         setAutoHideInhibitor(.drawerOpen, active: false)
         drawerSpringOpened = false
+        drawerHoverOpened = false
+        cancelHoverTimers()
         if let m = drawerLocalMonitor  { NSEvent.removeMonitor(m); drawerLocalMonitor  = nil }
         if let m = drawerGlobalMonitor { NSEvent.removeMonitor(m); drawerGlobalMonitor = nil }
         guard let panel = drawerPanel else { return }
@@ -1289,6 +1306,121 @@ final class PanelCoordinator: NSObject {
         dragController.bringCarrierToFront()
     }
 
+    // MARK: - 悬停自动展开抽屉（owner 2026-08-19）
+
+    /// 悬停多久才展开。比拖动弹簧的 0.4s 短一点——拖动时手上有东西、慢一点是稳，
+    /// 空手悬停要的是"顺手就开"。胶囊在任务条**右端外侧**，横穿任务条不会经过它，
+    /// 所以这个值可以偏短而不至于乱开。
+    private static let hoverOpenDwell: TimeInterval = 0.25
+    /// 离开胶囊+抽屉多久才收起。与弹簧收回同值：胶囊顶到抽屉底之间有 8pt 空隙，
+    /// 指针过渡时两处都不命中，延迟就是给这段过渡留的余量。
+    private static let hoverCloseDelay: TimeInterval = 0.35
+
+    /// 胶囊报告悬停变化（每屏一颗，各自报自己的 screenID）。
+    func capsuleHoverChanged(_ hovering: Bool, on screenID: ScreenID?) {
+        if hovering {
+            hoveredCapsuleScreenID = screenID ?? bars.first?.id
+        } else if hoveredCapsuleScreenID == (screenID ?? hoveredCapsuleScreenID) {
+            hoveredCapsuleScreenID = nil
+        }
+        evaluateDrawerHover()
+    }
+
+    /// 抽屉体报告悬停变化。抽屉是全桌面单例，所以不带屏。
+    func drawerHoverChanged(_ hovering: Bool) {
+        pointerInsideDrawer = hovering
+        evaluateDrawerHover()
+    }
+
+    /// 右键弹菜单时把悬停定时器停掉：光标此刻正压在胶囊上，不停的话 0.25s 后抽屉会在菜单背后弹开。
+    /// 只需 cancel，不需要额外的抑制标志——`evaluateDrawerHover` 只在悬停**变化**时被调用，
+    /// 光标不离开胶囊就不会再次起表。
+    func cancelDrawerHoverOnMenu() {
+        cancelHoverTimers()
+    }
+
+    private func cancelHoverTimers() {
+        hoverOpenTimer?.invalidate(); hoverOpenTimer = nil
+        hoverCloseTimer?.invalidate(); hoverCloseTimer = nil
+    }
+
+    private func evaluateDrawerHover() {
+        let actions = DrawerHoverPlan.decide(DrawerHoverPlan.Input(
+            insideCapsule: hoveredCapsuleScreenID != nil,
+            insideDrawer: pointerInsideDrawer,
+            enabled: settingsStore.drawerHoverOpenEnabled,
+            isDragging: dragController.draggingPayload != nil,
+            drawerOpen: drawerWantsOpen,
+            hoverOpened: drawerHoverOpened,
+            openOnHoveredScreen: drawerHostScreenID != nil && drawerHostScreenID == hoveredCapsuleScreenID
+        ))
+        for action in actions {
+            switch action {
+            case .armOpen:
+                guard hoverOpenTimer == nil else { continue }
+                let timer = Timer(timeInterval: Self.hoverOpenDwell, repeats: false) { [weak self] _ in
+                    Task { @MainActor in self?.hoverOpenDrawerIfStillInside() }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                hoverOpenTimer = timer
+            case .cancelOpen:
+                hoverOpenTimer?.invalidate(); hoverOpenTimer = nil
+            case .armClose:
+                guard hoverCloseTimer == nil else { continue }
+                let timer = Timer(timeInterval: Self.hoverCloseDelay, repeats: false) { [weak self] _ in
+                    Task { @MainActor in self?.hoverCloseDrawerIfStillOutside() }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                hoverCloseTimer = timer
+            case .cancelClose:
+                hoverCloseTimer?.invalidate(); hoverCloseTimer = nil
+            }
+        }
+    }
+
+    /// 指针是否仍落在**几何上**的胶囊/抽屉命中区内。SwiftUI 的 onHover 偶尔会漏掉退出事件
+    /// （快速划到别的 app 窗口上），所以定时器到点一律用坐标重测一次，不只信悬停标志。
+    private func pointerIsOverCapsuleOrDrawer() -> (capsule: ScreenID?, drawer: Bool) {
+        let loc = NSEvent.mouseLocation
+        let capsule = bars.first { bar in
+            bar.lastCapsuleTargetFrame != .zero && springZone(bar.lastCapsuleTargetFrame).contains(loc)
+        }?.id
+        let inDrawer = drawerWantsOpen
+            && lastDrawerTargetFrame != .zero
+            && springZone(lastDrawerTargetFrame).contains(loc)
+        return (capsule, inDrawer)
+    }
+
+    private func hoverOpenDrawerIfStillInside() {
+        hoverOpenTimer = nil
+        guard settingsStore.drawerHoverOpenEnabled,
+              dragController.draggingPayload == nil else { return }
+        let (capsule, _) = pointerIsOverCapsuleOrDrawer()
+        guard let capsule else { return }
+        // 已经开在这块屏上 → 什么都不做（别 close-then-open 闪一下）。
+        guard !(drawerWantsOpen && drawerHostScreenID == capsule) else { return }
+        openDrawer(on: capsule)
+        drawerHoverOpened = true   // openDrawer 把它置 false 了，这里标记是悬停开的
+    }
+
+    private func hoverCloseDrawerIfStillOutside() {
+        hoverCloseTimer = nil
+        guard drawerWantsOpen, drawerHoverOpened,
+              dragController.draggingPayload == nil else { return }
+        let (capsule, inDrawer) = pointerIsOverCapsuleOrDrawer()
+        if capsule != nil || inDrawer {
+            // 又回到胶囊/抽屉上了。悬停标志可能已经漏掉了回来的那次事件，所以这里**重挂一次**
+            // 收起表当兜底——否则漏事件之后就再也没人来关这个抽屉了。
+            let timer = Timer(timeInterval: Self.hoverCloseDelay, repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.hoverCloseDrawerIfStillOutside() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            hoverCloseTimer = timer
+            return
+        }
+        closeDrawer()
+    }
+
     private func makeDockPanel(on screen: NSScreen, screenID: ScreenID) -> (NSPanel, ManualPanelHost) {
         let s = screen.frame
 
@@ -1362,9 +1494,14 @@ final class PanelCoordinator: NSObject {
         let hosting = NSHostingView(rootView:
             DrawerCapsuleButton(
                 onRequestTaskbarMenu: { [weak self] event, view in
+                    // 光标此刻正压在胶囊上：先停悬停表，否则菜单弹出后抽屉会在它背后展开。
+                    self?.cancelDrawerHoverOnMenu()
                     self?.onRequestTaskbarMenu?(event, view)
                 },
                 screenID: screenID,
+                onHoverChanged: { [weak self] hovering in
+                    self?.capsuleHoverChanged(hovering, on: screenID)
+                },
                 action: { [weak self] in self?.toggleDrawer(on: screenID) }
             )
                 .environmentObject(runtime)

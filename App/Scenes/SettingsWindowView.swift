@@ -45,6 +45,14 @@ struct SettingsWindowContent: View {
             settingsSection("任务条") {
                 settingRow(note: "任务条上多一个临时存放文件的格子。拖进去的文件不会被移动或复制，只是记住位置。") {
                     Toggle("显示中转站", isOn: binding(get: { store.showShelf }, set: store.setShowShelf))
+
+                    Toggle(
+                        "鼠标悬停自动展开抽屉",
+                        isOn: binding(
+                            get: { store.drawerHoverOpenEnabled },
+                            set: store.setDrawerHoverOpenEnabled
+                        )
+                    )
                 }
 
                 settingRow(note: "关闭后，鼠标划过任务条不再有放大和名称提示。") {
