@@ -264,6 +264,7 @@
 		B00000000000000000009F41 /* PerDisplayTaskbarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009F40 /* PerDisplayTaskbarTests.swift */; };
 		B00000000000000000009E02 /* ScreenAttribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E00 /* ScreenAttribution.swift */; };
 		B00000000000000000009E11 /* ScreenGeometrySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E10 /* ScreenGeometrySource.swift */; };
+		B00000000000000000009E12 /* ScreenGeometrySource.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E10 /* ScreenGeometrySource.swift */; };
 		B00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E30 /* ScreenAttributionTests.swift */; };
 		B00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000009E40 /* ScreenStickinessTests.swift */; };
 		A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000009A00 /* WindowLiftAvoidance.swift */; };
@@ -1315,6 +1316,7 @@
 					A00000000000000000009A02 /* WindowLiftAvoidance.swift in Sources */,
 					A00000000000000000009A21 /* WindowLiftAvoidanceTests.swift in Sources */,
 				B00000000000000000009E02 /* ScreenAttribution.swift in Sources */,
+				B00000000000000000009E12 /* ScreenGeometrySource.swift in Sources */,
 				B00000000000000000009E31 /* ScreenAttributionTests.swift in Sources */,
 				B00000000000000000009E41 /* ScreenStickinessTests.swift in Sources */,
 				B00000000000000000009F02 /* ScreenSetDiff.swift in Sources */,
