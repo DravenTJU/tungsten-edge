@@ -31,6 +31,40 @@ struct AppTrackerCGWindowSnapshot: Equatable {
         return layerZeroWindowIDs(in: windowInfo)
     }
 
+    /// 该 App 此刻压在最上面的那个**已收编**窗口（CG 层 0 + on-screen；`CGWindowListCopyWindowInfo`
+    /// 返回的就是前→后的层叠顺序）。
+    ///
+    /// 只在 `candidates`（= 任务条上真有卡片的那些 cgWindowID）里挑。**不能**直接取「CG 里该 pid
+    /// 最靠前的那个窗口」：几乎每个 App 都挂着无标题 / 全透明的 layer-0 窗口（飞书贴在屏幕顶端的
+    /// 那些隐形窗口是实测案例，见 `findBackgroundActivationTarget` 的同类教训），它们会永远挡在
+    /// 真正的文档窗口前面。
+    ///
+    /// `nil` = 这次读不出结论（列表拿不到、或该 App 的窗口一个都不在屏上）。调用方必须把 `nil`
+    /// 当成「不知道」，不能当成「不是它」。
+    static func frontmostOnScreenWindowID(
+        forPID pid: pid_t,
+        among candidates: Set<CGWindowID>
+    ) -> CGWindowID? {
+        guard !candidates.isEmpty,
+              let windowInfo = CGWindowListCopyWindowInfo(
+                  [.optionOnScreenOnly, .excludeDesktopElements],
+                  kCGNullWindowID
+              ) as? [[String: Any]] else {
+            return nil
+        }
+
+        for info in windowInfo {
+            guard let windowID = layerZeroWindowID(in: info),
+                  candidates.contains(windowID),
+                  let ownerPID = info[kCGWindowOwnerPID as String] as? Int,
+                  pid_t(ownerPID) == pid else {
+                continue
+            }
+            return windowID
+        }
+        return nil
+    }
+
     static func parse(_ windowInfo: [[String: Any]]) -> AppTrackerCGWindowSnapshot {
         var allWindowIDs: Set<CGWindowID> = []
         var onScreenWindowIDs: Set<CGWindowID> = []

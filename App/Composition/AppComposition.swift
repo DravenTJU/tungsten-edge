@@ -67,7 +67,13 @@ final class AppRuntime: ObservableObject {
     private var launchSessions = LaunchSessionTokenRegistry<LaunchSession>()
 
     private let tracker: AppTracker
-    private let intentPipeline = IntentPipeline(actionPlanning: LifecycleActionPlanner())
+    /// 点击瞬间的层序现读。**刻意是 CG 而不是 AX**：不问目标 App 任何问题，所以既不会被打盹的
+    /// App 拖住主线程，也不依赖它老实报告 `kAXFocusedWindow`（VS Code 一类就从来不报）。
+    private let intentPipeline = IntentPipeline(actionPlanning: LifecycleActionPlanner(
+        frontmostWindow: { pid, candidates in
+            AppTrackerCGWindowSnapshot.frontmostOnScreenWindowID(forPID: pid, among: candidates)
+        }
+    ))
     private let actionExecutor = PlatformActionExecutor()
     private let isAccessibilityTrusted: () -> Bool
     private var snapshotSubscription: AnyCancellable?

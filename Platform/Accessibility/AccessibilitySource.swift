@@ -403,6 +403,7 @@ struct AccessibilityWindowActionExecutor {
         // 还原，省掉一次对打盹 App 的 AX 往返——那正是「点最小化的窗口最慢」里最后一段等待。
         // 反过来**不能**用：快照说「没最小化」时仍必须现读，否则一次陈旧快照就会让窗口回不来。
         // 误判方向也无害：对一个其实没最小化的窗口写 `minimized = false` 是空操作。
+        var didCorrectMainWindow = false
         if knownMinimized || reader.boolAttribute(kAXMinimizedAttribute as CFString, from: handle.element) == true {
             _ = setMinimized(false, for: handle)
             // 恢复→切换必须紧贴、中间零 AX 问询（2026-07-05 探针 v3）：最小化恢复不做提前
@@ -419,6 +420,7 @@ struct AccessibilityWindowActionExecutor {
             // 键盘输入和「最小化回上一个 App」的 focused-window 保护都会错到兄弟窗口
             // （2026-07-03 Chrome/访达 B1B2 实测）。
             AXUIElementSetAttributeValue(handle.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+            didCorrectMainWindow = true
         }
 
         let raised = AXUIElementPerformAction(handle.element, kAXRaiseAction as CFString) == .success
@@ -427,6 +429,15 @@ struct AccessibilityWindowActionExecutor {
         let focusedViaSkyLight = focusWindowViaSkyLight(pid: handle.pid, element: handle.element)
         if !focusedViaSkyLight, runningApp?.isActive != true {
             _ = runningApp?.activate(options: [.activateIgnoringOtherApps])
+        }
+
+        // App 内部焦点纠正，**可见窗口也要做**（2026-08-20）。原先只有最小化恢复那条分支纠正，
+        // 于是「同 App 两个可见窗口来回点」时：抬升 + make-key 只改了 z 序与前台窗口，App 的
+        // 焦点/main 窗口仍留在上一个窗口上 → AX `kAXFocusedWindow` 不动 → 座位的 isFocused 陈旧 →
+        // 旧窗口那张卡永远是 `.active`，点它被规划成最小化（owner 报的「点回窗口 1 它不出来」）。
+        // kAXMain 是 App 内切窗的标准 AX 通道（Docs/05）；对已经是 main 的窗口重复写是空操作。
+        if !didCorrectMainWindow {
+            AXUIElementSetAttributeValue(handle.element, kAXMainAttribute as CFString, kCFBooleanTrue)
         }
 
         if requiresFocusedConfirmation {

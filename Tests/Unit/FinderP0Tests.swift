@@ -98,6 +98,128 @@ final class FinderP0Tests: XCTestCase {
         }
     }
 
+    /// 回归（2026-08-20 实测定位，owner 报「点窗口 1 → 点窗口 2 → 再点回窗口 1，它不出来，
+    /// 再点一次才弹出来」）：VS Code 一类 App 的窗口在快照里永远是 `.inactive`，激活写下的乐观
+    /// `.active` 永远等不到兑现、挂满 4s；4s 内再点同一张卡就被当成「点了当前活跃窗口」→ 最小化。
+    /// 层序说「压在最上面的是另一张卡」时，这一次点击必须是激活。
+    func testToggleActivatesWhenSiblingWindowIsOnTopDespiteLingeringOptimisticActive() {
+        let target = WindowID(rawValue: "cgw-101")
+        let sibling = WindowID(rawValue: "cgw-202")
+        let snapshot = twoWindowSnapshot(
+            first: (target, 101, .inactive),
+            second: (sibling, 202, .inactive)
+        )
+        let planner = LifecycleActionPlanner(
+            isAppFrontmost: { _ in true },
+            frontmostWindow: { _, _ in 202 }
+        )
+        // 上一次激活留下的、永远兑现不了的乐观 .active
+        let lingering = [target.rawValue: OptimisticWindowState(status: .active, createdAt: Date())]
+
+        XCTAssertEqual(
+            planner.plan(intent: .toggle(target), snapshot: snapshot, optimisticStates: lingering).kind,
+            .activateWindow
+        )
+    }
+
+    /// 反向：层序说「压在最上面的就是这张卡」→ 照旧最小化，哪怕快照从没给过 `.active`
+    ///（否则这类 App 就再也没法点卡片最小化了）。
+    func testToggleMinimizesTopmostWindowEvenWhenSnapshotNeverReportsActive() {
+        let target = WindowID(rawValue: "cgw-101")
+        let sibling = WindowID(rawValue: "cgw-202")
+        let planner = LifecycleActionPlanner(
+            isAppFrontmost: { _ in true },
+            frontmostWindow: { _, _ in 101 }
+        )
+
+        XCTAssertEqual(
+            planner.plan(intent: .toggle(target), snapshot: twoWindowSnapshot(
+                first: (target, 101, .inactive),
+                second: (sibling, 202, .inactive)
+            )).kind,
+            .minimizeWindow
+        )
+    }
+
+    /// 刚点过最小化的卡再点必须是还原：最小化动画期间窗口还在 CG 屏上列表里，层序此刻不可信，
+    /// 所以 `.minimized`（快照或乐观态）必须先行短路。
+    func testToggleRestoresWhilePredictedMinimizedEvenIfStillOnTopInStackingOrder() {
+        let target = WindowID(rawValue: "cgw-101")
+        let sibling = WindowID(rawValue: "cgw-202")
+        let planner = LifecycleActionPlanner(
+            isAppFrontmost: { _ in true },
+            frontmostWindow: { _, _ in 101 }
+        )
+        let justMinimized = [target.rawValue: OptimisticWindowState(status: .minimized, createdAt: Date())]
+
+        XCTAssertEqual(
+            planner.plan(intent: .toggle(target), snapshot: twoWindowSnapshot(
+                first: (target, 101, .inactive),
+                second: (sibling, 202, .inactive)
+            ), optimisticStates: justMinimized).kind,
+            .activateWindow
+        )
+    }
+
+    /// 层序读不出结论（`nil`）→ 退回旧的快照 `.active` 口径，一个字都不改。
+    func testToggleFallsBackToSnapshotStatusWhenStackingOrderIsUnavailable() {
+        let active = WindowID(rawValue: "cgw-101")
+        let inactive = WindowID(rawValue: "cgw-202")
+        let planner = LifecycleActionPlanner(
+            isAppFrontmost: { _ in true },
+            frontmostWindow: { _, _ in nil }
+        )
+
+        XCTAssertEqual(
+            planner.plan(intent: .toggle(active), snapshot: twoWindowSnapshot(
+                first: (active, 101, .active),
+                second: (inactive, 202, .inactive)
+            )).kind,
+            .minimizeWindow
+        )
+        XCTAssertEqual(
+            planner.plan(intent: .toggle(inactive), snapshot: twoWindowSnapshot(
+                first: (active, 101, .active),
+                second: (inactive, 202, .inactive)
+            )).kind,
+            .activateWindow
+        )
+    }
+
+    /// 显式右键「最小化」不走这套判定：那是用户指名要最小化，不是 toggle 语义。
+    func testExplicitMinimizeIntentIgnoresStackingOrder() {
+        let target = WindowID(rawValue: "cgw-101")
+        let sibling = WindowID(rawValue: "cgw-202")
+        let planner = LifecycleActionPlanner(
+            isAppFrontmost: { _ in true },
+            frontmostWindow: { _, _ in 202 }
+        )
+
+        XCTAssertEqual(
+            planner.plan(intent: .minimize(target), snapshot: twoWindowSnapshot(
+                first: (target, 101, .active),
+                second: (sibling, 202, .inactive)
+            )).kind,
+            .minimizeWindow
+        )
+    }
+
+    private func twoWindowSnapshot(
+        first: (WindowID, CGWindowID, WindowStatus),
+        second: (WindowID, CGWindowID, WindowStatus)
+    ) -> DockSnapshot {
+        let records = [first, second].map { id, cgID, status in
+            windowRecord(
+                id: id, pid: 7, bundleIdentifier: "com.example.multi",
+                title: "W\(cgID)", bounds: nil, status: status, cgWindowID: cgID
+            )
+        }
+        return DockSnapshot(
+            windows: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) }),
+            orderedWindowIDs: records.map(\.id)
+        )
+    }
+
     func testToggleDoesNotMinimizeAppLevelFallbacks() {
         let id = WindowID(rawValue: "app-com.electron.lark")
         let planner = LifecycleActionPlanner()
@@ -1694,8 +1816,9 @@ final class FinderP0Tests: XCTestCase {
         pid: Int32,
         bundleIdentifier: String,
         title: String,
-        bounds: CGRect,
-        status: WindowStatus
+        bounds: CGRect?,
+        status: WindowStatus,
+        cgWindowID: CGWindowID? = nil
     ) -> WindowRecord {
         WindowRecord(
             id: id,
@@ -1704,7 +1827,8 @@ final class FinderP0Tests: XCTestCase {
             bundleIdentifier: bundleIdentifier,
             title: title,
             bounds: bounds,
-            status: status
+            status: status,
+            cgWindowID: cgWindowID
         )
     }
 
